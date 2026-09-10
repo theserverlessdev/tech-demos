@@ -1,0 +1,5 @@
+{
+  "name": "@tech-demos/hello-dynamic",
+  "private": true,
+  "type": "module"
+}

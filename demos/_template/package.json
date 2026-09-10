@@ -1,0 +1,5 @@
+{
+  "name": "@tech-demos/demo-template",
+  "private": true,
+  "type": "module"
+}
