@@ -15,6 +15,9 @@
       "binding": "LOADER"
     }
   ],
+  "alias": {
+    "@tech-demos/shared": "../../packages/shared/src/index.ts"
+  },
   "observability": {
     "enabled": true
   }
