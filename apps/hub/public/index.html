@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>tech-demos</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #0b1020;
+        --card: #121a33;
+        --border: #2a3555;
+        --text: #e8eefc;
+        --muted: #9aa8c7;
+        --accent: #6ee7ff;
+        font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          radial-gradient(1200px 600px at 10% -10%, #1b2a55 0%, transparent 55%),
+          var(--bg);
+        color: var(--text);
+      }
+      main { max-width: 880px; margin: 0 auto; padding: 3rem 1.25rem 4rem; }
+      h1 { font-size: 1.75rem; margin: 0 0 0.35rem; letter-spacing: -0.02em; }
+      .lede { color: var(--muted); margin: 0 0 2rem; line-height: 1.5; }
+      .grid { display: grid; gap: 0.85rem; }
+      a.card {
+        display: block;
+        text-decoration: none;
+        color: inherit;
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 1rem 1.1rem;
+        transition: border-color 0.15s ease, transform 0.15s ease;
+      }
+      a.card:hover { border-color: var(--accent); transform: translateY(-1px); }
+      .title { font-weight: 600; margin: 0 0 0.25rem; }
+      .desc { margin: 0; color: var(--muted); font-size: 0.95rem; line-height: 1.45; }
+      .tags { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.75rem; }
+      .tag {
+        font-size: 0.72rem;
+        letter-spacing: 0.02em;
+        color: var(--accent);
+        border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+        border-radius: 999px;
+        padding: 0.15rem 0.55rem;
+      }
+      .err { color: #ffb4b4; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>tech-demos</h1>
+      <p class="lede">
+        Weekday playground on Cloudflare Workers Paid. Each demo loads as an isolated
+        Dynamic Worker from the hub.
+      </p>
+      <div id="list" class="grid">Loading demos…</div>
+    </main>
+    <script type="module">
+      const el = document.getElementById("list");
+      try {
+        const res = await fetch("/api/demos");
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const demos = await res.json();
+        if (!demos.length) {
+          el.textContent = "No demos registered yet.";
+          return;
+        }
+        el.innerHTML = demos
+          .map(
+            (d) => `
+          <a class="card" href="${d.href}">
+            <p class="title">${d.title}</p>
+            <p class="desc">${d.description}</p>
+            <div class="tags">${(d.tags || [])
+              .map((t) => `<span class="tag">${t}</span>`)
+              .join("")}</div>
+          </a>`
+          )
+          .join("");
+      } catch (e) {
+        el.innerHTML = `<p class="err">Failed to load demos: ${e.message}</p>`;
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,15 @@
+{
+  "name": "tech-demos",
+  "private": true,
+  "workspaces": ["apps/*", "demos/*", "packages/*"],
+  "scripts": {
+    "dev": "bun run --filter @tech-demos/hub dev",
+    "deploy": "bun run --filter @tech-demos/hub deploy",
+    "typecheck": "bun run --filter '*' typecheck",
+    "cf-typegen": "bun run --filter @tech-demos/hub cf-typegen"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "wrangler": "^4.40.0"
+  }
+}
