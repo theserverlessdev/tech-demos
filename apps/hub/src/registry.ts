@@ -37,7 +37,27 @@ const helloDynamicSource = `export default {
 };
 `;
 
+// cloudflare-os is a standalone Worker (Durable Objects, Workers AI, its own Worker Loader). A zone route
+// sends /demos/cloudflare-os* to it before the hub sees the request. This source only runs if that route
+// is missing, and it sends the visitor to the demo subdomain.
+const cloudflareOsFallbackSource = `export default {
+  fetch(request) {
+    const url = new URL(request.url);
+    const rest = url.pathname.replace(/^\\/demos\\/cloudflare-os/, "") || "/";
+    return Response.redirect("https://cloudflare-os.tech-demos.theserverless.dev" + rest + url.search, 302);
+  },
+};
+`;
+
 export const demos: DemoEntry[] = [
+  {
+    slug: "cloudflare-os",
+    title: "Cloudflare OS, sliced",
+    description:
+      "An agent workspace on Workers. Gadgets run in Dynamic Workers as Durable Object facets with private SQLite. Their sandboxed UIs use Cap'n Web RPC, and gatekeepers approve each outside read.",
+    tags: ["dynamic-workers", "do-facets", "capnweb", "workers-ai", "agents"],
+    source: cloudflareOsFallbackSource,
+  },
   {
     slug: "hello-dynamic",
     title: "Hello Dynamic Worker",

@@ -1,5 +1,29 @@
 {
   "proposed": [],
-  "built": [],
-  "skipped": []
+  "built": [
+    {
+      "slug": "cloudflare-os",
+      "repo": "https://github.com/cloudflare/cloudflare-os",
+      "title": "Cloudflare OS",
+      "source": "google-sheet-repo-radar",
+      "approved_at": "2026-09-11",
+      "why": "Agent workspace: gadgets, Dynamic Workers/Facets, Durable Objects, Gatekeepers — impressive CF platform showcase",
+      "built_at": "2026-09-11",
+      "url": "https://tech-demos.theserverless.dev/demos/cloudflare-os/",
+      "subdomain": "https://cloudflare-os.tech-demos.theserverless.dev/",
+      "worker": "tech-demos-cloudflare-os",
+      "branch": "demo/cloudflare-os"
+    }
+  ],
+  "skipped": [
+    {
+      "slug": "athenadb",
+      "repo": "https://github.com/TimeSurgeLabs/athenadb",
+      "title": "AthenaDB",
+      "source": "google-sheet-repo-radar",
+      "approved_at": "2026-09-11",
+      "why": "Serverless vector DB API on Workers AI + Vectorize + D1",
+      "reason": "user asked for more complicated/impressive"
+    }
+  ]
 }

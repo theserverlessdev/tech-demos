@@ -1,0 +1,8 @@
+{
+  "id": "tictactoe",
+  "title": "Tic-tac-toe",
+  "icon": "grid",
+  "description": "A shared tic-tac-toe board with a running score. Every open tab plays on the same board, and a perfect-play hint is one click away.",
+  "bindings": [],
+  "prompt": "Play the best move for whoever is to move, then tell me the score."
+}
