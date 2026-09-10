@@ -1,5 +1,6 @@
 import { demoPath, demoSubdomain, demoUrl, HUB_HOST } from "@tech-demos/shared";
 import { demos, getDemo } from "./registry";
+import { renderGallery } from "./gallery";
 
 export interface Env {
   LOADER: WorkerLoader;
@@ -73,6 +74,15 @@ export default {
     const demoMatch = url.pathname.match(/^\/demos\/([^/]+)(\/.*)?$/);
     if (demoMatch) {
       return runDemo(request, env, demoMatch[1]!);
+    }
+
+    if (url.pathname === "/" || url.pathname === "/index.html") {
+      return new Response(renderGallery(demos), {
+        headers: {
+          "content-type": "text/html; charset=utf-8",
+          "cache-control": "no-store",
+        },
+      });
     }
 
     return env.ASSETS.fetch(request);
