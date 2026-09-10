@@ -1,1 +1,0 @@
-This folder contains the built output assets for the worker "tech-demos-hub" generated at 2026-09-10T21:10:16.311Z.
