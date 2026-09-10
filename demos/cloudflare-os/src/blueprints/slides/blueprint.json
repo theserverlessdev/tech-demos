@@ -1,0 +1,8 @@
+{
+  "id": "slides",
+  "title": "Slides",
+  "icon": "presentation",
+  "description": "A small slide deck with four layouts: title, bullets, quote, and stat. Edit slides in place and present them full-bleed.",
+  "bindings": [],
+  "prompt": "Add a stat slide after slide 2 that says 30 slides is the maximum deck size."
+}
