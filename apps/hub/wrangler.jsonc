@@ -8,7 +8,7 @@
     "directory": "./public",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/demos/*", "/api/*"]
+    "run_worker_first": true
   },
   "worker_loaders": [
     {
@@ -18,6 +18,16 @@
   "alias": {
     "@tech-demos/shared": "../../packages/shared/src/index.ts"
   },
+  "routes": [
+    {
+      "pattern": "tech-demos.theserverless.dev",
+      "custom_domain": true
+    },
+    {
+      "pattern": "*.tech-demos.theserverless.dev/*",
+      "zone_name": "theserverless.dev"
+    }
+  ],
   "observability": {
     "enabled": true
   }
