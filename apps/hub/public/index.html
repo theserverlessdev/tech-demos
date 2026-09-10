@@ -78,6 +78,10 @@
           <a class="card" href="${d.href}">
             <p class="title">${d.title}</p>
             <p class="desc">${d.description}</p>
+            <p class="desc" style="margin-top:0.5rem;font-size:0.8rem">
+              <code>${d.href}</code>
+              ${d.subdomain ? ` · <code>${d.subdomain.replace("https://","")}</code>` : ""}
+            </p>
             <div class="tags">${(d.tags || [])
               .map((t) => `<span class="tag">${t}</span>`)
               .join("")}</div>

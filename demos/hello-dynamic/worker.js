@@ -1,15 +1,8 @@
-import type { DemoMeta } from "@tech-demos/shared";
-
-export type DemoEntry = DemoMeta & {
-  /** Raw Worker module source loaded into a Dynamic Worker (plain JS) */
-  source: string;
-};
-
-const helloDynamicSource = `export default {
+export default {
   async fetch(request) {
     const url = new URL(request.url);
     const name = url.searchParams.get("name") ?? "world";
-    const html = \`<!doctype html>
+    const html = `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -24,29 +17,14 @@ const helloDynamicSource = `export default {
   </head>
   <body>
     <main>
-      <h1>Hello, \${name}</h1>
+      <h1>Hello, ${name}</h1>
       <p>This demo runs as a <code>Dynamic Worker</code> loaded by the hub at request time.</p>
       <p>Try <code>?name=Ankur</code>.</p>
     </main>
   </body>
-</html>\`;
+</html>`;
     return new Response(html, {
       headers: { "content-type": "text/html; charset=utf-8" },
     });
   },
 };
-`;
-
-export const demos: DemoEntry[] = [
-  {
-    slug: "hello-dynamic",
-    title: "Hello Dynamic Worker",
-    description: "Minimal HTML demo loaded via the hub Worker Loader.",
-    tags: ["dynamic-workers", "starter"],
-    source: helloDynamicSource,
-  },
-];
-
-export function getDemo(slug: string): DemoEntry | undefined {
-  return demos.find((d) => d.slug === slug);
-}
