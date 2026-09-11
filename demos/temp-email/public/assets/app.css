@@ -308,6 +308,17 @@ input[type="checkbox"] { accent-color: var(--ember); }
 }
 .codes__label { font-size: 12px; color: var(--accent-text); font-weight: 600; }
 .codes__list { display: flex; gap: 6px; flex-wrap: wrap; }
+.files {
+  display: grid; gap: 6px;
+  padding: 8px 10px; border-radius: var(--radius-sm);
+  background: var(--surface-2); border: 1px solid var(--border);
+}
+.files__label { font-size: 12px; color: var(--muted); font-weight: 600; }
+.files__list { list-style: none; display: grid; gap: 4px; }
+.files__list li { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.files__name { color: var(--text-strong); font-family: var(--font-mono); font-size: 12.5px; }
+.files__meta { font: 500 11px/1 var(--font-mono); color: var(--muted); }
+.files__note { font-size: 12px; color: var(--muted); }
 .code-btn {
   font: 500 15px/1 var(--font-mono); letter-spacing: 0.08em;
   padding: 6px 10px; border-radius: var(--radius-sm); background: var(--surface); border: 1px solid var(--border-strong); color: var(--text-strong);

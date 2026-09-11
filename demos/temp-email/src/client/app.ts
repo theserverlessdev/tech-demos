@@ -133,6 +133,8 @@ const el = {
   chips: $("mail-chips"),
   codes: $("mail-codes"),
   codesList: $("codes-list"),
+  mailFiles: $("mail-files"),
+  mailFilesList: $<HTMLUListElement>("mail-files-list"),
   deleteMessage: $<HTMLButtonElement>("delete-message"),
   remote: $<HTMLInputElement>("remote"),
   remoteWrap: $("remote-wrap"),
@@ -402,6 +404,7 @@ function renderViewer(): void {
   if (!m) {
     el.layout.dataset.view = "list";
     bindHtmlPane(null);
+    el.mailFiles.hidden = true;
     return;
   }
   el.subject.textContent = m.subject;
@@ -412,6 +415,9 @@ function renderViewer(): void {
   el.chips.replaceChildren(
     h("span", { className: m.via === "smtp" ? "chip chip-ok" : "chip", textContent: m.via === "smtp" ? "smtp" : `${m.via} delivery` }),
     h("span", { className: "chip", textContent: formatBytes(m.rawSize) }),
+    ...(m.attachments.length
+      ? [h("span", { className: "chip", textContent: `${m.attachments.length} attachment${m.attachments.length > 1 ? "s" : ""}` })]
+      : []),
     ...(m.truncated ? [h("span", { className: "chip chip-ember", textContent: "body cut to limit" })] : []),
   );
 
@@ -427,6 +433,18 @@ function renderViewer(): void {
       });
       return b;
     }),
+  );
+
+  el.mailFiles.hidden = m.attachments.length === 0;
+  el.mailFilesList.replaceChildren(
+    ...m.attachments.map((a) =>
+      h(
+        "li",
+        {},
+        h("span", { className: "files__name", textContent: a.filename ?? "(no name)" }),
+        h("span", { className: "files__meta", textContent: `${a.mimeType} · ${formatBytes(a.size)}` }),
+      ),
+    ),
   );
 
   if (!m.html && state.tab === "html") state.tab = "text";

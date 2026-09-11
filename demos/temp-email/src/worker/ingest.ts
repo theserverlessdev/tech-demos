@@ -96,7 +96,8 @@ function escapeHtml(s: string): string {
 
 /**
  * A realistic sign-up message as raw MIME: multipart/alternative inside multipart/mixed, with a small
- * text attachment. The server writes it, so a visitor cannot inject content through this path.
+ * text attachment and a remote image in the HTML part. The server writes it, so a visitor cannot inject
+ * content through this path.
  */
 export function sampleMime(to: string, origin: string, domain: string): string {
   const code = String(100000 + (crypto.getRandomValues(new Uint32Array(1))[0] % 900000));
@@ -106,12 +107,15 @@ export function sampleMime(to: string, origin: string, domain: string): string {
   const inner = `alt-${newId(6)}`;
   const date = new Date().toUTCString().replace("GMT", "+0000");
 
+  const remoteImg = `${origin.replace(/\/$/, "")}/assets/sample-remote.svg`;
   const text = [
     "Welcome to Ember Cloud.",
     "",
     `Your verification code is ${code}`,
     "",
     `Or confirm your address here: ${link}`,
+    "",
+    "The HTML part includes a remote image. It stays blocked until you allow remote images.",
     "",
     "This code expires in 10 minutes. If you did not sign up, ignore this message.",
   ].join("\r\n");
@@ -124,6 +128,12 @@ export function sampleMime(to: string, origin: string, domain: string): string {
 <tr><td style="padding:12px 32px;font-size:15px;line-height:1.5;color:#3d3a34">Enter this code to finish your sign-up for <b>${escapeHtml(to)}</b>.</td></tr>
 <tr><td style="padding:8px 32px 16px"><div style="font-family:Menlo,monospace;font-size:32px;letter-spacing:.3em;background:#faf9f6;border:1px dashed #c2410c;border-radius:8px;padding:14px 0;text-align:center">${code}</div></td></tr>
 <tr><td style="padding:0 32px 24px"><a href="${escapeHtml(link)}" style="display:inline-block;background:#c2410c;color:#ffffff;text-decoration:none;font-weight:700;padding:12px 20px;border-radius:8px">Confirm address</a></td></tr>
+<tr><td style="padding:0 32px 16px">
+<div style="min-height:48px;border:1px dashed #c2410c;border-radius:8px;padding:10px;background:#faf9f6">
+<img src="${escapeHtml(remoteImg)}" width="160" height="40" alt="Ember Cloud mark (remote)" style="display:block;height:40px;width:auto">
+<p style="margin:8px 0 0;font-size:12px;color:#6b675e">Remote image. It stays blocked until you allow remote images.</p>
+</div>
+</td></tr>
 <tr><td style="padding:16px 32px 28px;border-top:1px solid #ebe8e0;font-size:12px;color:#6b675e">The code expires in 10 minutes. This is a sample message from the temp-email demo.</td></tr>
 </table></td></tr></table></body></html>`;
 

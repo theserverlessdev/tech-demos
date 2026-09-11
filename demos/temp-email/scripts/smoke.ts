@@ -82,6 +82,8 @@ check("sample has html and text", !!sample.data.html && !!sample.data.text);
 check("sample code is extracted", sample.data.codes.length === 1 && /^\d{6}$/.test(sample.data.codes[0]), sample.data.codes);
 check("sample link is extracted", sample.data.links.some((l) => l.includes("verified=")), sample.data.links);
 check("sample attachment metadata is kept", sample.data.attachments[0]?.filename === "signup-ticket.txt", sample.data.attachments);
+check("sample html has a remote image", !!sample.data.html?.includes("/assets/sample-remote.svg"), sample.data.html?.slice(0, 200));
+check("sample text mentions remote images", !!sample.data.text?.includes("remote image"), sample.data.text);
 check("sample sender is parsed", sample.data.from.name === "Ember Cloud", sample.data.from);
 
 const listed = await call<MessageList>(`${path}/messages`, { token: inbox.token });
