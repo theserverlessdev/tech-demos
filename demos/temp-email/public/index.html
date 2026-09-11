@@ -15,6 +15,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Hanken+Grotesk:wght@400..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <script src="/assets/theme.js"></script>
+  <script src="/assets/turnstile-onload.js"></script>
   <link rel="stylesheet" href="/assets/app.css" />
 </head>
 <body>
@@ -91,7 +92,7 @@
         <form class="mint__form" id="mint-form">
           <label class="custom__label" for="agent-name">Agent name (optional)</label>
           <input id="agent-name" name="name" autocomplete="off" maxlength="64" placeholder="my-agent" />
-          <div id="turnstile" class="turnstile"></div>
+          <div id="mint-turnstile" class="turnstile"></div>
           <button class="btn btn-primary" id="mint-submit" type="submit">Mint API key</button>
         </form>
         <p class="mint__off" id="mint-off" hidden>Key mint is off on this instance. Set Turnstile keys, or use the operator admin secret documented in SETUP.</p>
@@ -202,7 +203,7 @@
     </p>
   </footer>
 
-  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit&onload=onTempEmailTurnstileLoad" defer></script>
   <script type="module" src="/assets/app.js"></script>
 </body>
 </html>

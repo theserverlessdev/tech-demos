@@ -112,7 +112,7 @@ const el = {
   mintHint: $("mint-hint"),
   mintSubmit: $<HTMLButtonElement>("mint-submit"),
   agentName: $<HTMLInputElement>("agent-name"),
-  turnstile: $("turnstile"),
+  turnstile: $("mint-turnstile"),
   copyKey: $<HTMLButtonElement>("copy-key"),
   revokeKey: $<HTMLButtonElement>("revoke-key"),
   list: document.querySelector<HTMLElement>(".list")!,
@@ -457,17 +457,57 @@ type TurnstileApi = {
   remove: (id?: string) => void;
 };
 
+type TurnstileWindow = Window & {
+  turnstile?: Partial<TurnstileApi>;
+  onTempEmailTurnstileLoad?: () => void;
+  __turnstileReady?: Promise<void>;
+};
+
+function turnstileWin(): TurnstileWindow {
+  return window as TurnstileWindow;
+}
+
+function turnstileReady(api: Partial<TurnstileApi> | undefined): api is TurnstileApi {
+  return (
+    typeof api?.render === "function" &&
+    typeof api.reset === "function" &&
+    typeof api.getResponse === "function" &&
+    typeof api.remove === "function"
+  );
+}
+
 function turnstileApi(): TurnstileApi | undefined {
-  return (window as unknown as { turnstile?: TurnstileApi }).turnstile;
+  const api = turnstileWin().turnstile;
+  if (!api || api instanceof Element) return undefined;
+  return turnstileReady(api) ? api : undefined;
+}
+
+/** api.js can set window.turnstile before render exists. Wait for the real methods (onload + poll). */
+function turnstileOnload(): Promise<void> {
+  const w = turnstileWin();
+  if (w.__turnstileReady) return w.__turnstileReady;
+  w.__turnstileReady = new Promise((resolve) => {
+    const prev = w.onTempEmailTurnstileLoad;
+    w.onTempEmailTurnstileLoad = () => {
+      prev?.();
+      resolve();
+    };
+  });
+  return w.__turnstileReady;
 }
 
 async function whenTurnstile(): Promise<TurnstileApi> {
-  for (let i = 0; i < 50; i++) {
+  const loaded = turnstileOnload();
+  const deadline = Date.now() + 8000;
+  while (Date.now() < deadline) {
     const api = turnstileApi();
     if (api) return api;
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await Promise.race([loaded.then(() => undefined), new Promise<void>((resolve) => setTimeout(resolve, 50))]);
+    const afterLoad = turnstileApi();
+    if (afterLoad) return afterLoad;
+    await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error("Turnstile failed to load.");
+  throw new Error("Turnstile failed to load. Refresh the page, then try again.");
 }
 
 async function renderTurnstile(): Promise<void> {
@@ -761,7 +801,13 @@ el.mintForm.addEventListener("submit", (event) => {
     el.mintSubmit.disabled = true;
     setMintHint("");
     try {
-      const token = state.turnstileId ? turnstileApi()?.getResponse(state.turnstileId) : "";
+      let token = "";
+      try {
+        const widget = turnstileApi();
+        if (state.turnstileId && widget) token = widget.getResponse(state.turnstileId) || "";
+      } catch {
+        token = "";
+      }
       if (!token) {
         setMintHint("Complete the Turnstile check first.", "error");
         return;
