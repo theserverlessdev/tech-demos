@@ -1,4 +1,4 @@
-import type { AppConfig, CreatedInbox, InboxInfo, MessageFull, MessageList, MessageSummary } from "../shared/types";
+import type { AppConfig, CreatedInbox, InboxInfo, MessageFull, MessageList, MessageSummary, MintedKey } from "../shared/types";
 
 // ------------------------------------------------------------------ storage
 
@@ -72,6 +72,8 @@ const state = {
   pollCount: 0,
   polling: false,
   gone: false,
+  mintedKey: null as string | null,
+  turnstileId: null as string | null,
 };
 
 // ------------------------------------------------------------------ DOM
@@ -99,6 +101,20 @@ const el = {
   inboxList: $<HTMLUListElement>("inbox-list"),
   inboxListEmpty: $("inbox-list-empty"),
   agentSnippet: $("agent-snippet"),
+  notices: $("notices"),
+  mintCard: $("mint-card"),
+  mintForm: $<HTMLFormElement>("mint-form"),
+  mintIntro: $("mint-intro"),
+  mintOff: $("mint-off"),
+  mintResult: $("mint-result"),
+  mintedKey: $<HTMLOutputElement>("minted-key"),
+  mintQuota: $("mint-quota"),
+  mintHint: $("mint-hint"),
+  mintSubmit: $<HTMLButtonElement>("mint-submit"),
+  agentName: $<HTMLInputElement>("agent-name"),
+  turnstile: $("turnstile"),
+  copyKey: $<HTMLButtonElement>("copy-key"),
+  revokeKey: $<HTMLButtonElement>("revoke-key"),
   list: document.querySelector<HTMLElement>(".list")!,
   count: $("count"),
   live: $("live"),
@@ -265,7 +281,7 @@ function renderSnippet(): void {
   const origin = location.origin;
   const address = state.active?.address ?? `name@${state.config?.domain ?? "email.lomvic.com"}`;
   el.agentSnippet.textContent = [
-    `KEY=…  # AGENT_API_KEY`,
+    `# KEY is the per-agent key minted in the UI (shown once).`,
     `curl -s -X POST ${origin}/api/v1/inboxes \\`,
     `  -H "Authorization: Bearer $KEY" \\`,
     `  -H "content-type: application/json" \\`,
@@ -434,12 +450,80 @@ function renderTab(): void {
   }
 }
 
+type TurnstileApi = {
+  render: (container: string | HTMLElement, options: Record<string, unknown>) => string;
+  reset: (id?: string) => void;
+  getResponse: (id?: string) => string;
+  remove: (id?: string) => void;
+};
+
+function turnstileApi(): TurnstileApi | undefined {
+  return (window as unknown as { turnstile?: TurnstileApi }).turnstile;
+}
+
+async function whenTurnstile(): Promise<TurnstileApi> {
+  for (let i = 0; i < 50; i++) {
+    const api = turnstileApi();
+    if (api) return api;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error("Turnstile failed to load.");
+}
+
+async function renderTurnstile(): Promise<void> {
+  const siteKey = state.config?.mint.turnstileSiteKey;
+  if (!siteKey || !state.config?.mint.enabled) return;
+  const api = await whenTurnstile();
+  if (state.turnstileId) {
+    api.remove(state.turnstileId);
+    state.turnstileId = null;
+    el.turnstile.replaceChildren();
+  }
+  state.turnstileId = api.render(el.turnstile, {
+    sitekey: siteKey,
+    action: "mint-key",
+    theme: document.documentElement.dataset.theme === "light" ? "light" : "dark",
+  });
+}
+
+function setMintHint(text: string, tone: "error" | "ok" | "" = ""): void {
+  el.mintHint.textContent = text;
+  el.mintHint.dataset.tone = tone;
+}
+
+function showMintResult(created: MintedKey): void {
+  state.mintedKey = created.key;
+  el.mintedKey.textContent = created.key;
+  el.mintQuota.textContent = `Quota: ${created.inboxLimit} active inboxes, ${created.createLimit} creates per 24 hours.`;
+  el.mintForm.hidden = true;
+  el.mintResult.hidden = false;
+}
+
+function renderMint(): void {
+  const mint = state.config?.mint;
+  const enabled = !!mint?.enabled && !!mint.turnstileSiteKey;
+  el.mintForm.hidden = !enabled || !!state.mintedKey;
+  el.mintOff.hidden = enabled || !!state.mintedKey;
+  el.mintResult.hidden = !state.mintedKey;
+  if (state.config?.hosted) {
+    el.notices.hidden = false;
+    el.mintIntro.textContent =
+      "This hosted demo is not a shared agent API. Mint your own key after Turnstile. The key is shown once.";
+  }
+}
+
 // ------------------------------------------------------------------ actions
 
 async function loadConfig(): Promise<void> {
   try {
     state.config = await api<AppConfig>("/config");
     renderMx();
+    renderMint();
+    try {
+      if (state.config.mint.enabled) await renderTurnstile();
+    } catch (err) {
+      setMintHint(err instanceof Error ? err.message : String(err), "error");
+    }
   } catch (err) {
     el.mx.dataset.state = "pending";
     el.mxText.textContent = err instanceof Error ? `The status check failed: ${err.message}` : "The status check failed.";
@@ -668,6 +752,61 @@ el.theme.addEventListener("click", () => {
   const next = document.documentElement.dataset.theme === "light" ? "dark" : "light";
   document.documentElement.dataset.theme = next;
   localStorage.setItem("theme", next);
+  if (state.config?.mint.enabled) void renderTurnstile();
+});
+
+el.mintForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  void (async () => {
+    el.mintSubmit.disabled = true;
+    setMintHint("");
+    try {
+      const token = state.turnstileId ? turnstileApi()?.getResponse(state.turnstileId) : "";
+      if (!token) {
+        setMintHint("Complete the Turnstile check first.", "error");
+        return;
+      }
+      const name = el.agentName.value.trim();
+      const created = await api<MintedKey>("/keys", {
+        method: "POST",
+        body: { name: name || undefined, turnstileToken: token },
+      });
+      showMintResult(created);
+      setMintHint("Copy the key now. It will not be shown again.", "ok");
+    } catch (err) {
+      setMintHint(err instanceof Error ? err.message : String(err), "error");
+      turnstileApi()?.reset(state.turnstileId ?? undefined);
+    } finally {
+      el.mintSubmit.disabled = !!state.mintedKey;
+    }
+  })();
+});
+
+el.copyKey.addEventListener("click", () => {
+  if (!state.mintedKey) return;
+  void navigator.clipboard.writeText(state.mintedKey).then(
+    () => setMintHint("Copied the API key.", "ok"),
+    () => setMintHint("The browser blocked the clipboard. Select the key and copy it.", "error"),
+  );
+});
+
+el.revokeKey.addEventListener("click", () => {
+  if (!state.mintedKey || !confirm("Revoke this API key? Inboxes it created stay until they expire.")) return;
+  void (async () => {
+    el.revokeKey.disabled = true;
+    try {
+      await api("/keys/revoke", { method: "POST", token: state.mintedKey ?? undefined });
+      state.mintedKey = null;
+      el.mintedKey.textContent = "";
+      renderMint();
+      setMintHint("The key is revoked.", "ok");
+      if (state.config?.mint.enabled) await renderTurnstile();
+    } catch (err) {
+      setMintHint(err instanceof Error ? err.message : String(err), "error");
+    } finally {
+      el.revokeKey.disabled = !state.mintedKey;
+    }
+  })();
 });
 
 document.addEventListener("visibilitychange", () => {

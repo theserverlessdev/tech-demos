@@ -7,6 +7,7 @@ export type InboxRow = {
   source: InboxSource;
   created_at: number;
   expires_at: number;
+  api_key_id: string | null;
 };
 
 type MessageRow = {
@@ -107,8 +108,10 @@ export async function insertInbox(db: D1Database, row: InboxRow): Promise<InboxR
   await deleteExpiredInbox(db, row.local_part, row.created_at);
   try {
     await db
-      .prepare("INSERT INTO inboxes (id, local_part, token_hash, source, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)")
-      .bind(row.id, row.local_part, row.token_hash, row.source, row.created_at, row.expires_at)
+      .prepare(
+        "INSERT INTO inboxes (id, local_part, token_hash, source, created_at, expires_at, api_key_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      )
+      .bind(row.id, row.local_part, row.token_hash, row.source, row.created_at, row.expires_at, row.api_key_id)
       .run();
     return row;
   } catch (err) {

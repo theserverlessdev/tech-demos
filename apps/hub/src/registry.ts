@@ -77,7 +77,7 @@ export const demos: DemoEntry[] = [
     slug: "temp-email",
     title: "Temp email",
     description:
-      "Disposable inboxes on email.lomvic.com. An Email Worker parses inbound mail into D1, a cron job expires old inboxes, and agents wait for sign-up codes through a bearer-token API.",
+      "Disposable inboxes on email.lomvic.com. Mint a Turnstile-gated agent key, or use the short-TTL web UI. Self-host the same Email Worker + D1 on your Cloudflare account.",
     tags: ["email-workers", "email-routing", "d1", "cron", "agents"],
     source: tempEmailFallbackSource,
   },

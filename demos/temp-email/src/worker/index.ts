@@ -9,14 +9,14 @@ const HUB_PREFIX = "/demos/temp-email";
 
 const PAGE_CSP = [
   "default-src 'self'",
-  // The zone injects the Cloudflare Web Analytics beacon.
-  "script-src 'self' https://static.cloudflareinsights.com",
+  // Analytics beacon plus Turnstile widget (key mint).
+  "script-src 'self' https://static.cloudflareinsights.com https://challenges.cloudflare.com",
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src https://fonts.gstatic.com",
   // Mail HTML renders in a srcdoc frame. The frame inherits this policy, and its own policy is stricter.
   "img-src 'self' data: https: http:",
   "connect-src 'self' https://cloudflareinsights.com",
-  "frame-src 'self'",
+  "frame-src 'self' https://challenges.cloudflare.com",
   "base-uri 'none'",
   "form-action 'self'",
   "frame-ancestors 'none'",

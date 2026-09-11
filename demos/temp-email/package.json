@@ -6,9 +6,32 @@
     "build": "bun build src/client/app.ts --outdir public/assets --target browser --minify",
     "dev": "bun run build && wrangler d1 migrations apply DB --local && wrangler dev",
     "deploy": "bun run build && wrangler d1 migrations apply DB --remote && wrangler deploy",
+    "deploy:selfhost": "bun run build && wrangler d1 migrations apply DB --remote -c wrangler.selfhost.jsonc && wrangler deploy -c wrangler.selfhost.jsonc",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
     "cf-typegen": "wrangler types",
     "smoke": "bun run scripts/smoke.ts"
+  },
+  "cloudflare": {
+    "bindings": {
+      "MAIL_DOMAIN": {
+        "description": "Domain that receives mail (MX + Email Routing catch-all). Example: `mail.example.com`."
+      },
+      "PUBLIC_ORIGIN": {
+        "description": "Public origin of this Worker, including `https://`. Used in sample mail and hostname checks."
+      },
+      "HOSTED_MODE": {
+        "description": "`true` only for the public demo on email.lomvic.com. Self-host: `false`."
+      },
+      "TURNSTILE_SITE_KEY": {
+        "description": "Public Turnstile site key ([create a widget](https://developers.cloudflare.com/turnstile/get-started/)). Dummy `1x00000000000000000000AA` for local."
+      },
+      "TURNSTILE_SECRET_KEY": {
+        "description": "Turnstile secret. Store with `wrangler secret put TURNSTILE_SECRET_KEY`. Dummy `1x0000000000000000000000000000000AA` for local."
+      },
+      "AGENT_API_KEY": {
+        "description": "Admin/fleet bootstrap secret. **Not** the public agent path. Generate with `openssl rand -hex 32`."
+      }
+    }
   },
   "dependencies": {
     "postal-mime": "3.0.0"

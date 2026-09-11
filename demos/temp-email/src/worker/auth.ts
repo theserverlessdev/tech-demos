@@ -1,3 +1,5 @@
+import { API_KEY_PREFIX } from "./limits";
+
 const encoder = new TextEncoder();
 
 export async function sha256(value: string): Promise<ArrayBuffer> {
@@ -28,11 +30,20 @@ export function newToken(): string {
   return btoa(String.fromCharCode(...bytes)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
 }
 
+/** Prefixed so logs and docs can tell an agent key from an inbox token without printing it. */
+export function newApiKey(): string {
+  return `${API_KEY_PREFIX}${newToken()}`;
+}
+
 export function newId(bytes = 10): string {
   return Array.from(crypto.getRandomValues(new Uint8Array(bytes)), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-export async function isAgentKey(token: string | null, env: Env): Promise<boolean> {
+export function hostedMode(env: Env): boolean {
+  return env.HOSTED_MODE === "true";
+}
+
+export async function isAdminKey(token: string | null, env: Env): Promise<boolean> {
   if (!token || !env.AGENT_API_KEY) return false;
   return secretEquals(token, env.AGENT_API_KEY);
 }

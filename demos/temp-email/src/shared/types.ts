@@ -62,6 +62,36 @@ export type AppConfig = {
   maxMessagesPerInbox: number;
   maxMessageBytes: number;
   mx: MxStatus;
+  /** Owner-hosted public demo (email.lomvic.com). Self-host sets this false. */
+  hosted: boolean;
+  mint: {
+    enabled: boolean;
+    turnstileSiteKey: string | null;
+    inboxLimit: number;
+    createLimit: number;
+  };
+};
+
+export type MintedKey = {
+  id: string;
+  name: string;
+  /** Plaintext key. Only the mint response includes this. */
+  key: string;
+  createdAt: number;
+  inboxLimit: number;
+  createLimit: number;
+};
+
+export type KeyInfo = {
+  id: string;
+  name: string;
+  createdAt: number;
+  lastUsedAt: number | null;
+  revoked: boolean;
+  inboxLimit: number;
+  activeInboxes: number;
+  createLimit: number;
+  createsInWindow: number;
 };
 
 export type ApiError = { error: { code: string; message: string } };

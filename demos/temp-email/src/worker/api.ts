@@ -1,5 +1,5 @@
-import type { AppConfig, CreatedInbox, MessageList, WaitResult } from "../shared/types";
-import { bearerToken, isAgentKey, newId, newToken, sha256Hex } from "./auth";
+import type { AppConfig, CreatedInbox, KeyInfo, MessageList, MintedKey, WaitResult } from "../shared/types";
+import { bearerToken, hostedMode, isAdminKey, newApiKey, newId, newToken, sha256Hex } from "./auth";
 import {
   countMessages,
   deleteInbox,
@@ -13,10 +13,12 @@ import {
   toInboxInfo,
   type InboxRow,
 } from "./db";
+import { consumeCreateQuota, countActiveInboxes, findKeyByHash, insertApiKey, revokeKey, toKeyInfo, touchKey, type ApiKeyRow } from "./keys";
 import { ingest, Refusal, sampleMime } from "./ingest";
-import { MAX_MESSAGES_PER_INBOX, MAX_RAW_BYTES, MAX_WAIT_SECONDS, MINUTE_MS, WAIT_POLL_MS } from "./limits";
+import { KEY_CREATE_LIMIT, KEY_INBOX_LIMIT, MAX_KEY_NAME, MAX_MESSAGES_PER_INBOX, MAX_RAW_BYTES, MAX_WAIT_SECONDS, MINUTE_MS, WAIT_POLL_MS } from "./limits";
 import { mxStatus } from "./mx";
 import { checkLocalPart, randomLocalPart } from "./names";
+import { mintEnabled, verifyTurnstile } from "./turnstile";
 
 export class HttpError extends Error {
   constructor(
@@ -28,7 +30,13 @@ export class HttpError extends Error {
   }
 }
 
-type Caller = { agent: boolean; token: string | null; ip: string };
+type Caller = {
+  admin: boolean;
+  agent: boolean;
+  key: ApiKeyRow | null;
+  token: string | null;
+  ip: string;
+};
 
 function json(body: unknown, status = 200): Response {
   return Response.json(body, { status, headers: { "cache-control": "no-store" } });
@@ -59,6 +67,29 @@ async function limit(binding: RateLimit, key: string): Promise<void> {
   if (!success) throw new HttpError(429, "rate_limited", "Too many requests. Wait one minute, then try again.");
 }
 
+function mintConfig(env: Env): AppConfig["mint"] {
+  const siteKey = env.TURNSTILE_SITE_KEY?.trim() || null;
+  return {
+    enabled: mintEnabled(env),
+    turnstileSiteKey: siteKey,
+    inboxLimit: KEY_INBOX_LIMIT,
+    createLimit: KEY_CREATE_LIMIT,
+  };
+}
+
+async function resolveCaller(request: Request, env: Env): Promise<Caller> {
+  const token = bearerToken(request);
+  const ip = request.headers.get("cf-connecting-ip") ?? "local";
+  if (!token) return { admin: false, agent: false, key: null, token: null, ip };
+  if (await isAdminKey(token, env)) return { admin: true, agent: true, key: null, token: null, ip };
+  const key = await findKeyByHash(env.DB, await sha256Hex(token));
+  if (key) {
+    await touchKey(env.DB, key.id, Date.now());
+    return { admin: false, agent: true, key, token: null, ip };
+  }
+  return { admin: false, agent: false, key: null, token, ip };
+}
+
 /** Accepts "name" or "name@domain". Rejects any other domain. Drops a "+tag". */
 function localPartOf(param: string, domain: string): string {
   let value: string;
@@ -72,14 +103,14 @@ function localPartOf(param: string, domain: string): string {
   return (at >= 0 ? value.slice(0, at) : value).split("+")[0];
 }
 
-/** The agent key opens every inbox. An inbox token opens only its own inbox. The two cases return the same 404. */
+/** Admin opens every inbox. A minted key opens inboxes it created. An inbox token opens only its own inbox. */
 async function authorizedInbox(env: Env, caller: Caller, param: string): Promise<InboxRow> {
   const inbox = await findActiveInbox(env.DB, localPartOf(param, env.MAIL_DOMAIN));
-  if (inbox && (caller.agent || (caller.token !== null && (await sha256Hex(caller.token)) === inbox.token_hash))) {
-    return inbox;
-  }
+  if (inbox && caller.admin) return inbox;
+  if (inbox && caller.key && inbox.api_key_id === caller.key.id) return inbox;
+  if (inbox && caller.token !== null && (await sha256Hex(caller.token)) === inbox.token_hash) return inbox;
   if (!caller.agent && !caller.token) {
-    throw new HttpError(401, "unauthorized", "Send the inbox token or the agent key as a bearer token.");
+    throw new HttpError(401, "unauthorized", "Send the inbox token or an API key as a bearer token.");
   }
   throw new HttpError(404, "not_found", "No active inbox has this address, or the token does not match it.");
 }
@@ -88,15 +119,71 @@ async function inboxInfo(env: Env, inbox: InboxRow) {
   return toInboxInfo(inbox, env.MAIL_DOMAIN, await countMessages(env.DB, inbox.id));
 }
 
+function keyName(body: Record<string, unknown>): string {
+  const raw = typeof body.name === "string" ? body.name.trim() : "";
+  if (!raw) return "agent";
+  if (raw.length > MAX_KEY_NAME) throw new HttpError(400, "bad_request", `Name must be ${MAX_KEY_NAME} characters or fewer.`);
+  if (!/^[\w .:@+/-]+$/u.test(raw)) throw new HttpError(400, "bad_request", "Use letters, digits, spaces, and .:@+/- in the name.");
+  return raw;
+}
+
+async function mintKey(request: Request, env: Env, caller: Caller): Promise<Response> {
+  await limit(env.CREATE_LIMIT, `mint:${caller.ip}`);
+  if (!mintEnabled(env)) {
+    throw new HttpError(503, "mint_disabled", "Key mint is off. Set TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY, or use the admin key.");
+  }
+  const body = await readJson(request);
+  const turnstileToken = typeof body.turnstileToken === "string" ? body.turnstileToken.trim() : "";
+  if (!(await verifyTurnstile(env, turnstileToken, caller.ip))) {
+    throw new HttpError(403, "turnstile_failed", "Turnstile did not pass. Retry the check, then mint again.");
+  }
+  const plaintext = newApiKey();
+  const now = Date.now();
+  const row = await insertApiKey(env.DB, {
+    id: newId(),
+    name: keyName(body),
+    key_hash: await sha256Hex(plaintext),
+    created_at: now,
+  });
+  const created: MintedKey = {
+    id: row.id,
+    name: row.name,
+    key: plaintext,
+    createdAt: row.created_at,
+    inboxLimit: row.inbox_limit,
+    createLimit: row.create_limit,
+  };
+  console.log(JSON.stringify({ event: "key_minted", keyId: row.id, hosted: hostedMode(env) }));
+  return json(created, 201);
+}
+
+async function requireMintedKey(caller: Caller): Promise<ApiKeyRow> {
+  if (caller.admin) throw new HttpError(400, "bad_request", "The admin key cannot be listed or revoked through this path.");
+  if (!caller.key) throw new HttpError(401, "unauthorized", "Send a minted API key as a bearer token.");
+  return caller.key;
+}
+
 async function createInbox(request: Request, env: Env, caller: Caller): Promise<Response> {
-  if (!caller.agent) await limit(env.CREATE_LIMIT, `create:${caller.ip}`);
+  if (caller.key) {
+    await limit(env.CREATE_LIMIT, `create:key:${caller.key.id}`);
+    const active = await countActiveInboxes(env.DB, caller.key.id);
+    if (active >= caller.key.inbox_limit) {
+      throw new HttpError(429, "quota", `This key already has ${caller.key.inbox_limit} active inboxes. Delete or wait for expiry.`);
+    }
+    if (!(await consumeCreateQuota(env.DB, caller.key))) {
+      throw new HttpError(429, "quota", `This key reached ${caller.key.create_limit} inbox creates in 24 hours.`);
+    }
+  } else if (!caller.admin) {
+    await limit(env.CREATE_LIMIT, `create:${caller.ip}`);
+  }
+
   const body = await readJson(request);
   const webTtl = Number(env.WEB_TTL_MINUTES);
   const maxTtl = Number(env.MAX_TTL_MINUTES);
 
   let ttlMinutes = webTtl;
   if (body.ttlMinutes !== undefined) {
-    if (!caller.agent) throw new HttpError(403, "forbidden", "Only the agent key can set ttlMinutes.");
+    if (!caller.agent) throw new HttpError(403, "forbidden", "Only an API key can set ttlMinutes.");
     if (!Number.isInteger(body.ttlMinutes) || (body.ttlMinutes as number) < 1 || (body.ttlMinutes as number) > maxTtl) {
       throw new HttpError(400, "bad_request", `ttlMinutes must be an integer from 1 to ${maxTtl}.`);
     }
@@ -120,10 +207,11 @@ async function createInbox(request: Request, env: Env, caller: Caller): Promise<
       source: caller.agent ? "agent" : "web",
       created_at: now,
       expires_at: now + ttlMinutes * MINUTE_MS,
+      api_key_id: caller.key?.id ?? null,
     });
     if (row) {
       const created: CreatedInbox = { ...toInboxInfo(row, env.MAIL_DOMAIN, 0), token };
-      console.log(JSON.stringify({ event: "inbox_created", source: row.source, custom: custom !== null, ttlMinutes }));
+      console.log(JSON.stringify({ event: "inbox_created", source: row.source, custom: custom !== null, ttlMinutes, keyed: caller.key !== null }));
       return json(created, 201);
     }
     if (custom !== null) throw new HttpError(409, "taken", `${custom}@${env.MAIL_DOMAIN} is in use. Choose another name.`);
@@ -193,10 +281,11 @@ async function deliver(request: Request, env: Env, inbox: InboxRow, via: "sample
 
 export async function handleApi(request: Request, env: Env, path: string): Promise<Response> {
   const url = new URL(request.url);
-  const token = bearerToken(request);
-  const agent = await isAgentKey(token, env);
-  const caller: Caller = { agent, token: agent ? null : token, ip: request.headers.get("cf-connecting-ip") ?? "local" };
-  if (!agent) await limit(env.READ_LIMIT, `read:${caller.ip}`);
+  const caller = await resolveCaller(request, env);
+  if (!caller.admin) {
+    const bucket = caller.key ? `read:key:${caller.key.id}` : `read:${caller.ip}`;
+    await limit(env.READ_LIMIT, bucket);
+  }
 
   const method = request.method;
   const parts = path.replace(/^\/api\/v1\/?/, "").split("/").filter(Boolean);
@@ -209,8 +298,26 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
       maxMessagesPerInbox: MAX_MESSAGES_PER_INBOX,
       maxMessageBytes: MAX_RAW_BYTES,
       mx: await mxStatus(env.MAIL_DOMAIN),
+      hosted: hostedMode(env),
+      mint: mintConfig(env),
     };
     return json(config);
+  }
+
+  if (parts[0] === "keys") {
+    if (parts.length === 1 && method === "POST") return mintKey(request, env, caller);
+    if (parts.length === 2 && parts[1] === "me" && method === "GET") {
+      const key = await requireMintedKey(caller);
+      const info: KeyInfo = await toKeyInfo(env.DB, key);
+      return json(info);
+    }
+    if (parts.length === 2 && parts[1] === "revoke" && method === "POST") {
+      const key = await requireMintedKey(caller);
+      await revokeKey(env.DB, key.id);
+      console.log(JSON.stringify({ event: "key_revoked", keyId: key.id }));
+      return json({ revoked: true });
+    }
+    throw new HttpError(404, "not_found", "Unknown API path.");
   }
 
   if (parts[0] !== "inboxes") throw new HttpError(404, "not_found", "Unknown API path.");
@@ -236,7 +343,7 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
     if (!caller.agent) await limit(env.CREATE_LIMIT, `sample:${caller.ip}`);
     return deliver(request, env, inbox, "sample");
   } else if (section === "deliver" && method === "POST" && !messageId) {
-    if (!caller.agent) throw new HttpError(403, "forbidden", "Only the agent key can deliver raw MIME.");
+    if (!caller.agent) throw new HttpError(403, "forbidden", "Only an API key can deliver raw MIME.");
     return deliver(request, env, inbox, "test");
   } else if (section === "messages" && extra.length === 0) {
     if (!messageId && method === "GET") {

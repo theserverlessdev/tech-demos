@@ -1,6 +1,6 @@
 // Smoke test: AGENT_API_KEY=… bun run scripts/smoke.ts [baseUrl] [--smtp]
 // --smtp posts raw MIME to wrangler dev's /cdn-cgi/handler/email, which runs the real email() handler. Local only.
-import type { AppConfig, CreatedInbox, InboxInfo, MessageFull, MessageList, WaitResult } from "../src/shared/types";
+import type { AppConfig, CreatedInbox, InboxInfo, MessageFull, MessageList, MintedKey, WaitResult } from "../src/shared/types";
 
 const args = process.argv.slice(2);
 const base = (args.find((a) => a.startsWith("http")) ?? "http://127.0.0.1:8797").replace(/\/$/, "");
@@ -48,6 +48,19 @@ const config = await call<AppConfig>("/config");
 check("config returns the mail domain", config.status === 200 && config.data.domain.includes("."), config);
 const domain = config.data.domain;
 console.log(`      MX live: ${config.data.mx.live} (${config.data.mx.records.join(", ") || "no MX records"})`);
+console.log(`      hosted: ${config.data.hosted}  mint.enabled: ${config.data.mint?.enabled}`);
+check("config includes mint + hosted", typeof config.data.hosted === "boolean" && !!config.data.mint, config.data);
+
+// ---------------------------------------------------------------- key mint (Turnstile)
+const noTurnstile = await call("/keys", { method: "POST", body: { name: "nope" } });
+check("mint without Turnstile is 403 or 503", noTurnstile.status === 403 || noTurnstile.status === 503, noTurnstile);
+
+const dummyMint = await call<MintedKey>("/keys", { method: "POST", body: { name: "smoke", turnstileToken: "XXXX.DUMMY.TOKEN.XXXX" } });
+const mintedOk = dummyMint.status === 201 && dummyMint.data.key?.startsWith("te1_");
+check("dummy Turnstile mints locally, or hosted without Turnstile secrets rejects mint", mintedOk || dummyMint.status === 403 || dummyMint.status === 503, dummyMint);
+if (mintedOk) console.log("      minted a local key (not printed)");
+else console.log(`      mint skipped (status ${dummyMint.status})`);
+const mintedKey = mintedOk ? dummyMint.data.key : undefined;
 
 // ---------------------------------------------------------------- web inbox and auth
 const web = await call<CreatedInbox>("/inboxes", { method: "POST", body: {} });
@@ -93,6 +106,16 @@ check("reserved name is 400", (await call("/inboxes", { method: "POST", token: k
 check("invalid name is 400", (await call("/inboxes", { method: "POST", token: key, body: { localPart: "-bad name-" } })).status === 400);
 const agentPath = `/inboxes/${agent.data.address}`;
 check("agent key opens a web inbox", (await call(`${path}/messages`, { token: key })).status === 200);
+if (mintedKey) {
+  check("minted key cannot open a web inbox", (await call(`${path}/messages`, { token: mintedKey })).status === 404);
+  const keyed = await call<CreatedInbox>("/inboxes", { method: "POST", token: mintedKey, body: { ttlMinutes: 5 } });
+  check("minted key creates an agent inbox", keyed.status === 201 && keyed.data.source === "agent", keyed);
+  const keyedPath = `/inboxes/${keyed.data.address}`;
+  check("minted key reads its inbox", (await call(`${keyedPath}/messages`, { token: mintedKey })).status === 200);
+  check("revoke minted key", (await call("/keys/revoke", { method: "POST", token: mintedKey })).status === 200);
+  check("revoked key cannot read its inbox", (await call(`${keyedPath}/messages`, { token: mintedKey })).status === 404);
+  check("delete inbox left by revoked key (admin)", (await call(keyedPath, { method: "DELETE", token: key })).status === 200);
+}
 
 const idle = await call<WaitResult>(`${agentPath}/wait?after=0&timeout=2`, { token: key });
 check("wait with no mail times out", idle.status === 200 && idle.data.timedOut && idle.data.messages.length === 0, idle.data);

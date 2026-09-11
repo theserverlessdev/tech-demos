@@ -26,9 +26,13 @@
     "MAIL_DOMAIN": "email.lomvic.com",
     "PUBLIC_ORIGIN": "https://email.lomvic.com",
     "WEB_TTL_MINUTES": "60",
-    "MAX_TTL_MINUTES": "1440"
+    "MAX_TTL_MINUTES": "1440",
+    // Hosted public demo. Self-host: set "false" and use wrangler.selfhost.jsonc.
+    "HOSTED_MODE": "true",
+    // Public Turnstile site key. Secret is TURNSTILE_SECRET_KEY (wrangler secret put).
+    "TURNSTILE_SITE_KEY": ""
   },
-  // AGENT_API_KEY is a secret: wrangler secret put AGENT_API_KEY
+  // Secrets (never commit): AGENT_API_KEY (admin/fleet only), TURNSTILE_SECRET_KEY
   "triggers": { "crons": ["*/15 * * * *"] },
   "routes": [
     { "pattern": "email.lomvic.com", "custom_domain": true },

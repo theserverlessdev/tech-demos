@@ -1,26 +1,46 @@
 # Temp email
 
-Disposable inboxes on `email.lomvic.com`, inspired by [hirotomasato/tempik](https://github.com/hirotomasato/tempik).
+Disposable inboxes. Two ways to run it:
 
-- **Live:** <https://email.lomvic.com>
+| | **Hosted demo** | **Your Cloudflare (self-host)** |
+| --- | --- | --- |
+| URL | <https://email.lomvic.com> | Your workers.dev or custom domain |
+| Mail | `@email.lomvic.com` | Your zone + MX (see [SETUP.md](./SETUP.md)) |
+| Agent API | Mint a **per-agent key** after Turnstile. Not a shared secret. | You set Turnstile + an admin secret. Full product. |
+| Rules | Demo / no SLA, short TTL, rate limits, acceptable use | Yours |
+
 - **Plan:** [PLAN.md](./PLAN.md)
-- **Setup, owner steps, and the agent API:** [SETUP.md](./SETUP.md)
+- **What changed vs Tempik:** [CHANGELOG.md](./CHANGELOG.md)
+- **Owner + self-host steps, agent API:** [SETUP.md](./SETUP.md)
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/theserverlessdev/tech-demos/tree/main/demos/temp-email)
+
+The button clones `demos/temp-email`. Set `MAIL_DOMAIN`, `PUBLIC_ORIGIN`, `HOSTED_MODE=false`, Turnstile keys, and `AGENT_API_KEY` (admin only). Then attach Email Routing — details in SETUP. If the button cannot apply this monorepo subdirectory cleanly, copy the folder and run `bun run deploy:selfhost` with [wrangler.selfhost.jsonc](./wrangler.selfhost.jsonc).
 
 ## How it works
 
 ```text
-sender ─► Cloudflare MX (email.lomvic.com) ─► Email Routing catch-all ─► email() ─► postal-mime ─► D1
-browser ─► /api/v1 (inbox token) ─┐
-agent   ─► /api/v1 (agent key)  ──┴► fetch() ─► D1 ◄─ scheduled() deletes expired inboxes every 15 minutes
+sender ─► Cloudflare MX ─► Email Routing catch-all ─► email() ─► postal-mime ─► D1
+browser ─► /api/v1 (inbox token) ──────────────┐
+agent   ─► /api/v1 (minted key, after Turnstile) ┴► fetch() ─► D1
+admin   ─► /api/v1 (AGENT_API_KEY, fleet only) ─┘     ▲
+scheduled() deletes expired inboxes every 15 minutes ─┘
 ```
 
 1. A visitor presses **New address**. The Worker writes an inbox row with an expiry time and returns a random token. The browser keeps the token in `localStorage`.
-2. Email Routing sends each message for the subdomain to `email()`. The handler rejects other domains, unknown or expired inboxes, full inboxes, and messages over 1 MB.
+2. Email Routing sends each message for the mail domain to `email()`. The handler rejects other domains, unknown or expired inboxes, full inboxes, and messages over 1 MB.
 3. `ingest()` parses the MIME, cuts large bodies, finds one-time codes and links, and inserts one row.
 4. The page asks for new messages every 5 seconds. HTML mail renders in a sandboxed frame with no scripts. Remote images stay blocked until the visitor allows them.
-5. An agent calls `wait`, a long poll that returns the next message with its codes.
+5. An agent **mints a key** (Turnstile + optional name). The key is shown once. `wait` long-polls until the next message with its codes.
 
-**Send sample** and the agent `deliver` call run the same `ingest()` path as SMTP. You can use them to test the demo before MX is live.
+**Send sample** and the agent `deliver` call run the same `ingest()` path as SMTP.
+
+## Notices
+
+- Demo / no SLA. Mail may drop. Testing only.
+- No fraud, spam, phishing, or ToS-laundering at scale.
+- Inbound mail is kept briefly and deleted on TTL or inbox delete.
+- Abuse: [abuse@lomvic.com](mailto:abuse@lomvic.com) · [Contact](https://theserverless.dev/contact)
 
 ## Files
 
@@ -28,9 +48,10 @@ agent   ─► /api/v1 (agent key)  ──┴► fetch() ─► D1 ◄─ schedu
 | --- | --- |
 | `src/worker/index.ts` | `fetch()`, `email()`, `scheduled()`, page CSP, and hub redirects |
 | `src/worker/api.ts` | `/api/v1` routes, auth, rate limits, and the long poll |
+| `src/worker/keys.ts` | Minted API keys in D1 |
+| `src/worker/turnstile.ts` | Siteverify for key mint |
 | `src/worker/ingest.ts` | MIME to row, and the sample message |
-| `src/worker/extract.ts` | Snippets, codes, and links |
-| `src/worker/db.ts` | D1 queries |
 | `src/client/app.ts` | Browser UI |
-| `migrations/0001_init.sql` | D1 schema |
+| `migrations/` | D1 schema |
+| `wrangler.selfhost.jsonc` | Template without lomvic/TSD routes |
 | `scripts/smoke.ts` | End-to-end checks for local or live |

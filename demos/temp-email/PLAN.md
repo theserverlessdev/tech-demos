@@ -75,3 +75,36 @@ Inbound demo mail lives on the throwaway zone `lomvic.com` (subdomain `email.lom
 - Push updates through a Durable Object WebSocket in place of polling.
 - Reply and send through Email Sending.
 - An MCP server for agents.
+
+## Productize (2026-09-11)
+
+Hosted demo on `email.lomvic.com` is not a free shared agent API. Self-host is the full product.
+
+### Goal
+
+A visitor still mints a short-TTL inbox in the browser. An agent mints its **own** API key after Cloudflare Turnstile (optional name). The key is shown once, stored hashed, quota-limited, and revocable. The old `AGENT_API_KEY` secret stays **admin/fleet only** so the owner is not locked out.
+
+### In
+
+- D1 `api_keys` plus `inboxes.api_key_id`. Minted keys open only inboxes they created. Admin opens every inbox.
+- `POST /api/v1/keys` verifies Turnstile server-side, then returns the plaintext key once.
+- Hosted UI: demo/no-SLA banner, acceptable use, short privacy, abuse/Contact. Turnstile-gated mint. Deploy to Cloudflare button.
+- Self-host: README/SETUP split, Deploy Button, `wrangler.selfhost.jsonc`, zone MX docs. Operator sets their own admin secret and Turnstile keys.
+- Mobile pass: 44px tap targets, usable mint + inbox list, remote-images control stays reachable.
+- `CHANGELOG.md` vs [Tempik](https://github.com/hirotomasato/tempik).
+
+### Out
+
+- User accounts, email login, billing.
+- Workers for Platforms / dispatch namespaces.
+- Changing apex MX on `theserverless.dev`.
+
+### Auth
+
+| Caller | How | Powers |
+| --- | --- | --- |
+| Web | no bearer, IP rate limit | Create inbox at web TTL. Inbox token (hash) reads that inbox. |
+| Minted agent key | `Authorization: Bearer te1_…` after Turnstile mint | Create/read/wait/deliver/extend/delete **own** inboxes. Set `ttlMinutes`. Quotas. |
+| Admin `AGENT_API_KEY` | same header, timing-safe compare | Fleet: every inbox, no quota. Not advertised as the public agent path. |
+
+Hosted: mint fails closed without Turnstile secret. Self-host: mint requires Turnstile when the secret is set; otherwise agents use the operator's admin key.
