@@ -2,17 +2,32 @@
   "proposed": [],
   "built": [
     {
+      "slug": "apollo-desk",
+      "repo": "https://github.com/galfrevn/apollo",
+      "title": "Apollo",
+      "source": "google-sheet-repo-radar",
+      "approved_at": "2026-09-11",
+      "why": "Physical-agent desk brain on Workers + Agents SDK / DO; browser desk client",
+      "built_at": "2026-09-11",
+      "path": "demos/apollo-desk",
+      "url": "https://tech-demos.theserverless.dev/demos/apollo-desk/",
+      "subdomain": "https://apollo-desk.tech-demos.theserverless.dev/",
+      "worker": "tech-demos-apollo-desk",
+      "branch": "demo/apollo-desk"
+    },
+    {
       "slug": "cloudflare-os",
       "repo": "https://github.com/cloudflare/cloudflare-os",
       "title": "Cloudflare OS",
       "source": "google-sheet-repo-radar",
-      "approved_at": "2026-09-11",
-      "why": "Agent workspace: gadgets, Dynamic Workers/Facets, Durable Objects, Gatekeepers — impressive CF platform showcase",
       "built_at": "2026-09-11",
-      "url": "https://tech-demos.theserverless.dev/demos/cloudflare-os/",
-      "subdomain": "https://cloudflare-os.tech-demos.theserverless.dev/",
-      "worker": "tech-demos-cloudflare-os",
-      "branch": "demo/cloudflare-os"
+      "path": "demos/cloudflare-os",
+      "url": "https://tech-demos.theserverless.dev/demos/cloudflare-os"
+    },
+    {
+      "slug": "hello-dynamic",
+      "title": "Hello Dynamic Worker",
+      "built_at": "2026-09-10"
     }
   ],
   "skipped": [

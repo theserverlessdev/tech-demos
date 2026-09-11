@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark light" />
+  <meta name="theme-color" content="#0e0e11" />
+  <title>Apollo desk · Tech Demos · theserverless.dev</title>
+  <meta name="description" content="A browser desk that talks to an Apollo-style brain: one Agents SDK Durable Object with SQLite memory, voice turns on Workers AI, tools, timers, and an MCP bridge to the desk." />
+  <meta property="og:title" content="Apollo desk" />
+  <meta property="og:description" content="Hold to talk to an Agents SDK brain with SQLite memory, tools, and an MCP device bridge." />
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Hanken+Grotesk:wght@400..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script>
+    (function () {
+      try {
+        var stored = localStorage.getItem("theme");
+        var theme = stored || (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+        document.documentElement.setAttribute("data-theme", theme);
+      } catch (e) {}
+    })();
+  </script>
+  <link rel="stylesheet" href="./assets/desk.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="https://tech-demos.theserverless.dev/" aria-label="Tech Demos gallery">
+      <svg class="brand__mark" width="26" height="26" viewBox="0 -3 128 128" aria-hidden="true">
+        <g stroke="currentColor" stroke-width="6" stroke-linecap="round" opacity="0.45"><line x1="4" y1="58" x2="20" y2="58"/><line x1="1" y1="72" x2="19" y2="72"/><line x1="6" y1="86" x2="22" y2="86"/></g>
+        <path d="M44 92 C31 92 20 82 20 69 C20 57 29 47 41 46 C45 33 57 24 70 24 C85 24 98 35 100 51 C110 53 118 62 118 72 C118 83 109 92 97 92 Z" fill="none" stroke="currentColor" stroke-width="7.5" stroke-linejoin="round"/>
+        <path d="M69 36 L50 71 L63 71 L57 102 L88 60 L72 60 L80 36 Z" fill="currentColor"/>
+      </svg>
+      <span>Tech Demos</span>
+    </a>
+    <div class="topbar__title">
+      <h1>Apollo desk</h1>
+      <p>A browser stand-in for the ESP32 desk. The brain is one Agents SDK Durable Object.</p>
+    </div>
+    <div class="topbar__actions">
+      <span class="conn" id="conn" data-state="connecting"><span class="conn__dot"></span><span id="conn-label">Connecting</span></span>
+      <button class="btn btn-ghost" id="copy-link" type="button" title="Copy the link to this desk">
+        <span class="mono" id="desk-id">desk</span>
+      </button>
+      <button class="btn" id="new-desk" type="button">New desk</button>
+      <a class="btn btn-ghost" href="https://github.com/galfrevn/apollo" rel="noopener" target="_blank">Upstream</a>
+      <button class="btn btn-ghost btn-icon" id="theme" type="button" aria-label="Switch colour theme">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9Z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="stage" aria-label="Simulated desk">
+      <div class="device" id="device">
+        <div class="device__body">
+          <div class="device__screen" id="screen" role="img" aria-label="Apollo's face">
+            <canvas id="face" width="720" height="720"></canvas>
+            <div class="screen__top" id="screen-top"></div>
+            <div class="screen__caption" id="caption" aria-live="polite"></div>
+            <div class="screen__dashboard" id="dashboard" hidden></div>
+            <div class="screen__confirm" id="confirm" hidden>
+              <p id="confirm-summary"></p>
+              <div class="screen__confirm-actions">
+                <button type="button" class="pill pill-no" id="confirm-no">No</button>
+                <button type="button" class="pill pill-yes" id="confirm-yes">Yes</button>
+              </div>
+            </div>
+          </div>
+          <div class="device__meta">
+            <span class="device__led" id="led"></span>
+            <span class="device__mode" id="mode-label">default</span>
+            <span class="device__vol" title="Speaker volume"><span id="vol-bar"></span></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="controls">
+        <button class="talk" id="talk" type="button" aria-describedby="talk-hint">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+          <span id="talk-label">Hold to talk</span>
+          <canvas id="level" width="120" height="24" aria-hidden="true"></canvas>
+        </button>
+        <p class="hint" id="talk-hint">Hold the button or the space bar while you speak. Release to send.</p>
+
+        <form class="say" id="say">
+          <label class="sr-only" for="say-input">Type to Apollo</label>
+          <input id="say-input" name="text" autocomplete="off" maxlength="500" placeholder="Or type to Apollo" />
+          <button class="btn btn-primary" type="submit">Send</button>
+        </form>
+
+        <div class="gestures" role="group" aria-label="Touch gestures">
+          <button class="btn" type="button" data-gesture="swipe_left" title="Swipe left: previous speech mode">Swipe left</button>
+          <button class="btn" type="button" data-gesture="tap" title="Tap: clock and weather">Tap</button>
+          <button class="btn" type="button" data-gesture="double_tap" title="Double tap: stop speaking">Double tap</button>
+          <button class="btn" type="button" data-gesture="swipe_right" title="Swipe right: next speech mode">Swipe right</button>
+        </div>
+      </div>
+
+      <p class="stage__foot">
+        A slice of <a href="https://github.com/galfrevn/apollo" rel="noopener" target="_blank">galfrevn/apollo</a>.
+        <a href="https://github.com/theserverlessdev/tech-demos/blob/main/demos/apollo-desk/PLAN.md" rel="noopener" target="_blank">The plan</a> maps each handbook chapter to this demo.
+      </p>
+    </section>
+
+    <section class="console" aria-label="Brain console">
+      <nav class="tabs" role="tablist">
+        <button role="tab" class="tab" aria-selected="true" data-tab="talk">Conversation</button>
+        <button role="tab" class="tab" aria-selected="false" data-tab="memory">Memory <span class="tab__count" id="facts-count">0</span></button>
+        <button role="tab" class="tab" aria-selected="false" data-tab="trace">Turn trace</button>
+        <button role="tab" class="tab" aria-selected="false" data-tab="wire">Wire</button>
+      </nav>
+
+      <div class="panel" data-panel="talk">
+        <div class="try" role="group" aria-label="Suggested turns">
+          <div class="try__chips" id="chips"></div>
+        </div>
+        <p class="panel__note" id="talk-note">Messages come from this desk's SQLite table. Refresh the page and they stay.</p>
+        <ol class="transcript" id="transcript"></ol>
+      </div>
+
+      <div class="panel" data-panel="memory" hidden>
+        <div class="mem-grid">
+          <section class="card">
+            <h2>Facts</h2>
+            <p class="card__sub">Each fact has a 384-dimension vector from <code>bge-small-en-v1.5</code>. The vector is a BLOB in the <code>memories</code> table.</p>
+            <ul class="facts" id="facts"></ul>
+            <form class="probe" id="probe">
+              <label class="sr-only" for="probe-input">Search memory by meaning</label>
+              <input id="probe-input" placeholder="Search memory by meaning" maxlength="200" autocomplete="off" />
+              <button class="btn" type="submit">Score</button>
+            </form>
+            <ul class="scores" id="scores"></ul>
+          </section>
+          <section class="card">
+            <h2>Timers and reminders</h2>
+            <p class="card__sub">Rows in <code>cf_agents_schedules</code>, made by <code>this.schedule()</code>.</p>
+            <ul class="rows" id="schedules"></ul>
+          </section>
+          <section class="card">
+            <h2>Lists</h2>
+            <ul class="rows" id="lists"></ul>
+          </section>
+          <section class="card">
+            <h2>Agent state</h2>
+            <p class="card__sub">Synced to every tab by <code>setState()</code>.</p>
+            <dl class="kv" id="state"></dl>
+          </section>
+          <section class="card card-wide">
+            <h2>SQLite tables</h2>
+            <p class="card__sub">Everything this desk knows lives in one Durable Object database.</p>
+            <ul class="tables" id="tables"></ul>
+            <p class="budget" id="budget"></p>
+          </section>
+        </div>
+      </div>
+
+      <div class="panel" data-panel="trace" hidden>
+        <p class="panel__note">Live steps for each turn: speech to text, memory recall, model rounds, tools, and speech.</p>
+        <ol class="trace" id="trace"></ol>
+      </div>
+
+      <div class="panel" data-panel="wire" hidden>
+        <p class="panel__note">Frames on the WebSocket, with the Apollo device protocol names. Binary audio frames are counted, not shown.</p>
+        <ol class="wire" id="wire"></ol>
+      </div>
+    </section>
+  </main>
+
+  <noscript>This demo needs JavaScript.</noscript>
+  <script type="module" src="./assets/desk.js"></script>
+</body>
+</html>
