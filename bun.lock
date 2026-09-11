@@ -20,6 +20,17 @@
     "demos/_template": {
       "name": "@tech-demos/demo-template",
     },
+    "demos/cloudflare-os": {
+      "name": "@tech-demos/cloudflare-os",
+      "dependencies": {
+        "capnweb": "0.12.0",
+      },
+      "devDependencies": {
+        "@cloudflare/workers-types": "^4.20250906.0",
+        "typescript": "^5.9.2",
+        "wrangler": "^4.40.0",
+      },
+    },
     "demos/hello-dynamic": {
       "name": "@tech-demos/hello-dynamic",
     },
@@ -170,6 +181,8 @@
 
     "@speed-highlight/core": ["@speed-highlight/core@1.2.24", "", {}, "sha512-qeW2e1l78afw8VhRPfPQ1Gjj+KU5XFQ/OFV5ti6eTa9bruO7mJyZtA4vw0ofqmA3tKCkROE9xLk3VZoeRc98nw=="],
 
+    "@tech-demos/cloudflare-os": ["@tech-demos/cloudflare-os@workspace:demos/cloudflare-os"],
+
     "@tech-demos/demo-template": ["@tech-demos/demo-template@workspace:demos/_template"],
 
     "@tech-demos/hello-dynamic": ["@tech-demos/hello-dynamic@workspace:demos/hello-dynamic"],
@@ -179,6 +192,8 @@
     "@tech-demos/shared": ["@tech-demos/shared@workspace:packages/shared"],
 
     "blake3-wasm": ["blake3-wasm@2.1.5", "", {}, "sha512-F1+K8EbfOZE49dtoPtmxUQrpXaBIl3ICvasLh+nJta0xkz+9kF/7uet9fLnwKqhDrmj6g+6K3Tw9yQPUg2ka5g=="],
+
+    "capnweb": ["capnweb@0.12.0", "", {}, "sha512-jgZ/LMtMVTi+RVlooIslH78Gg23XbDTdvcLghWx3oz17D6u5GuJARt+uhZk/wcTo+f81eeabfnow4d3zLBj+JQ=="],
 
     "cookie": ["cookie@1.1.1", "", {}, "sha512-ei8Aos7ja0weRpFzJnEA9UHJ/7XQmqglbRwnf2ATjcB9Wq874VKH9kfjjirM6UhU2/E5fFYadylyhFldcqSidQ=="],
 

@@ -1,0 +1,8 @@
+{
+  "id": "headlines",
+  "title": "Headlines",
+  "icon": "newspaper",
+  "description": "A Hacker News front-page reader. The gadget has no network access, so each fetch goes through the WEB gatekeeper and waits for a person to approve it.",
+  "bindings": ["WEB", "AI"],
+  "prompt": "Refresh the Hacker News front page and summarize it in three bullets."
+}

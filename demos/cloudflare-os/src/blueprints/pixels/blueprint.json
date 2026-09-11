@@ -1,0 +1,8 @@
+{
+  "id": "pixels",
+  "title": "Pixel Board",
+  "icon": "palette",
+  "description": "A shared 32 by 32 pixel canvas. Every stroke syncs live to all viewers, and the agent can draw a full picture in one call.",
+  "bindings": [],
+  "prompt": "Draw a small orange cloud in the middle of the pixel board."
+}
