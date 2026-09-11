@@ -2,6 +2,19 @@
   "proposed": [],
   "built": [
     {
+      "slug": "temp-email",
+      "repo": "https://github.com/hirotomasato/tempik",
+      "title": "Tempik (disposable temp mail)",
+      "why": "Self-hosted disposable email on Workers: Email Worker + D1, with an agent API",
+      "built_at": "2026-09-11",
+      "path": "demos/temp-email",
+      "url": "https://tech-demos.theserverless.dev/demos/temp-email",
+      "subdomain": "https://test-email.theserverless.dev/",
+      "worker": "tech-demos-temp-email",
+      "branch": "demo/temp-email",
+      "pending": "Owner must add Email Routing for the test-email subdomain (MX + SPF). See demos/temp-email/SETUP.md."
+    },
+    {
       "slug": "apollo-desk",
       "repo": "https://github.com/galfrevn/apollo",
       "title": "Apollo",

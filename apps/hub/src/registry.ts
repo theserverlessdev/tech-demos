@@ -60,7 +60,27 @@ const apolloDeskFallbackSource = `export default {
 };
 `;
 
+// temp-email is a standalone Worker (Email Worker, D1, cron). Its home is test-email.theserverless.dev, because
+// the addresses live on that domain. The zone route sends /demos/temp-email* to the Worker, which redirects there.
+// This source only runs if that route is missing.
+const tempEmailFallbackSource = `export default {
+  fetch(request) {
+    const url = new URL(request.url);
+    const rest = url.pathname.replace(/^\\/demos\\/temp-email/, "") || "/";
+    return Response.redirect("https://test-email.theserverless.dev" + rest + url.search, 302);
+  },
+};
+`;
+
 export const demos: DemoEntry[] = [
+  {
+    slug: "temp-email",
+    title: "Temp email",
+    description:
+      "Disposable inboxes on test-email.theserverless.dev. An Email Worker parses inbound mail into D1, a cron job expires old inboxes, and agents wait for sign-up codes through a bearer-token API.",
+    tags: ["email-workers", "email-routing", "d1", "cron", "agents"],
+    source: tempEmailFallbackSource,
+  },
   {
     slug: "apollo-desk",
     title: "Apollo desk",

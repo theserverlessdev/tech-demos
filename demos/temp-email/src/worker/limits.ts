@@ -1,0 +1,10 @@
+export const MAX_RAW_BYTES = 1024 * 1024;
+export const MAX_MESSAGES_PER_INBOX = 50;
+export const MAX_TEXT_CHARS = 256 * 1024;
+export const MAX_HTML_CHARS = 512 * 1024;
+export const MAX_WAIT_SECONDS = 25;
+export const WAIT_POLL_MS = 1000;
+export const SNIPPET_CHARS = 160;
+export const MAX_CODES = 5;
+export const MAX_LINKS = 20;
+export const MINUTE_MS = 60_000;
