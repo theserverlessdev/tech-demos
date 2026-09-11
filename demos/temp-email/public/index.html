@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark light" />
+  <meta name="theme-color" content="#0e0e11" />
+  <title>Temp email · email.lomvic.com · Tech Demos</title>
+  <meta name="description" content="Disposable addresses on email.lomvic.com. An Email Worker parses inbound mail into D1, and agents read it through a bearer-token API." />
+  <meta property="og:title" content="Temp email" />
+  <meta property="og:description" content="Mint a disposable address, read inbound mail, and let an agent wait for the sign-up code." />
+  <meta name="referrer" content="no-referrer" />
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Hanken+Grotesk:wght@400..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script src="/assets/theme.js"></script>
+  <link rel="stylesheet" href="/assets/app.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="https://tech-demos.theserverless.dev/" aria-label="Tech Demos gallery">
+      <svg class="brand__mark" width="26" height="26" viewBox="0 -3 128 128" aria-hidden="true">
+        <g stroke="currentColor" stroke-width="6" stroke-linecap="round" opacity="0.45"><line x1="4" y1="58" x2="20" y2="58"/><line x1="1" y1="72" x2="19" y2="72"/><line x1="6" y1="86" x2="22" y2="86"/></g>
+        <path d="M44 92 C31 92 20 82 20 69 C20 57 29 47 41 46 C45 33 57 24 70 24 C85 24 98 35 100 51 C110 53 118 62 118 72 C118 83 109 92 97 92 Z" fill="none" stroke="currentColor" stroke-width="7.5" stroke-linejoin="round"/>
+        <path d="M69 36 L50 71 L63 71 L57 102 L88 60 L72 60 L80 36 Z" fill="currentColor"/>
+      </svg>
+      <span>Tech Demos</span>
+    </a>
+    <div class="topbar__title">
+      <h1>Temp email</h1>
+      <p>Disposable inboxes. An Email Worker writes each message to D1.</p>
+    </div>
+    <div class="topbar__actions">
+      <a class="btn btn-ghost" href="#agent-api" id="agent-link">Agent API</a>
+      <a class="btn btn-ghost" href="https://github.com/hirotomasato/tempik" rel="noopener" target="_blank">Upstream</a>
+      <button class="btn btn-ghost btn-icon" id="theme" type="button" aria-label="Switch colour theme">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9Z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="mx" id="mx" data-state="checking" role="status">
+    <span class="mx__dot"></span>
+    <span id="mx-text">Checking the MX record…</span>
+  </div>
+
+  <main class="layout" id="layout" data-view="list">
+    <!-- ============================================================ address rail -->
+    <aside class="rail" aria-label="Address">
+      <section class="card address" id="address-card" data-state="empty">
+        <p class="eyebrow">Your address</p>
+        <div class="address__row">
+          <output class="address__value mono" id="address" aria-live="polite">No inbox yet</output>
+          <button class="btn btn-icon" id="copy" type="button" aria-label="Copy the address" disabled>
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg>
+          </button>
+        </div>
+        <div class="expiry" id="expiry" hidden>
+          <div class="expiry__bar"><span id="expiry-fill"></span></div>
+          <p class="expiry__text"><span id="expiry-text">--:--</span> left</p>
+        </div>
+        <div class="address__actions">
+          <button class="btn btn-primary" id="new-random" type="button">New address</button>
+          <button class="btn" id="extend" type="button" disabled>Add 1 hour</button>
+          <button class="btn btn-ghost btn-danger" id="delete-inbox" type="button" disabled>Delete</button>
+        </div>
+        <form class="custom" id="custom-form">
+          <label class="custom__label" for="custom-name">Or choose a name. The domain is <span class="mono" id="custom-domain">email.lomvic.com</span>.</label>
+          <div class="custom__row">
+            <input id="custom-name" name="localPart" autocomplete="off" spellcheck="false" maxlength="32" placeholder="my-test" />
+            <button class="btn" type="submit">Create</button>
+          </div>
+        </form>
+        <p class="hint" id="hint" role="alert"></p>
+      </section>
+
+      <section class="card sample">
+        <p class="eyebrow">No mail yet?</p>
+        <p>Send a sample sign-up message. It goes through the same MIME parser and D1 insert as inbound SMTP.</p>
+        <button class="btn" id="send-sample" type="button" disabled>Send sample</button>
+      </section>
+
+      <section class="card devices">
+        <p class="eyebrow">Inboxes in this browser</p>
+        <ul class="inbox-list" id="inbox-list"></ul>
+        <p class="devices__empty" id="inbox-list-empty">Inboxes you create show here. Their tokens stay in this browser.</p>
+      </section>
+
+      <details class="card agent" id="agent-api">
+        <summary><span class="eyebrow">Agent API</span><span class="agent__hint">Bearer key, long poll</span></summary>
+        <p>Agents use the same API with the shared key. The wait call returns the next message with its codes and links.</p>
+        <pre class="code mono" id="agent-snippet"></pre>
+        <p><a href="https://github.com/theserverlessdev/tech-demos/blob/main/demos/temp-email/SETUP.md#agent-api" rel="noopener" target="_blank">All endpoints in SETUP.md</a></p>
+      </details>
+    </aside>
+
+    <!-- ============================================================ message list -->
+    <section class="list" aria-label="Messages">
+      <header class="list__head">
+        <h2>Inbox</h2>
+        <span class="count" id="count">0</span>
+        <span class="live" id="live" data-state="idle" title="The page checks for new mail every 5 seconds"><span class="live__dot"></span><span id="live-text">Idle</span></span>
+      </header>
+      <ol class="messages" id="messages"></ol>
+      <div class="list__empty" id="list-empty">
+        <div class="pulse" aria-hidden="true"></div>
+        <p class="list__empty-title" id="empty-title">Create an address to start</p>
+        <p class="list__empty-body" id="empty-body">New mail shows here within a few seconds.</p>
+      </div>
+    </section>
+
+    <!-- ============================================================ viewer -->
+    <section class="viewer" id="viewer" aria-label="Message">
+      <div class="viewer__empty" id="viewer-empty">
+        <svg class="viewer__glyph" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="6" y="11" width="36" height="26" rx="3"/><path d="m7 13 17 13 17-13"/></svg>
+        <p>Select a message to read it.</p>
+      </div>
+      <article class="mail" id="mail" hidden>
+        <header class="mail__head">
+          <button class="btn btn-ghost mail__back" id="back" type="button">← Inbox</button>
+          <div class="mail__title-row">
+            <h2 class="mail__subject" id="mail-subject"></h2>
+            <button class="btn btn-ghost btn-danger" id="delete-message" type="button">Delete</button>
+          </div>
+          <dl class="mail__meta">
+            <dt>From</dt><dd id="mail-from"></dd>
+            <dt>To</dt><dd id="mail-to"></dd>
+            <dt>Received</dt><dd id="mail-date"></dd>
+          </dl>
+          <div class="mail__chips" id="mail-chips"></div>
+          <div class="codes" id="mail-codes" hidden>
+            <span class="codes__label">Likely codes</span>
+            <div class="codes__list" id="codes-list"></div>
+          </div>
+        </header>
+        <nav class="tabs" role="tablist" aria-label="Message part">
+          <button role="tab" class="tab" data-tab="html" aria-selected="true">HTML</button>
+          <button role="tab" class="tab" data-tab="text" aria-selected="false">Text</button>
+          <button role="tab" class="tab" data-tab="details" aria-selected="false">Details</button>
+          <label class="remote" id="remote-wrap"><input type="checkbox" id="remote" /> Load remote images</label>
+        </nav>
+        <div class="mail__body">
+          <div class="pane" data-pane="html">
+            <iframe id="html-frame" title="HTML part of the message" sandbox="allow-popups allow-popups-to-escape-sandbox" referrerpolicy="no-referrer"></iframe>
+            <p class="pane__empty" id="html-empty" hidden>This message has no HTML part.</p>
+          </div>
+          <div class="pane" data-pane="text" hidden>
+            <pre class="text-body" id="text-body"></pre>
+          </div>
+          <div class="pane details" data-pane="details" hidden>
+            <h3>Links</h3>
+            <ul class="links" id="links"></ul>
+            <h3>Attachments</h3>
+            <ul class="attachments" id="attachments"></ul>
+            <p class="details__note">The demo stores the name, type, and size of each attachment. It does not store the content.</p>
+            <h3>Envelope and headers</h3>
+            <dl class="kv" id="headers"></dl>
+          </div>
+        </div>
+      </article>
+    </section>
+  </main>
+
+  <footer class="foot">
+    A slice of <a href="https://github.com/hirotomasato/tempik" rel="noopener" target="_blank">hirotomasato/tempik</a> on Workers, Email Routing, and D1.
+    <a href="https://github.com/theserverlessdev/tech-demos/tree/main/demos/temp-email" rel="noopener" target="_blank">Source</a>
+  </footer>
+
+  <script type="module" src="/assets/app.js"></script>
+</body>
+</html>

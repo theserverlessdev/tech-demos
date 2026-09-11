@@ -1,0 +1,5 @@
+public/assets/app.js
+worker-configuration.d.ts
+.dev.vars
+.secrets/
+.wrangler/

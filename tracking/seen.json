@@ -2,6 +2,19 @@
   "proposed": [],
   "built": [
     {
+      "slug": "temp-email",
+      "repo": "https://github.com/hirotomasato/tempik",
+      "title": "Tempik (disposable temp mail)",
+      "why": "Self-hosted disposable email on Workers: Email Worker + D1, with an agent API",
+      "built_at": "2026-09-11",
+      "path": "demos/temp-email",
+      "url": "https://tech-demos.theserverless.dev/demos/temp-email",
+      "subdomain": "https://email.lomvic.com/",
+      "worker": "tech-demos-temp-email",
+      "branch": "demo/temp-email",
+      "notes": "Mail domain moved to email.lomvic.com (lomvic throwaway zone). TSD apex Google MX untouched."
+    },
+    {
       "slug": "apollo-desk",
       "repo": "https://github.com/galfrevn/apollo",
       "title": "Apollo",
