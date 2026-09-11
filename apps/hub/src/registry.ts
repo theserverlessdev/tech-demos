@@ -49,7 +49,26 @@ const cloudflareOsFallbackSource = `export default {
 };
 `;
 
+// apollo-desk is a standalone Worker (Agents SDK Durable Object, Workers AI). Same pattern as cloudflare-os:
+// the zone route wins, and this source only redirects if that route is missing.
+const apolloDeskFallbackSource = `export default {
+  fetch(request) {
+    const url = new URL(request.url);
+    const rest = url.pathname.replace(/^\\/demos\\/apollo-desk/, "") || "/";
+    return Response.redirect("https://apollo-desk.tech-demos.theserverless.dev" + rest + url.search, 302);
+  },
+};
+`;
+
 export const demos: DemoEntry[] = [
+  {
+    slug: "apollo-desk",
+    title: "Apollo desk",
+    description:
+      "A browser desk that talks to an Apollo-style brain. One Agents SDK Durable Object runs voice turns on Workers AI, keeps SQLite memory with vector recall, runs tools and timers, and calls an MCP server in the desk.",
+    tags: ["agents-sdk", "durable-objects", "workers-ai", "voice", "mcp"],
+    source: apolloDeskFallbackSource,
+  },
   {
     slug: "cloudflare-os",
     title: "Cloudflare OS, sliced",

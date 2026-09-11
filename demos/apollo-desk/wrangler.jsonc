@@ -1,0 +1,37 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tech-demos-apollo-desk",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-08-18",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none"
+  },
+  "ai": { "binding": "AI" },
+  "durable_objects": {
+    "bindings": [
+      { "name": "Apollo", "class_name": "Apollo" },
+      { "name": "METER", "class_name": "Meter" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Apollo", "Meter"] }],
+  "ratelimits": [
+    { "name": "TURN_LIMIT", "namespace_id": "7311", "simple": { "limit": 10, "period": 60 } }
+  ],
+  "vars": {
+    "AI_MODEL": "@cf/zai-org/glm-5.3-flash",
+    "EMBED_MODEL": "@cf/baai/bge-small-en-v1.5",
+    "STT_MODEL": "@cf/openai/whisper-large-v3-turbo",
+    "TTS_MODEL": "@cf/myshell-ai/melotts",
+    "AI_DAILY_BUDGET_USD": "0.10"
+  },
+  "routes": [
+    { "pattern": "tech-demos.theserverless.dev/demos/apollo-desk*", "zone_name": "theserverless.dev" },
+    { "pattern": "apollo-desk.tech-demos.theserverless.dev/*", "zone_name": "theserverless.dev" }
+  ],
+  "workers_dev": true,
+  "observability": { "enabled": true }
+}
