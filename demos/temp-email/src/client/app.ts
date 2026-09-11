@@ -374,12 +374,34 @@ function frameDocument(html: string, remote: boolean): string {
   return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><meta name="referrer" content="no-referrer"><style>body{margin:0;padding:16px;font-family:system-ui,sans-serif;color:#17171a;background:#fff;word-wrap:break-word}img{max-width:100%;height:auto}</style>${mail.head}</head><body>${mail.body}</body></html>`;
 }
 
+/** Chrome stays on app tokens; the light canvas lives only inside srcdoc (`frameDocument`). */
+function bindHtmlPane(html: string | null | undefined): void {
+  const hasHtml = Boolean(html);
+  el.frame.closest(".pane")?.toggleAttribute("data-has-mail", hasHtml);
+  el.htmlEmpty.hidden = hasHtml;
+  el.frame.hidden = true;
+  if (!hasHtml) {
+    el.frame.removeAttribute("srcdoc");
+    return;
+  }
+  el.frame.addEventListener(
+    "load",
+    () => {
+      if (!el.frame.getAttribute("srcdoc")) return;
+      el.frame.hidden = false;
+    },
+    { once: true },
+  );
+  el.frame.srcdoc = frameDocument(html!, state.remote);
+}
+
 function renderViewer(): void {
   const m = state.selected;
   el.viewerEmpty.hidden = !!m;
   el.mail.hidden = !m;
   if (!m) {
     el.layout.dataset.view = "list";
+    bindHtmlPane(null);
     return;
   }
   el.subject.textContent = m.subject;
@@ -442,9 +464,7 @@ function renderTab(): void {
   for (const pane of document.querySelectorAll<HTMLElement>(".pane")) pane.hidden = pane.dataset.pane !== state.tab;
   el.remoteWrap.hidden = state.tab !== "html" || !m.html;
   if (state.tab === "html") {
-    el.frame.hidden = !m.html;
-    el.htmlEmpty.hidden = !!m.html;
-    el.frame.srcdoc = m.html ? frameDocument(m.html, state.remote) : "";
+    bindHtmlPane(m.html);
   } else if (state.tab === "text") {
     el.textBody.textContent = m.text ?? "This message has no text part.";
   }

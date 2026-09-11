@@ -326,9 +326,12 @@ input[type="checkbox"] { accent-color: var(--ember); }
 
 .mail__body { flex: 1; min-height: 0; display: flex; }
 .pane { flex: 1; min-height: 0; overflow: auto; }
-.pane[data-pane="html"] { background: #ffffff; display: flex; }
-.pane iframe { flex: 1; width: 100%; border: 0; background: #ffffff; min-height: 420px; }
-.pane__empty { margin: auto; color: #6b675e; font-size: 14px; }
+.pane[data-pane="html"] { background: var(--bg); display: flex; }
+.pane iframe {
+  flex: 1; width: 100%; border: 0; background: transparent; min-height: 420px;
+}
+.pane iframe[hidden] { display: none; flex: 0; width: 0; min-height: 0; }
+.pane__empty { margin: auto; color: var(--muted); font-size: 14px; }
 .text-body { padding: 20px 22px; font: 13px/1.6 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-strong); }
 .details { padding: 18px 22px 28px; display: grid; gap: 10px; align-content: start; }
 .details h3 { font-size: 14px; margin-top: 8px; }
