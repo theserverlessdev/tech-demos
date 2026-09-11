@@ -30,7 +30,7 @@
     // Hosted public demo. Self-host: set "false" and use wrangler.selfhost.jsonc.
     "HOSTED_MODE": "true",
     // Public Turnstile site key. Secret is TURNSTILE_SECRET_KEY (wrangler secret put).
-    "TURNSTILE_SITE_KEY": ""
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAEwRTER6EMQiuBqw"
   },
   // Secrets (never commit): AGENT_API_KEY (admin/fleet only), TURNSTILE_SECRET_KEY
   "triggers": { "crons": ["*/15 * * * *"] },
