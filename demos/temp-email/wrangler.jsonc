@@ -10,6 +10,12 @@
     "run_worker_first": true,
     "html_handling": "none"
   },
+  "r2_buckets": [
+    {
+      "binding": "ATTACHMENTS",
+      "bucket_name": "tech-demos-temp-email"
+    }
+  ],
   "d1_databases": [
     {
       "binding": "DB",

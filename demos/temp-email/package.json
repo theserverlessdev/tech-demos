@@ -30,6 +30,9 @@
       },
       "AGENT_API_KEY": {
         "description": "Admin/fleet bootstrap secret. **Not** the public agent path. Generate with `openssl rand -hex 32`."
+      },
+      "ATTACHMENTS": {
+        "description": "R2 bucket for attachment bytes (same TTL as the inbox). Create with `wrangler r2 bucket create <name>` and set `r2_buckets[0].bucket_name`."
       }
     }
   },

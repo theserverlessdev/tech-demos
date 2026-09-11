@@ -14,6 +14,7 @@ import {
   type InboxRow,
 } from "./db";
 import { consumeCreateQuota, countActiveInboxes, findKeyByHash, insertApiKey, revokeKey, toKeyInfo, touchKey, type ApiKeyRow } from "./keys";
+import { deletePrefix, downloadHeaders, messagePrefix } from "./attachments";
 import { ingest, Refusal, sampleMime } from "./ingest";
 import { KEY_CREATE_LIMIT, KEY_INBOX_LIMIT, MAX_KEY_NAME, MAX_MESSAGES_PER_INBOX, MAX_RAW_BYTES, MAX_WAIT_SECONDS, MINUTE_MS, WAIT_POLL_MS } from "./limits";
 import { mxStatus } from "./mx";
@@ -200,7 +201,7 @@ async function createInbox(request: Request, env: Env, caller: Caller): Promise<
   const tokenHash = await sha256Hex(token);
   for (let attempt = 0; attempt < 5; attempt++) {
     const now = Date.now();
-    const row = await insertInbox(env.DB, {
+    const row = await insertInbox(env.DB, env.ATTACHMENTS, {
       id: newId(),
       local_part: custom ?? randomLocalPart(),
       token_hash: tokenHash,
@@ -270,13 +271,25 @@ async function deliver(request: Request, env: Env, inbox: InboxRow, via: "sample
     envelopeFrom = request.headers.get("x-envelope-from") ?? "test@localhost";
   }
   try {
-    const message = await ingest(env.DB, inbox, { raw, rawSize: new TextEncoder().encode(raw).byteLength, envelopeFrom, via });
+    const message = await ingest(env.DB, env.ATTACHMENTS, inbox, { raw, rawSize: new TextEncoder().encode(raw).byteLength, envelopeFrom, via });
     console.log(JSON.stringify({ event: "message_stored", via, size: message.rawSize }));
     return json(message, 201);
   } catch (err) {
     if (err instanceof Refusal) throw new HttpError(err.code === "too_large" ? 413 : 409, err.code, err.message);
     throw err;
   }
+}
+
+async function streamAttachment(env: Env, inbox: InboxRow, messageId: string, indexRaw: string): Promise<Response> {
+  const index = Number(indexRaw);
+  if (!Number.isInteger(index) || index < 0) throw new HttpError(400, "bad_request", "Attachment index must be a non-negative integer.");
+  const message = await getMessage(env.DB, inbox.id, messageId);
+  if (!message) throw new HttpError(404, "not_found", "No message has this ID in the inbox.");
+  const meta = message.attachments[index];
+  if (!meta?.r2Key) throw new HttpError(404, "not_found", "No stored file for this attachment.");
+  const object = await env.ATTACHMENTS.get(meta.r2Key);
+  if (!object) throw new HttpError(404, "not_found", "The attachment file is gone.");
+  return new Response(object.body, { headers: downloadHeaders(object, meta.filename, meta.mimeType) });
 }
 
 export async function handleApi(request: Request, env: Env, path: string): Promise<Response> {
@@ -332,7 +345,7 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
   if (section === undefined) {
     if (method === "GET") return json(await inboxInfo(env, inbox));
     if (method === "DELETE") {
-      await deleteInbox(env.DB, inbox.id);
+      await deleteInbox(env.DB, env.ATTACHMENTS, inbox.id);
       return json({ deleted: true });
     }
   } else if (section === "extend" && method === "POST" && !messageId) {
@@ -345,7 +358,11 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
   } else if (section === "deliver" && method === "POST" && !messageId) {
     if (!caller.agent) throw new HttpError(403, "forbidden", "Only an API key can deliver raw MIME.");
     return deliver(request, env, inbox, "test");
-  } else if (section === "messages" && extra.length === 0) {
+  } else if (section === "messages") {
+    if (messageId && extra[0] === "attachments" && extra.length === 2 && method === "GET") {
+      return streamAttachment(env, inbox, messageId, extra[1]);
+    }
+    if (extra.length !== 0) throw new HttpError(404, "not_found", "Unknown API path or method.");
     if (!messageId && method === "GET") {
       const after = intParam(url, "after", 0, 0, Number.MAX_SAFE_INTEGER);
       const lim = intParam(url, "limit", MAX_MESSAGES_PER_INBOX, 1, MAX_MESSAGES_PER_INBOX);
@@ -363,6 +380,7 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
       return json(message);
     }
     if (messageId && method === "DELETE") {
+      await deletePrefix(env.ATTACHMENTS, messagePrefix(inbox.id, messageId));
       if (!(await deleteMessage(env.DB, inbox.id, messageId))) throw new HttpError(404, "not_found", "No message has this ID in the inbox.");
       return json({ deleted: true });
     }

@@ -21,6 +21,8 @@ export type AttachmentMeta = {
   mimeType: string;
   disposition: string | null;
   size: number;
+  /** R2 object key. Null when the part had no bytes. Never store blobs in D1. */
+  r2Key: string | null;
 };
 
 export type MessageSummary = {

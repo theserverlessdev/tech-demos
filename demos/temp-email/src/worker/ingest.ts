@@ -1,5 +1,6 @@
 import PostalMime, { type Address } from "postal-mime";
 import type { AttachmentMeta, DeliveryVia, MessageFull } from "../shared/types";
+import { storeAttachments, messagePrefix, deletePrefix } from "./attachments";
 import { newId } from "./auth";
 import { countMessages, insertMessage, type InboxRow } from "./db";
 import { extractCodes, extractLinks, htmlToText, snippetOf } from "./extract";
@@ -47,7 +48,7 @@ function cap(value: string | undefined, max: number): { value: string | null; cu
  * The single path from raw MIME to a stored message. The email() handler, the sample button, and the
  * agent test delivery all call it, so a test delivery exercises the same parser and limits as SMTP.
  */
-export async function ingest(db: D1Database, inbox: InboxRow, input: IngestInput): Promise<MessageFull> {
+export async function ingest(db: D1Database, bucket: R2Bucket, inbox: InboxRow, input: IngestInput): Promise<MessageFull> {
   if (input.rawSize > MAX_RAW_BYTES) throw new Refusal("too_large", "The message is larger than 1 MB.");
   if ((await countMessages(db, inbox.id)) >= MAX_MESSAGES_PER_INBOX) {
     throw new Refusal("inbox_full", `The inbox already holds ${MAX_MESSAGES_PER_INBOX} messages.`);
@@ -59,35 +60,36 @@ export async function ingest(db: D1Database, inbox: InboxRow, input: IngestInput
   const readable = text.value ?? (html.value ? htmlToText(html.value) : "");
   const subject = (parsed.subject ?? "").trim() || "(no subject)";
   const from = firstMailbox(parsed.from);
+  const id = newId();
 
-  const attachments: AttachmentMeta[] = parsed.attachments.map((a) => ({
-    filename: a.filename,
-    mimeType: a.mimeType,
-    disposition: a.disposition,
-    size: typeof a.content === "string" ? a.content.length : a.content.byteLength,
-  }));
-
-  return insertMessage(db, {
-    id: newId(),
-    inbox_id: inbox.id,
-    via: input.via,
-    received_at: Date.now(),
-    envelope_from: input.envelopeFrom,
-    from_name: from.name,
-    from_address: from.address,
-    to_header: formatAddresses(parsed.to),
-    subject: subject.slice(0, 998),
-    snippet: snippetOf(readable),
-    text_body: text.value,
-    html_body: html.value,
-    truncated: text.cut || html.cut,
-    raw_size: input.rawSize,
-    message_id: parsed.messageId ?? null,
-    date_header: parsed.date ?? null,
-    codes: JSON.stringify(extractCodes(subject, readable)),
-    links: JSON.stringify(extractLinks(text.value ?? "", html.value ?? "")),
-    attachments: JSON.stringify(attachments),
-  });
+  let attachments: AttachmentMeta[] = [];
+  try {
+    attachments = await storeAttachments(bucket, inbox.id, id, parsed.attachments);
+    return await insertMessage(db, {
+      id,
+      inbox_id: inbox.id,
+      via: input.via,
+      received_at: Date.now(),
+      envelope_from: input.envelopeFrom,
+      from_name: from.name,
+      from_address: from.address,
+      to_header: formatAddresses(parsed.to),
+      subject: subject.slice(0, 998),
+      snippet: snippetOf(readable),
+      text_body: text.value,
+      html_body: html.value,
+      truncated: text.cut || html.cut,
+      raw_size: input.rawSize,
+      message_id: parsed.messageId ?? null,
+      date_header: parsed.date ?? null,
+      codes: JSON.stringify(extractCodes(subject, readable)),
+      links: JSON.stringify(extractLinks(text.value ?? "", html.value ?? "")),
+      attachments: JSON.stringify(attachments),
+    });
+  } catch (err) {
+    await deletePrefix(bucket, messagePrefix(inbox.id, id));
+    throw err;
+  }
 }
 
 function escapeHtml(s: string): string {

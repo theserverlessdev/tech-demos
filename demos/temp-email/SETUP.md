@@ -20,6 +20,7 @@ Two products share this folder. Do not mix them.
 - **Addresses:** `anything@email.lomvic.com`
 - **Worker:** `tech-demos-temp-email`
 - **D1 database:** `tech-demos-temp-email` (`c41b5408-e3fd-44d4-9455-f355016b483b`)
+- **R2 bucket:** `tech-demos-temp-email` (attachment bytes; binding `ATTACHMENTS`)
 - **Mail zone:** `lomvic.com` (`7b0cbb059730070dc5e85f1fd9a46f28`) — throwaway mail zone
 - **Hub zone:** `theserverless.dev` — gallery + redirect routes only; apex MX stays on Google Workspace
 
@@ -29,6 +30,7 @@ Two products share this folder. Do not mix them.
 | --- | --- | --- |
 | D1 database and migration `0001_init.sql` | Done | Agent |
 | Migration `0002_api_keys.sql` | This PR | Agent |
+| R2 bucket `tech-demos-temp-email` + `ATTACHMENTS` binding | This PR | Agent |
 | Worker deploy with a cron job every 15 minutes | Done | Agent |
 | Custom domain `email.lomvic.com` | Done | Agent |
 | Hub routes `tech-demos.theserverless.dev/demos/temp-email*` and `temp-email.tech-demos.theserverless.dev/*` | Done. Both send a 302 to `https://email.lomvic.com`. | Agent |
@@ -114,20 +116,28 @@ Do **not** enable Email Routing on `theserverless.dev` and do **not** change TSD
 
 ## Self-host (your zone)
 
-Owner rules do not apply to your instance. You get the full product: Email Worker, D1, agent API, optional Turnstile mint.
+Owner rules do not apply to your instance. You get the full product: Email Worker, D1, R2 attachments, agent API, optional Turnstile mint.
 
 1. Click **Deploy to Cloudflare** in the README, or copy this directory and `bun run deploy:selfhost` with `wrangler.selfhost.jsonc`.
-2. Set vars: `MAIL_DOMAIN`, `PUBLIC_ORIGIN`, `HOSTED_MODE=false`, `TURNSTILE_SITE_KEY`.
-3. Set secrets (do not echo them):
+2. Create an R2 bucket for attachment bytes (required — blobs are not stored in D1):
+
+```bash
+bunx wrangler r2 bucket create temp-email
+# If you pick another name, set r2_buckets[0].bucket_name in wrangler.selfhost.jsonc
+# (or wrangler.jsonc if you used the Deploy to Cloudflare button).
+```
+
+3. Set vars: `MAIL_DOMAIN`, `PUBLIC_ORIGIN`, `HOSTED_MODE=false`, `TURNSTILE_SITE_KEY`.
+4. Set secrets (do not echo them):
 
 ```bash
 openssl rand -hex 32 | bunx wrangler secret put AGENT_API_KEY -c wrangler.selfhost.jsonc
 bunx wrangler secret put TURNSTILE_SECRET_KEY -c wrangler.selfhost.jsonc
 ```
 
-4. Create a [Turnstile widget](https://developers.cloudflare.com/turnstile/get-started/) for your UI hostname (or `wrangler turnstile widget create`).
-5. Enable **Email Routing** on **your** zone. Point MX at `route*.mx.cloudflare.net`. Catch-all `*@MAIL_DOMAIN` → this Worker.
-6. Attach a custom domain if you want. Do not use `theserverless.dev` or `email.lomvic.com`.
+5. Create a [Turnstile widget](https://developers.cloudflare.com/turnstile/get-started/) for your UI hostname (or `wrangler turnstile widget create`).
+6. Enable **Email Routing** on **your** zone. Point MX at `route*.mx.cloudflare.net`. Catch-all `*@MAIL_DOMAIN` → this Worker.
+7. Attach a custom domain if you want. Do not use `theserverless.dev` or `email.lomvic.com`.
 
 If Turnstile is unset, key mint stays off and agents use **your** admin secret only.
 
@@ -159,12 +169,13 @@ Rate limits apply to callers without the admin key: 6 creates or samples each mi
 | `POST /keys/revoke` | minted key | `{ revoked: true }`. |
 | `POST /inboxes` | `{"localPart"?: "my-test", "ttlMinutes"?: 30}` | `201` with the inbox and its `token`. `ttlMinutes` needs an API key. `409` if the name is in use. |
 | `GET /inboxes/{address}` | none | The inbox with `expiresAt` and `messageCount`. |
-| `DELETE /inboxes/{address}` | none | Deletes the inbox and its messages. |
+| `DELETE /inboxes/{address}` | none | Deletes the inbox, its messages, and R2 attachment objects. |
 | `POST /inboxes/{address}/extend` | `{"minutes"?: 60}` | Moves the expiry later. The limit is now + 1440 minutes. |
 | `GET /inboxes/{address}/messages?after=0&limit=50` | none | Summaries, newest first, and a `cursor`. |
 | `GET /inboxes/{address}/wait?after={cursor}&timeout=25` | none | Long poll. Full messages with `seq` above `after`, oldest first. `timedOut: true` after `timeout` seconds (25 or fewer) with no mail. |
-| `GET /inboxes/{address}/messages/{id}` | none | Full message: `text`, `html`, `codes`, `links`, `attachments` (metadata only). |
-| `DELETE /inboxes/{address}/messages/{id}` | none | Deletes one message. |
+| `GET /inboxes/{address}/messages/{id}` | none | Full message: `text`, `html`, `codes`, `links`, `attachments` (metadata + `r2Key`). |
+| `GET /inboxes/{address}/messages/{id}/attachments/{index}` | none | Streams the file from R2. Same auth as the inbox. |
+| `DELETE /inboxes/{address}/messages/{id}` | none | Deletes one message and its R2 objects. |
 | `POST /inboxes/{address}/sample` | none | Stores a server-built sign-up message. `via` is `sample`. |
 | `POST /inboxes/{address}/deliver` | raw MIME (`message/rfc822`) | API key only. `via` is `test`. Optional `X-Envelope-From`. |
 

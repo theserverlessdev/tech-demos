@@ -82,6 +82,11 @@ check("sample has html and text", !!sample.data.html && !!sample.data.text);
 check("sample code is extracted", sample.data.codes.length === 1 && /^\d{6}$/.test(sample.data.codes[0]), sample.data.codes);
 check("sample link is extracted", sample.data.links.some((l) => l.includes("verified=")), sample.data.links);
 check("sample attachment metadata is kept", sample.data.attachments[0]?.filename === "signup-ticket.txt", sample.data.attachments);
+check("sample attachment is stored in R2", typeof sample.data.attachments[0]?.r2Key === "string" && !!sample.data.attachments[0]?.r2Key, sample.data.attachments[0]);
+const ticket = await fetch(`${base}/api/v1${path}/messages/${sample.data.id}/attachments/0`, { headers: { authorization: `Bearer ${inbox.token}` } });
+const ticketBody = await ticket.text();
+check("sample ticket downloads", ticket.status === 200 && ticketBody.includes("ticket="), { status: ticket.status, body: ticketBody.slice(0, 80) });
+check("download without a token is 401", (await fetch(`${base}/api/v1${path}/messages/${sample.data.id}/attachments/0`)).status === 401);
 check("sample html has a remote image", !!sample.data.html?.includes("/assets/sample-remote.svg"), sample.data.html?.slice(0, 200));
 check("sample text mentions remote images", !!sample.data.text?.includes("remote image"), sample.data.text);
 check("sample sender is parsed", sample.data.from.name === "Ember Cloud", sample.data.from);
@@ -165,6 +170,7 @@ if (smtp) {
 // ---------------------------------------------------------------- deletes
 check("delete message", (await call(`${path}/messages/${sample.data.id}`, { method: "DELETE", token: inbox.token })).status === 200);
 check("deleted message is 404", (await call(`${path}/messages/${sample.data.id}`, { token: inbox.token })).status === 404);
+check("deleted attachment is 404", (await fetch(`${base}/api/v1${path}/messages/${sample.data.id}/attachments/0`, { headers: { authorization: `Bearer ${inbox.token}` } })).status === 404);
 check("delete web inbox", (await call(path, { method: "DELETE", token: inbox.token })).status === 200);
 check("deleted inbox is 404", (await call(`${path}/messages`, { token: inbox.token })).status === 404);
 check("delete agent inbox", (await call(agentPath, { method: "DELETE", token: key })).status === 200);

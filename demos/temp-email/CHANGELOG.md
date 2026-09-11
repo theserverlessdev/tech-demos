@@ -9,7 +9,7 @@ This demo is a slice of [hirotomasato/tempik](https://github.com/hirotomasato/te
 | Runtime | Cloudflare Workers + Assets | Same |
 | Inbound mail | Email Workers `email()` | Same |
 | MIME | postal-mime | Same |
-| Store | D1: inboxes, messages, **sessions**, session_inboxes | D1: inboxes, messages, **api_keys**. No browser session table. |
+| Store | D1: inboxes, messages, **sessions**, session_inboxes | D1: inboxes, messages, **api_keys**. Attachment **bytes in R2**. No browser session table. |
 | HTTP | Hono | Plain `fetch()` router (`/api/v1`) |
 | Config | `wrangler.toml` | `wrangler.jsonc` |
 | Cleanup | Not a cron in the upstream README | `scheduled()` every 15 minutes deletes expired inboxes |
@@ -37,7 +37,7 @@ Hosted mode is not a free open agent API with a shared secret.
 ## Hosting model
 
 - **Hosted:** `email.lomvic.com` on throwaway zone `lomvic.com`. Demo / no SLA, short TTL, Turnstile mint, legal notices. Do **not** touch apex MX on `theserverless.dev` (Google Workspace).
-- **Self-host:** Deploy to Cloudflare button + `wrangler.selfhost.jsonc`. Operator sets `MAIL_DOMAIN`, Turnstile keys, and their own admin secret. Full Email Worker + D1 + agent API on their account.
+- **Self-host:** Deploy to Cloudflare button + `wrangler.selfhost.jsonc`. Operator sets `MAIL_DOMAIN`, Turnstile keys, their own admin secret, and an **R2 bucket** for attachments. Full Email Worker + D1 + R2 + agent API on their account.
 
 ## Branding
 

@@ -163,7 +163,7 @@
           <div class="files" id="mail-files" hidden>
             <span class="files__label">Attachments</span>
             <ul class="files__list" id="mail-files-list"></ul>
-            <p class="files__note">Name, type, and size only. The demo does not store the file bytes.</p>
+            <p class="files__note">Bytes stay in R2 for this inbox’s lifetime. Deleted with the inbox.</p>
           </div>
         </header>
         <nav class="tabs" role="tablist" aria-label="Message part">
@@ -185,7 +185,7 @@
             <ul class="links" id="links"></ul>
             <h3>Attachments</h3>
             <ul class="attachments" id="attachments"></ul>
-            <p class="details__note">The demo stores the name, type, and size of each attachment. It does not store the content.</p>
+            <p class="details__note">Attachment bytes live in R2 until the inbox expires or you delete it. D1 keeps only the metadata.</p>
             <h3>Envelope and headers</h3>
             <dl class="kv" id="headers"></dl>
           </div>

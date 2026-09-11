@@ -201,6 +201,44 @@ function formatBytes(n: number): string {
   return `${(n / 1024 / 1024).toFixed(2)} MB`;
 }
 
+async function downloadAttachment(messageId: string, index: number, filename: string): Promise<void> {
+  const inbox = state.active;
+  if (!inbox) return;
+  const res = await fetch(`/api/v1${inboxPath(inbox)}/messages/${encodeURIComponent(messageId)}/attachments/${index}`, {
+    headers: { authorization: `Bearer ${inbox.token}` },
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => null)) as { error?: { code: string; message: string } } | null;
+    throw new ApiFailure(res.status, data?.error?.code ?? "http", data?.error?.message ?? `HTTP ${res.status}`);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename || "attachment";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function attachmentItem(message: MessageFull, attachment: MessageFull["attachments"][number], index: number): HTMLLIElement {
+  const li = h(
+    "li",
+    {},
+    h("span", { className: "files__name", textContent: attachment.filename ?? "(no name)" }),
+    h("span", { className: "files__meta", textContent: `${attachment.mimeType} · ${formatBytes(attachment.size)}` }),
+  );
+  if (attachment.r2Key) {
+    const btn = h("button", { type: "button", className: "btn btn-ghost files__download", textContent: "Download" });
+    btn.addEventListener("click", () => {
+      void downloadAttachment(message.id, index, attachment.filename ?? "attachment").catch((err: unknown) => {
+        setHint(err instanceof Error ? err.message : String(err), "error");
+      });
+    });
+    li.append(btn);
+  }
+  return li;
+}
+
 function senderLabel(m: MessageSummary): string {
   return m.from.name || m.from.address || m.envelopeFrom;
 }
@@ -436,16 +474,7 @@ function renderViewer(): void {
   );
 
   el.mailFiles.hidden = m.attachments.length === 0;
-  el.mailFilesList.replaceChildren(
-    ...m.attachments.map((a) =>
-      h(
-        "li",
-        {},
-        h("span", { className: "files__name", textContent: a.filename ?? "(no name)" }),
-        h("span", { className: "files__meta", textContent: `${a.mimeType} · ${formatBytes(a.size)}` }),
-      ),
-    ),
-  );
+  el.mailFilesList.replaceChildren(...m.attachments.map((a, i) => attachmentItem(m, a, i)));
 
   if (!m.html && state.tab === "html") state.tab = "text";
   renderTab();
@@ -456,11 +485,7 @@ function renderViewer(): void {
       : [h("li", { className: "none", textContent: "No links." })]),
   );
   el.attachments.replaceChildren(
-    ...(m.attachments.length
-      ? m.attachments.map((a) =>
-          h("li", {}, h("span", { textContent: a.filename ?? "(no name)" }), h("span", { className: "size", textContent: `${a.mimeType} · ${formatBytes(a.size)}` })),
-        )
-      : [h("li", { className: "none", textContent: "No attachments." })]),
+    ...(m.attachments.length ? m.attachments.map((a, i) => attachmentItem(m, a, i)) : [h("li", { className: "none", textContent: "No attachments." })]),
   );
   const rows: [string, string | null][] = [
     ["envelope from", m.envelopeFrom],

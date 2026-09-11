@@ -90,7 +90,7 @@ export default {
       return;
     }
     try {
-      const stored = await ingest(env.DB, inbox, { raw: message.raw, rawSize: message.rawSize, envelopeFrom: message.from, via: "smtp" });
+      const stored = await ingest(env.DB, env.ATTACHMENTS, inbox, { raw: message.raw, rawSize: message.rawSize, envelopeFrom: message.from, via: "smtp" });
       log("stored", { codes: stored.codes.length, attachments: stored.attachments.length });
     } catch (err) {
       if (err instanceof Refusal) {
@@ -105,7 +105,7 @@ export default {
   },
 
   async scheduled(_controller, env): Promise<void> {
-    const removed = await cleanupExpired(env.DB);
+    const removed = await cleanupExpired(env.DB, env.ATTACHMENTS);
     console.log(JSON.stringify({ event: "cleanup", ...removed }));
   },
 } satisfies ExportedHandler<Env>;
