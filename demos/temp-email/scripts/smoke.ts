@@ -1,6 +1,6 @@
 // Smoke test: AGENT_API_KEY=… bun run scripts/smoke.ts [baseUrl] [--smtp]
 // --smtp posts raw MIME to wrangler dev's /cdn-cgi/handler/email, which runs the real email() handler. Local only.
-import type { AppConfig, CreatedInbox, InboxInfo, MessageFull, MessageList, WaitResult } from "../src/shared/types";
+import type { AppConfig, CreatedInbox, InboxInfo, MessageFull, MessageList, MintedKey, WaitResult } from "../src/shared/types";
 
 const args = process.argv.slice(2);
 const base = (args.find((a) => a.startsWith("http")) ?? "http://127.0.0.1:8797").replace(/\/$/, "");
@@ -48,6 +48,19 @@ const config = await call<AppConfig>("/config");
 check("config returns the mail domain", config.status === 200 && config.data.domain.includes("."), config);
 const domain = config.data.domain;
 console.log(`      MX live: ${config.data.mx.live} (${config.data.mx.records.join(", ") || "no MX records"})`);
+console.log(`      hosted: ${config.data.hosted}  mint.enabled: ${config.data.mint?.enabled}`);
+check("config includes mint + hosted", typeof config.data.hosted === "boolean" && !!config.data.mint, config.data);
+
+// ---------------------------------------------------------------- key mint (Turnstile)
+const noTurnstile = await call("/keys", { method: "POST", body: { name: "nope" } });
+check("mint without Turnstile is 403 or 503", noTurnstile.status === 403 || noTurnstile.status === 503, noTurnstile);
+
+const dummyMint = await call<MintedKey>("/keys", { method: "POST", body: { name: "smoke", turnstileToken: "XXXX.DUMMY.TOKEN.XXXX" } });
+const mintedOk = dummyMint.status === 201 && dummyMint.data.key?.startsWith("te1_");
+check("dummy Turnstile mints locally, or hosted without Turnstile secrets rejects mint", mintedOk || dummyMint.status === 403 || dummyMint.status === 503, dummyMint);
+if (mintedOk) console.log("      minted a local key (not printed)");
+else console.log(`      mint skipped (status ${dummyMint.status})`);
+const mintedKey = mintedOk ? dummyMint.data.key : undefined;
 
 // ---------------------------------------------------------------- web inbox and auth
 const web = await call<CreatedInbox>("/inboxes", { method: "POST", body: {} });
@@ -69,6 +82,13 @@ check("sample has html and text", !!sample.data.html && !!sample.data.text);
 check("sample code is extracted", sample.data.codes.length === 1 && /^\d{6}$/.test(sample.data.codes[0]), sample.data.codes);
 check("sample link is extracted", sample.data.links.some((l) => l.includes("verified=")), sample.data.links);
 check("sample attachment metadata is kept", sample.data.attachments[0]?.filename === "signup-ticket.txt", sample.data.attachments);
+check("sample attachment is stored in R2", typeof sample.data.attachments[0]?.r2Key === "string" && !!sample.data.attachments[0]?.r2Key, sample.data.attachments[0]);
+const ticket = await fetch(`${base}/api/v1${path}/messages/${sample.data.id}/attachments/0`, { headers: { authorization: `Bearer ${inbox.token}` } });
+const ticketBody = await ticket.text();
+check("sample ticket downloads", ticket.status === 200 && ticketBody.includes("ticket="), { status: ticket.status, body: ticketBody.slice(0, 80) });
+check("download without a token is 401", (await fetch(`${base}/api/v1${path}/messages/${sample.data.id}/attachments/0`)).status === 401);
+check("sample html has a remote image", !!sample.data.html?.includes("/assets/sample-remote.svg"), sample.data.html?.slice(0, 200));
+check("sample text mentions remote images", !!sample.data.text?.includes("remote image"), sample.data.text);
 check("sample sender is parsed", sample.data.from.name === "Ember Cloud", sample.data.from);
 
 const listed = await call<MessageList>(`${path}/messages`, { token: inbox.token });
@@ -93,6 +113,16 @@ check("reserved name is 400", (await call("/inboxes", { method: "POST", token: k
 check("invalid name is 400", (await call("/inboxes", { method: "POST", token: key, body: { localPart: "-bad name-" } })).status === 400);
 const agentPath = `/inboxes/${agent.data.address}`;
 check("agent key opens a web inbox", (await call(`${path}/messages`, { token: key })).status === 200);
+if (mintedKey) {
+  check("minted key cannot open a web inbox", (await call(`${path}/messages`, { token: mintedKey })).status === 404);
+  const keyed = await call<CreatedInbox>("/inboxes", { method: "POST", token: mintedKey, body: { ttlMinutes: 5 } });
+  check("minted key creates an agent inbox", keyed.status === 201 && keyed.data.source === "agent", keyed);
+  const keyedPath = `/inboxes/${keyed.data.address}`;
+  check("minted key reads its inbox", (await call(`${keyedPath}/messages`, { token: mintedKey })).status === 200);
+  check("revoke minted key", (await call("/keys/revoke", { method: "POST", token: mintedKey })).status === 200);
+  check("revoked key cannot read its inbox", (await call(`${keyedPath}/messages`, { token: mintedKey })).status === 404);
+  check("delete inbox left by revoked key (admin)", (await call(keyedPath, { method: "DELETE", token: key })).status === 200);
+}
 
 const idle = await call<WaitResult>(`${agentPath}/wait?after=0&timeout=2`, { token: key });
 check("wait with no mail times out", idle.status === 200 && idle.data.timedOut && idle.data.messages.length === 0, idle.data);
@@ -140,6 +170,7 @@ if (smtp) {
 // ---------------------------------------------------------------- deletes
 check("delete message", (await call(`${path}/messages/${sample.data.id}`, { method: "DELETE", token: inbox.token })).status === 200);
 check("deleted message is 404", (await call(`${path}/messages/${sample.data.id}`, { token: inbox.token })).status === 404);
+check("deleted attachment is 404", (await fetch(`${base}/api/v1${path}/messages/${sample.data.id}/attachments/0`, { headers: { authorization: `Bearer ${inbox.token}` } })).status === 404);
 check("delete web inbox", (await call(path, { method: "DELETE", token: inbox.token })).status === 200);
 check("deleted inbox is 404", (await call(`${path}/messages`, { token: inbox.token })).status === 404);
 check("delete agent inbox", (await call(agentPath, { method: "DELETE", token: key })).status === 200);

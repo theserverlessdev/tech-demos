@@ -6,15 +6,16 @@
   <meta name="color-scheme" content="dark light" />
   <meta name="theme-color" content="#0e0e11" />
   <title>Temp email · email.lomvic.com · Tech Demos</title>
-  <meta name="description" content="Disposable addresses on email.lomvic.com. An Email Worker parses inbound mail into D1, and agents read it through a bearer-token API." />
+  <meta name="description" content="Disposable addresses on email.lomvic.com. Mint a Turnstile-gated agent key, or deploy the same Worker on your Cloudflare account." />
   <meta property="og:title" content="Temp email" />
-  <meta property="og:description" content="Mint a disposable address, read inbound mail, and let an agent wait for the sign-up code." />
+  <meta property="og:description" content="Mint a disposable address, read inbound mail, or mint a per-agent API key after Turnstile." />
   <meta name="referrer" content="no-referrer" />
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Hanken+Grotesk:wght@400..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <script src="/assets/theme.js"></script>
+  <script src="/assets/turnstile-onload.js"></script>
   <link rel="stylesheet" href="/assets/app.css" />
 </head>
 <body>
@@ -32,8 +33,8 @@
       <p>Disposable inboxes. An Email Worker writes each message to D1.</p>
     </div>
     <div class="topbar__actions">
-      <a class="btn btn-ghost" href="#agent-api" id="agent-link">Agent API</a>
-      <a class="btn btn-ghost" href="https://github.com/hirotomasato/tempik" rel="noopener" target="_blank">Upstream</a>
+      <a class="btn btn-ghost" href="#mint-card" id="agent-link">Agent key</a>
+      <a class="btn btn-ghost" id="deploy-link" href="https://deploy.workers.cloudflare.com/?url=https://github.com/theserverlessdev/tech-demos/tree/main/demos/temp-email">Deploy yours</a>
       <button class="btn btn-ghost btn-icon" id="theme" type="button" aria-label="Switch colour theme">
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9Z"/></svg>
       </button>
@@ -43,6 +44,10 @@
   <div class="mx" id="mx" data-state="checking" role="status">
     <span class="mx__dot"></span>
     <span id="mx-text">Checking the MX record…</span>
+  </div>
+
+  <div class="notices" id="notices" hidden>
+    <p><strong>Demo, no SLA.</strong> Mail may drop, delay, or be deleted. Testing only. Inboxes expire after a short TTL. This is not a shared public agent API — mint your own key below.</p>
   </div>
 
   <main class="layout" id="layout" data-view="list">
@@ -81,6 +86,28 @@
         <button class="btn" id="send-sample" type="button" disabled>Send sample</button>
       </section>
 
+      <section class="card mint" id="mint-card">
+        <p class="eyebrow">Agent API key</p>
+        <p id="mint-intro">Mint a per-agent key after Turnstile. The key is shown once. Agents create and poll inboxes with that Bearer token — not a shared secret.</p>
+        <form class="mint__form" id="mint-form">
+          <label class="custom__label" for="agent-name">Agent name (optional)</label>
+          <input id="agent-name" name="name" autocomplete="off" maxlength="64" placeholder="my-agent" />
+          <div id="mint-turnstile" class="turnstile"></div>
+          <button class="btn btn-primary" id="mint-submit" type="submit">Mint API key</button>
+        </form>
+        <p class="mint__off" id="mint-off" hidden>Key mint is off on this instance. Set Turnstile keys, or use the operator admin secret documented in SETUP.</p>
+        <div class="mint__result" id="mint-result" hidden>
+          <p>Copy this key now. The server stores only a hash.</p>
+          <div class="address__row">
+            <output class="mint__key mono" id="minted-key"></output>
+            <button class="btn" id="copy-key" type="button">Copy</button>
+          </div>
+          <p class="mint__quota" id="mint-quota"></p>
+          <button class="btn btn-ghost btn-danger" id="revoke-key" type="button">Revoke this key</button>
+        </div>
+        <p class="hint" id="mint-hint" role="status"></p>
+      </section>
+
       <section class="card devices">
         <p class="eyebrow">Inboxes in this browser</p>
         <ul class="inbox-list" id="inbox-list"></ul>
@@ -89,7 +116,7 @@
 
       <details class="card agent" id="agent-api">
         <summary><span class="eyebrow">Agent API</span><span class="agent__hint">Bearer key, long poll</span></summary>
-        <p>Agents use the same API with the shared key. The wait call returns the next message with its codes and links.</p>
+        <p>Use a key minted above (or your own key after you self-host). The wait call returns the next message with its codes and links.</p>
         <pre class="code mono" id="agent-snippet"></pre>
         <p><a href="https://github.com/theserverlessdev/tech-demos/blob/main/demos/temp-email/SETUP.md#agent-api" rel="noopener" target="_blank">All endpoints in SETUP.md</a></p>
       </details>
@@ -133,6 +160,11 @@
             <span class="codes__label">Likely codes</span>
             <div class="codes__list" id="codes-list"></div>
           </div>
+          <div class="files" id="mail-files" hidden>
+            <span class="files__label">Attachments</span>
+            <ul class="files__list" id="mail-files-list"></ul>
+            <p class="files__note">Bytes stay in R2 for this inbox’s lifetime. Deleted with the inbox.</p>
+          </div>
         </header>
         <nav class="tabs" role="tablist" aria-label="Message part">
           <button role="tab" class="tab" data-tab="html" aria-selected="true">HTML</button>
@@ -142,7 +174,7 @@
         </nav>
         <div class="mail__body">
           <div class="pane" data-pane="html">
-            <iframe id="html-frame" title="HTML part of the message" sandbox="allow-popups allow-popups-to-escape-sandbox" referrerpolicy="no-referrer"></iframe>
+            <iframe id="html-frame" title="HTML part of the message" sandbox="allow-popups allow-popups-to-escape-sandbox" referrerpolicy="no-referrer" hidden></iframe>
             <p class="pane__empty" id="html-empty" hidden>This message has no HTML part.</p>
           </div>
           <div class="pane" data-pane="text" hidden>
@@ -153,7 +185,7 @@
             <ul class="links" id="links"></ul>
             <h3>Attachments</h3>
             <ul class="attachments" id="attachments"></ul>
-            <p class="details__note">The demo stores the name, type, and size of each attachment. It does not store the content.</p>
+            <p class="details__note">Attachment bytes live in R2 until the inbox expires or you delete it. D1 keeps only the metadata.</p>
             <h3>Envelope and headers</h3>
             <dl class="kv" id="headers"></dl>
           </div>
@@ -163,10 +195,20 @@
   </main>
 
   <footer class="foot">
-    A slice of <a href="https://github.com/hirotomasato/tempik" rel="noopener" target="_blank">hirotomasato/tempik</a> on Workers, Email Routing, and D1.
-    <a href="https://github.com/theserverlessdev/tech-demos/tree/main/demos/temp-email" rel="noopener" target="_blank">Source</a>
+    <div class="foot__legal">
+      <p>Testing only. Do not use this for fraud, spam, phishing, or to bypass another service’s terms at scale.</p>
+      <p>Inbound mail is stored only to show it here. It is deleted when the inbox expires or you delete it.</p>
+      <p>Abuse: <a href="mailto:abuse@lomvic.com">abuse@lomvic.com</a> · <a class="foot__contact" href="https://theserverless.dev/contact" rel="noopener">Contact</a></p>
+    </div>
+    <p class="foot__meta">
+      A slice of <a href="https://github.com/hirotomasato/tempik" rel="noopener" target="_blank">hirotomasato/tempik</a> on Workers, Email Routing, and D1.
+      <a href="https://github.com/theserverlessdev/tech-demos/tree/main/demos/temp-email" rel="noopener" target="_blank">Source</a>
+      ·
+      <a href="https://deploy.workers.cloudflare.com/?url=https://github.com/theserverlessdev/tech-demos/tree/main/demos/temp-email">Deploy to Cloudflare</a>
+    </p>
   </footer>
 
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit&onload=onTempEmailTurnstileLoad" defer></script>
   <script type="module" src="/assets/app.js"></script>
 </body>
 </html>

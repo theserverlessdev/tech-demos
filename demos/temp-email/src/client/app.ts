@@ -1,4 +1,4 @@
-import type { AppConfig, CreatedInbox, InboxInfo, MessageFull, MessageList, MessageSummary } from "../shared/types";
+import type { AppConfig, CreatedInbox, InboxInfo, MessageFull, MessageList, MessageSummary, MintedKey } from "../shared/types";
 
 // ------------------------------------------------------------------ storage
 
@@ -72,6 +72,8 @@ const state = {
   pollCount: 0,
   polling: false,
   gone: false,
+  mintedKey: null as string | null,
+  turnstileId: null as string | null,
 };
 
 // ------------------------------------------------------------------ DOM
@@ -99,6 +101,20 @@ const el = {
   inboxList: $<HTMLUListElement>("inbox-list"),
   inboxListEmpty: $("inbox-list-empty"),
   agentSnippet: $("agent-snippet"),
+  notices: $("notices"),
+  mintCard: $("mint-card"),
+  mintForm: $<HTMLFormElement>("mint-form"),
+  mintIntro: $("mint-intro"),
+  mintOff: $("mint-off"),
+  mintResult: $("mint-result"),
+  mintedKey: $<HTMLOutputElement>("minted-key"),
+  mintQuota: $("mint-quota"),
+  mintHint: $("mint-hint"),
+  mintSubmit: $<HTMLButtonElement>("mint-submit"),
+  agentName: $<HTMLInputElement>("agent-name"),
+  turnstile: $("mint-turnstile"),
+  copyKey: $<HTMLButtonElement>("copy-key"),
+  revokeKey: $<HTMLButtonElement>("revoke-key"),
   list: document.querySelector<HTMLElement>(".list")!,
   count: $("count"),
   live: $("live"),
@@ -117,6 +133,8 @@ const el = {
   chips: $("mail-chips"),
   codes: $("mail-codes"),
   codesList: $("codes-list"),
+  mailFiles: $("mail-files"),
+  mailFilesList: $<HTMLUListElement>("mail-files-list"),
   deleteMessage: $<HTMLButtonElement>("delete-message"),
   remote: $<HTMLInputElement>("remote"),
   remoteWrap: $("remote-wrap"),
@@ -181,6 +199,44 @@ function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / 1024 / 1024).toFixed(2)} MB`;
+}
+
+async function downloadAttachment(messageId: string, index: number, filename: string): Promise<void> {
+  const inbox = state.active;
+  if (!inbox) return;
+  const res = await fetch(`/api/v1${inboxPath(inbox)}/messages/${encodeURIComponent(messageId)}/attachments/${index}`, {
+    headers: { authorization: `Bearer ${inbox.token}` },
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => null)) as { error?: { code: string; message: string } } | null;
+    throw new ApiFailure(res.status, data?.error?.code ?? "http", data?.error?.message ?? `HTTP ${res.status}`);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename || "attachment";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function attachmentItem(message: MessageFull, attachment: MessageFull["attachments"][number], index: number): HTMLLIElement {
+  const li = h(
+    "li",
+    {},
+    h("span", { className: "files__name", textContent: attachment.filename ?? "(no name)" }),
+    h("span", { className: "files__meta", textContent: `${attachment.mimeType} · ${formatBytes(attachment.size)}` }),
+  );
+  if (attachment.r2Key) {
+    const btn = h("button", { type: "button", className: "btn btn-ghost files__download", textContent: "Download" });
+    btn.addEventListener("click", () => {
+      void downloadAttachment(message.id, index, attachment.filename ?? "attachment").catch((err: unknown) => {
+        setHint(err instanceof Error ? err.message : String(err), "error");
+      });
+    });
+    li.append(btn);
+  }
+  return li;
 }
 
 function senderLabel(m: MessageSummary): string {
@@ -265,7 +321,7 @@ function renderSnippet(): void {
   const origin = location.origin;
   const address = state.active?.address ?? `name@${state.config?.domain ?? "email.lomvic.com"}`;
   el.agentSnippet.textContent = [
-    `KEY=…  # AGENT_API_KEY`,
+    `# KEY is the per-agent key minted in the UI (shown once).`,
     `curl -s -X POST ${origin}/api/v1/inboxes \\`,
     `  -H "Authorization: Bearer $KEY" \\`,
     `  -H "content-type: application/json" \\`,
@@ -358,12 +414,35 @@ function frameDocument(html: string, remote: boolean): string {
   return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><meta name="referrer" content="no-referrer"><style>body{margin:0;padding:16px;font-family:system-ui,sans-serif;color:#17171a;background:#fff;word-wrap:break-word}img{max-width:100%;height:auto}</style>${mail.head}</head><body>${mail.body}</body></html>`;
 }
 
+/** Chrome stays on app tokens; the light canvas lives only inside srcdoc (`frameDocument`). */
+function bindHtmlPane(html: string | null | undefined): void {
+  const hasHtml = Boolean(html);
+  el.frame.closest(".pane")?.toggleAttribute("data-has-mail", hasHtml);
+  el.htmlEmpty.hidden = hasHtml;
+  el.frame.hidden = true;
+  if (!hasHtml) {
+    el.frame.removeAttribute("srcdoc");
+    return;
+  }
+  el.frame.addEventListener(
+    "load",
+    () => {
+      if (!el.frame.getAttribute("srcdoc")) return;
+      el.frame.hidden = false;
+    },
+    { once: true },
+  );
+  el.frame.srcdoc = frameDocument(html!, state.remote);
+}
+
 function renderViewer(): void {
   const m = state.selected;
   el.viewerEmpty.hidden = !!m;
   el.mail.hidden = !m;
   if (!m) {
     el.layout.dataset.view = "list";
+    bindHtmlPane(null);
+    el.mailFiles.hidden = true;
     return;
   }
   el.subject.textContent = m.subject;
@@ -374,6 +453,9 @@ function renderViewer(): void {
   el.chips.replaceChildren(
     h("span", { className: m.via === "smtp" ? "chip chip-ok" : "chip", textContent: m.via === "smtp" ? "smtp" : `${m.via} delivery` }),
     h("span", { className: "chip", textContent: formatBytes(m.rawSize) }),
+    ...(m.attachments.length
+      ? [h("span", { className: "chip", textContent: `${m.attachments.length} attachment${m.attachments.length > 1 ? "s" : ""}` })]
+      : []),
     ...(m.truncated ? [h("span", { className: "chip chip-ember", textContent: "body cut to limit" })] : []),
   );
 
@@ -391,6 +473,9 @@ function renderViewer(): void {
     }),
   );
 
+  el.mailFiles.hidden = m.attachments.length === 0;
+  el.mailFilesList.replaceChildren(...m.attachments.map((a, i) => attachmentItem(m, a, i)));
+
   if (!m.html && state.tab === "html") state.tab = "text";
   renderTab();
 
@@ -400,11 +485,7 @@ function renderViewer(): void {
       : [h("li", { className: "none", textContent: "No links." })]),
   );
   el.attachments.replaceChildren(
-    ...(m.attachments.length
-      ? m.attachments.map((a) =>
-          h("li", {}, h("span", { textContent: a.filename ?? "(no name)" }), h("span", { className: "size", textContent: `${a.mimeType} · ${formatBytes(a.size)}` })),
-        )
-      : [h("li", { className: "none", textContent: "No attachments." })]),
+    ...(m.attachments.length ? m.attachments.map((a, i) => attachmentItem(m, a, i)) : [h("li", { className: "none", textContent: "No attachments." })]),
   );
   const rows: [string, string | null][] = [
     ["envelope from", m.envelopeFrom],
@@ -426,11 +507,111 @@ function renderTab(): void {
   for (const pane of document.querySelectorAll<HTMLElement>(".pane")) pane.hidden = pane.dataset.pane !== state.tab;
   el.remoteWrap.hidden = state.tab !== "html" || !m.html;
   if (state.tab === "html") {
-    el.frame.hidden = !m.html;
-    el.htmlEmpty.hidden = !!m.html;
-    el.frame.srcdoc = m.html ? frameDocument(m.html, state.remote) : "";
+    bindHtmlPane(m.html);
   } else if (state.tab === "text") {
     el.textBody.textContent = m.text ?? "This message has no text part.";
+  }
+}
+
+type TurnstileApi = {
+  render: (container: string | HTMLElement, options: Record<string, unknown>) => string;
+  reset: (id?: string) => void;
+  getResponse: (id?: string) => string;
+  remove: (id?: string) => void;
+};
+
+type TurnstileWindow = Window & {
+  turnstile?: Partial<TurnstileApi>;
+  onTempEmailTurnstileLoad?: () => void;
+  __turnstileReady?: Promise<void>;
+};
+
+function turnstileWin(): TurnstileWindow {
+  return window as TurnstileWindow;
+}
+
+function turnstileReady(api: Partial<TurnstileApi> | undefined): api is TurnstileApi {
+  return (
+    typeof api?.render === "function" &&
+    typeof api.reset === "function" &&
+    typeof api.getResponse === "function" &&
+    typeof api.remove === "function"
+  );
+}
+
+function turnstileApi(): TurnstileApi | undefined {
+  const api = turnstileWin().turnstile;
+  if (!api || api instanceof Element) return undefined;
+  return turnstileReady(api) ? api : undefined;
+}
+
+/** api.js can set window.turnstile before render exists. Wait for the real methods (onload + poll). */
+function turnstileOnload(): Promise<void> {
+  const w = turnstileWin();
+  if (w.__turnstileReady) return w.__turnstileReady;
+  w.__turnstileReady = new Promise((resolve) => {
+    const prev = w.onTempEmailTurnstileLoad;
+    w.onTempEmailTurnstileLoad = () => {
+      prev?.();
+      resolve();
+    };
+  });
+  return w.__turnstileReady;
+}
+
+async function whenTurnstile(): Promise<TurnstileApi> {
+  const loaded = turnstileOnload();
+  const deadline = Date.now() + 8000;
+  while (Date.now() < deadline) {
+    const api = turnstileApi();
+    if (api) return api;
+    await Promise.race([loaded.then(() => undefined), new Promise<void>((resolve) => setTimeout(resolve, 50))]);
+    const afterLoad = turnstileApi();
+    if (afterLoad) return afterLoad;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error("Turnstile failed to load. Refresh the page, then try again.");
+}
+
+async function renderTurnstile(): Promise<void> {
+  const siteKey = state.config?.mint.turnstileSiteKey;
+  if (!siteKey || !state.config?.mint.enabled) return;
+  const api = await whenTurnstile();
+  if (state.turnstileId) {
+    api.remove(state.turnstileId);
+    state.turnstileId = null;
+    el.turnstile.replaceChildren();
+  }
+  state.turnstileId = api.render(el.turnstile, {
+    sitekey: siteKey,
+    action: "mint-key",
+    theme: document.documentElement.dataset.theme === "light" ? "light" : "dark",
+  });
+}
+
+function setMintHint(text: string, tone: "error" | "ok" | "" = ""): void {
+  el.mintHint.textContent = text;
+  el.mintHint.dataset.tone = tone;
+}
+
+function showMintResult(created: MintedKey): void {
+  state.mintedKey = created.key;
+  el.mintedKey.textContent = created.key;
+  el.mintQuota.textContent = `Quota: ${created.inboxLimit} active inboxes, ${created.createLimit} creates per 24 hours.`;
+  el.mintForm.hidden = true;
+  el.mintResult.hidden = false;
+}
+
+function renderMint(): void {
+  const mint = state.config?.mint;
+  const enabled = !!mint?.enabled && !!mint.turnstileSiteKey;
+  el.mintForm.hidden = !enabled || !!state.mintedKey;
+  el.mintOff.hidden = enabled || !!state.mintedKey;
+  el.mintResult.hidden = !state.mintedKey;
+  if (state.config?.hosted) {
+    el.notices.hidden = false;
+    el.mintIntro.textContent =
+      "This hosted demo is not a shared agent API. Mint your own key after Turnstile. The key is shown once.";
   }
 }
 
@@ -440,6 +621,12 @@ async function loadConfig(): Promise<void> {
   try {
     state.config = await api<AppConfig>("/config");
     renderMx();
+    renderMint();
+    try {
+      if (state.config.mint.enabled) await renderTurnstile();
+    } catch (err) {
+      setMintHint(err instanceof Error ? err.message : String(err), "error");
+    }
   } catch (err) {
     el.mx.dataset.state = "pending";
     el.mxText.textContent = err instanceof Error ? `The status check failed: ${err.message}` : "The status check failed.";
@@ -668,6 +855,67 @@ el.theme.addEventListener("click", () => {
   const next = document.documentElement.dataset.theme === "light" ? "dark" : "light";
   document.documentElement.dataset.theme = next;
   localStorage.setItem("theme", next);
+  if (state.config?.mint.enabled) void renderTurnstile();
+});
+
+el.mintForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  void (async () => {
+    el.mintSubmit.disabled = true;
+    setMintHint("");
+    try {
+      let token = "";
+      try {
+        const widget = turnstileApi();
+        if (state.turnstileId && widget) token = widget.getResponse(state.turnstileId) || "";
+      } catch {
+        token = "";
+      }
+      if (!token) {
+        setMintHint("Complete the Turnstile check first.", "error");
+        return;
+      }
+      const name = el.agentName.value.trim();
+      const created = await api<MintedKey>("/keys", {
+        method: "POST",
+        body: { name: name || undefined, turnstileToken: token },
+      });
+      showMintResult(created);
+      setMintHint("Copy the key now. It will not be shown again.", "ok");
+    } catch (err) {
+      setMintHint(err instanceof Error ? err.message : String(err), "error");
+      turnstileApi()?.reset(state.turnstileId ?? undefined);
+    } finally {
+      el.mintSubmit.disabled = !!state.mintedKey;
+    }
+  })();
+});
+
+el.copyKey.addEventListener("click", () => {
+  if (!state.mintedKey) return;
+  void navigator.clipboard.writeText(state.mintedKey).then(
+    () => setMintHint("Copied the API key.", "ok"),
+    () => setMintHint("The browser blocked the clipboard. Select the key and copy it.", "error"),
+  );
+});
+
+el.revokeKey.addEventListener("click", () => {
+  if (!state.mintedKey || !confirm("Revoke this API key? Inboxes it created stay until they expire.")) return;
+  void (async () => {
+    el.revokeKey.disabled = true;
+    try {
+      await api("/keys/revoke", { method: "POST", token: state.mintedKey ?? undefined });
+      state.mintedKey = null;
+      el.mintedKey.textContent = "";
+      renderMint();
+      setMintHint("The key is revoked.", "ok");
+      if (state.config?.mint.enabled) await renderTurnstile();
+    } catch (err) {
+      setMintHint(err instanceof Error ? err.message : String(err), "error");
+    } finally {
+      el.revokeKey.disabled = !state.mintedKey;
+    }
+  })();
 });
 
 document.addEventListener("visibilitychange", () => {

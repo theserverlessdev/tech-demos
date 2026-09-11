@@ -1,5 +1,6 @@
 import PostalMime, { type Address } from "postal-mime";
 import type { AttachmentMeta, DeliveryVia, MessageFull } from "../shared/types";
+import { storeAttachments, messagePrefix, deletePrefix } from "./attachments";
 import { newId } from "./auth";
 import { countMessages, insertMessage, type InboxRow } from "./db";
 import { extractCodes, extractLinks, htmlToText, snippetOf } from "./extract";
@@ -47,7 +48,7 @@ function cap(value: string | undefined, max: number): { value: string | null; cu
  * The single path from raw MIME to a stored message. The email() handler, the sample button, and the
  * agent test delivery all call it, so a test delivery exercises the same parser and limits as SMTP.
  */
-export async function ingest(db: D1Database, inbox: InboxRow, input: IngestInput): Promise<MessageFull> {
+export async function ingest(db: D1Database, bucket: R2Bucket, inbox: InboxRow, input: IngestInput): Promise<MessageFull> {
   if (input.rawSize > MAX_RAW_BYTES) throw new Refusal("too_large", "The message is larger than 1 MB.");
   if ((await countMessages(db, inbox.id)) >= MAX_MESSAGES_PER_INBOX) {
     throw new Refusal("inbox_full", `The inbox already holds ${MAX_MESSAGES_PER_INBOX} messages.`);
@@ -59,35 +60,36 @@ export async function ingest(db: D1Database, inbox: InboxRow, input: IngestInput
   const readable = text.value ?? (html.value ? htmlToText(html.value) : "");
   const subject = (parsed.subject ?? "").trim() || "(no subject)";
   const from = firstMailbox(parsed.from);
+  const id = newId();
 
-  const attachments: AttachmentMeta[] = parsed.attachments.map((a) => ({
-    filename: a.filename,
-    mimeType: a.mimeType,
-    disposition: a.disposition,
-    size: typeof a.content === "string" ? a.content.length : a.content.byteLength,
-  }));
-
-  return insertMessage(db, {
-    id: newId(),
-    inbox_id: inbox.id,
-    via: input.via,
-    received_at: Date.now(),
-    envelope_from: input.envelopeFrom,
-    from_name: from.name,
-    from_address: from.address,
-    to_header: formatAddresses(parsed.to),
-    subject: subject.slice(0, 998),
-    snippet: snippetOf(readable),
-    text_body: text.value,
-    html_body: html.value,
-    truncated: text.cut || html.cut,
-    raw_size: input.rawSize,
-    message_id: parsed.messageId ?? null,
-    date_header: parsed.date ?? null,
-    codes: JSON.stringify(extractCodes(subject, readable)),
-    links: JSON.stringify(extractLinks(text.value ?? "", html.value ?? "")),
-    attachments: JSON.stringify(attachments),
-  });
+  let attachments: AttachmentMeta[] = [];
+  try {
+    attachments = await storeAttachments(bucket, inbox.id, id, parsed.attachments);
+    return await insertMessage(db, {
+      id,
+      inbox_id: inbox.id,
+      via: input.via,
+      received_at: Date.now(),
+      envelope_from: input.envelopeFrom,
+      from_name: from.name,
+      from_address: from.address,
+      to_header: formatAddresses(parsed.to),
+      subject: subject.slice(0, 998),
+      snippet: snippetOf(readable),
+      text_body: text.value,
+      html_body: html.value,
+      truncated: text.cut || html.cut,
+      raw_size: input.rawSize,
+      message_id: parsed.messageId ?? null,
+      date_header: parsed.date ?? null,
+      codes: JSON.stringify(extractCodes(subject, readable)),
+      links: JSON.stringify(extractLinks(text.value ?? "", html.value ?? "")),
+      attachments: JSON.stringify(attachments),
+    });
+  } catch (err) {
+    await deletePrefix(bucket, messagePrefix(inbox.id, id));
+    throw err;
+  }
 }
 
 function escapeHtml(s: string): string {
@@ -96,7 +98,8 @@ function escapeHtml(s: string): string {
 
 /**
  * A realistic sign-up message as raw MIME: multipart/alternative inside multipart/mixed, with a small
- * text attachment. The server writes it, so a visitor cannot inject content through this path.
+ * text attachment and a remote image in the HTML part. The server writes it, so a visitor cannot inject
+ * content through this path.
  */
 export function sampleMime(to: string, origin: string, domain: string): string {
   const code = String(100000 + (crypto.getRandomValues(new Uint32Array(1))[0] % 900000));
@@ -106,12 +109,15 @@ export function sampleMime(to: string, origin: string, domain: string): string {
   const inner = `alt-${newId(6)}`;
   const date = new Date().toUTCString().replace("GMT", "+0000");
 
+  const remoteImg = `${origin.replace(/\/$/, "")}/assets/sample-remote.svg`;
   const text = [
     "Welcome to Ember Cloud.",
     "",
     `Your verification code is ${code}`,
     "",
     `Or confirm your address here: ${link}`,
+    "",
+    "The HTML part includes a remote image. It stays blocked until you allow remote images.",
     "",
     "This code expires in 10 minutes. If you did not sign up, ignore this message.",
   ].join("\r\n");
@@ -124,6 +130,12 @@ export function sampleMime(to: string, origin: string, domain: string): string {
 <tr><td style="padding:12px 32px;font-size:15px;line-height:1.5;color:#3d3a34">Enter this code to finish your sign-up for <b>${escapeHtml(to)}</b>.</td></tr>
 <tr><td style="padding:8px 32px 16px"><div style="font-family:Menlo,monospace;font-size:32px;letter-spacing:.3em;background:#faf9f6;border:1px dashed #c2410c;border-radius:8px;padding:14px 0;text-align:center">${code}</div></td></tr>
 <tr><td style="padding:0 32px 24px"><a href="${escapeHtml(link)}" style="display:inline-block;background:#c2410c;color:#ffffff;text-decoration:none;font-weight:700;padding:12px 20px;border-radius:8px">Confirm address</a></td></tr>
+<tr><td style="padding:0 32px 16px">
+<div style="min-height:48px;border:1px dashed #c2410c;border-radius:8px;padding:10px;background:#faf9f6">
+<img src="${escapeHtml(remoteImg)}" width="160" height="40" alt="Ember Cloud mark (remote)" style="display:block;height:40px;width:auto">
+<p style="margin:8px 0 0;font-size:12px;color:#6b675e">Remote image. It stays blocked until you allow remote images.</p>
+</div>
+</td></tr>
 <tr><td style="padding:16px 32px 28px;border-top:1px solid #ebe8e0;font-size:12px;color:#6b675e">The code expires in 10 minutes. This is a sample message from the temp-email demo.</td></tr>
 </table></td></tr></table></body></html>`;
 

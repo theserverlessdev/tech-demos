@@ -1,0 +1,6 @@
+# Local secrets for wrangler dev. Copy to .dev.vars (gitignored).
+# Dummy Turnstile keys always pass. Production keys reject dummy tokens.
+
+AGENT_API_KEY=dev-agent-key-change-me
+TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA
+TURNSTILE_SITE_KEY=1x00000000000000000000AA

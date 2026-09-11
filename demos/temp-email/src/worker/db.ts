@@ -1,4 +1,5 @@
 import type { AttachmentMeta, DeliveryVia, InboxInfo, InboxSource, MessageFull, MessageSummary } from "../shared/types";
+import { deletePrefix, inboxPrefix } from "./attachments";
 
 export type InboxRow = {
   id: string;
@@ -7,6 +8,7 @@ export type InboxRow = {
   source: InboxSource;
   created_at: number;
   expires_at: number;
+  api_key_id: string | null;
 };
 
 type MessageRow = {
@@ -102,13 +104,15 @@ export async function findActiveInbox(db: D1Database, localPart: string, now = D
 }
 
 /** Returns null when an active inbox already uses the name. */
-export async function insertInbox(db: D1Database, row: InboxRow): Promise<InboxRow | null> {
+export async function insertInbox(db: D1Database, bucket: R2Bucket, row: InboxRow): Promise<InboxRow | null> {
   // An expired inbox that the cron job has not removed yet must not block the name.
-  await deleteExpiredInbox(db, row.local_part, row.created_at);
+  await deleteExpiredInbox(db, bucket, row.local_part, row.created_at);
   try {
     await db
-      .prepare("INSERT INTO inboxes (id, local_part, token_hash, source, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)")
-      .bind(row.id, row.local_part, row.token_hash, row.source, row.created_at, row.expires_at)
+      .prepare(
+        "INSERT INTO inboxes (id, local_part, token_hash, source, created_at, expires_at, api_key_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      )
+      .bind(row.id, row.local_part, row.token_hash, row.source, row.created_at, row.expires_at, row.api_key_id)
       .run();
     return row;
   } catch (err) {
@@ -117,15 +121,16 @@ export async function insertInbox(db: D1Database, row: InboxRow): Promise<InboxR
   }
 }
 
-async function deleteExpiredInbox(db: D1Database, localPart: string, now: number): Promise<void> {
+async function deleteExpiredInbox(db: D1Database, bucket: R2Bucket, localPart: string, now: number): Promise<void> {
   const expired = await db
     .prepare("SELECT id FROM inboxes WHERE local_part = ? AND expires_at <= ?")
     .bind(localPart, now)
     .first<{ id: string }>();
-  if (expired) await deleteInbox(db, expired.id);
+  if (expired) await deleteInbox(db, bucket, expired.id);
 }
 
-export async function deleteInbox(db: D1Database, inboxId: string): Promise<void> {
+export async function deleteInbox(db: D1Database, bucket: R2Bucket, inboxId: string): Promise<void> {
+  await deletePrefix(bucket, inboxPrefix(inboxId));
   await db.batch([
     db.prepare("DELETE FROM messages WHERE inbox_id = ?").bind(inboxId),
     db.prepare("DELETE FROM inboxes WHERE id = ?").bind(inboxId),
@@ -185,8 +190,10 @@ export async function insertMessage(db: D1Database, m: NewMessage): Promise<Mess
   return toFull(row);
 }
 
-/** Deletes expired inboxes and their messages. Returns the count of each. */
-export async function cleanupExpired(db: D1Database, now = Date.now()): Promise<{ inboxes: number; messages: number }> {
+/** Deletes expired inboxes, their messages, and R2 attachment objects. */
+export async function cleanupExpired(db: D1Database, bucket: R2Bucket, now = Date.now()): Promise<{ inboxes: number; messages: number }> {
+  const { results } = await db.prepare("SELECT id FROM inboxes WHERE expires_at <= ?").bind(now).all<{ id: string }>();
+  for (const row of results) await deletePrefix(bucket, inboxPrefix(row.id));
   const [messages, inboxes] = await db.batch([
     db.prepare("DELETE FROM messages WHERE inbox_id IN (SELECT id FROM inboxes WHERE expires_at <= ?)").bind(now),
     db.prepare("DELETE FROM inboxes WHERE expires_at <= ?").bind(now),
