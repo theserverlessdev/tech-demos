@@ -9,10 +9,10 @@
       "built_at": "2026-09-11",
       "path": "demos/temp-email",
       "url": "https://tech-demos.theserverless.dev/demos/temp-email",
-      "subdomain": "https://test-email.theserverless.dev/",
+      "subdomain": "https://email.lomvic.com/",
       "worker": "tech-demos-temp-email",
       "branch": "demo/temp-email",
-      "pending": "Owner must add Email Routing for the test-email subdomain (MX + SPF). See demos/temp-email/SETUP.md."
+      "notes": "Mail domain moved to email.lomvic.com (lomvic throwaway zone). TSD apex Google MX untouched."
     },
     {
       "slug": "apollo-desk",

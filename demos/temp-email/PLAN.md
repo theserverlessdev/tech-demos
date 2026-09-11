@@ -2,17 +2,18 @@
 
 ## Goal
 
-A visitor mints a disposable address on `test-email.theserverless.dev` and reads the mail that arrives there. An agent does the same through an API with a shared key.
+A visitor mints a disposable address on `email.lomvic.com` and reads the mail that arrives there. An agent does the same through an API with a shared key.
 
 The demo is a small slice of [hirotomasato/tempik](https://github.com/hirotomasato/tempik). It is not a full agent inbox.
 
 ## Mail safety rule
 
-The apex `theserverless.dev` receives mail through Google Workspace. This demo must not change the apex MX records.
+Inbound demo mail lives on the throwaway zone `lomvic.com` (subdomain `email.lomvic.com`). Do **not** touch apex MX on `theserverless.dev` — that zone stays on Google Workspace.
 
-- Email Routing stays disabled for the apex zone.
-- `wrangler email routing enable theserverless.dev` calls `POST /zones/{zone}/email/routing/enable`. That call adds and locks Cloudflare MX records on the apex. We do not run it.
-- The MX and SPF records go on `test-email.theserverless.dev` only. SETUP.md gives the steps for the owner.
+- Email Routing is enabled on `lomvic.com` only.
+- MX / SPF for this demo are on `email.lomvic.com` only.
+- Never run `wrangler email routing enable theserverless.dev` (that would replace Google apex MX with Cloudflare).
+- Mail previously planned for `test-email.theserverless.dev` moved off TSD; hub gallery links still use `tech-demos.theserverless.dev`.
 
 ## Single-user MVP
 
@@ -36,7 +37,7 @@ The apex `theserverless.dev` receives mail through Google Workspace. This demo m
 
 1. D1 schema and migration: `inboxes`, `messages`, and indexes on expiry and on the message cursor.
 2. Ingest module: check the size, parse with PostalMime, cap the bodies, find codes and links, and insert the row.
-3. `email()` handler: accept only `@test-email.theserverless.dev`, drop `+tag`, reject unknown, expired, full, or large mail.
+3. `email()` handler: accept only `@email.lomvic.com`, drop `+tag`, reject unknown, expired, full, or large mail.
 4. HTTP API under `/api/v1` with bearer auth and rate limits.
 5. `scheduled()` cleanup.
 6. Browser UI: address card, inbox switcher, message list, sandboxed HTML viewer, text view, details view.

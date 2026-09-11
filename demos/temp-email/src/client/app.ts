@@ -263,7 +263,7 @@ function renderInboxList(): void {
 
 function renderSnippet(): void {
   const origin = location.origin;
-  const address = state.active?.address ?? `name@${state.config?.domain ?? "test-email.theserverless.dev"}`;
+  const address = state.active?.address ?? `name@${state.config?.domain ?? "email.lomvic.com"}`;
   el.agentSnippet.textContent = [
     `KEY=…  # AGENT_API_KEY`,
     `curl -s -X POST ${origin}/api/v1/inboxes \\`,

@@ -1,12 +1,13 @@
 # Setup — temp-email
 
-This file lists what is live, what the owner must still do, and how the agent API works.
+This file lists what is live and how the agent API works.
 
-- **UI and API:** <https://test-email.theserverless.dev>
-- **Addresses:** `anything@test-email.theserverless.dev`
+- **UI and API:** <https://email.lomvic.com>
+- **Addresses:** `anything@email.lomvic.com`
 - **Worker:** `tech-demos-temp-email`
 - **D1 database:** `tech-demos-temp-email` (`c41b5408-e3fd-44d4-9455-f355016b483b`)
-- **Zone:** `theserverless.dev` (`e60a45645a0c2f830636bfe7c121ca86`)
+- **Mail zone:** `lomvic.com` (`7b0cbb059730070dc5e85f1fd9a46f28`) — throwaway mail zone
+- **Hub zone:** `theserverless.dev` — gallery + redirect routes only; apex MX stays on Google Workspace
 
 ## Status on 2026-09-11
 
@@ -14,132 +15,74 @@ This file lists what is live, what the owner must still do, and how the agent AP
 | --- | --- | --- |
 | D1 database and migration `0001_init.sql` | Done | Agent |
 | Worker deploy with a cron job every 15 minutes | Done | Agent |
-| Custom domain `test-email.theserverless.dev` | Done | Agent |
-| Hub routes `tech-demos.theserverless.dev/demos/temp-email*` and `temp-email.tech-demos.theserverless.dev/*` | Done. Both send a 302 to the custom domain. | Agent |
-| Secret `AGENT_API_KEY` | Done. The value is in `demos/temp-email/.secrets/agent-api-key` on the build machine. Git ignores that file. | Agent |
-| Email Routing catch-all rule → Worker `tech-demos-temp-email` | Done through the REST API. Wrangler 4.129 blocks the `worker` action for a catch-all, but the API accepts it. | Agent |
-| Email Routing for the subdomain `test-email.theserverless.dev` (MX and SPF) | **Not done** | **Owner** |
-| Apex `theserverless.dev` MX records | Unchanged. They point at Google Workspace. | Nobody |
+| Custom domain `email.lomvic.com` | Done | Agent |
+| Hub routes `tech-demos.theserverless.dev/demos/temp-email*` and `temp-email.tech-demos.theserverless.dev/*` | Done. Both send a 302 to `https://email.lomvic.com`. | Agent |
+| Secret `AGENT_API_KEY` | Done. Local copy lives in `~/.theserverlessdev/temp-email.env` (and optionally `demos/temp-email/.secrets/agent-api-key` on a build machine). Git ignores secret files. | Agent |
+| Email Routing enabled on `lomvic.com` | Done | Owner |
+| Subdomain / custom hostname mail for `email.lomvic.com` (MX + SPF) | Done | Owner |
+| Catch-all / `*@email.lomvic.com` → Worker `tech-demos-temp-email` | Done | Owner |
+| Apex `theserverless.dev` MX records | Unchanged. They point at Google Workspace. Do not enable Email Routing on TSD for this demo. | Nobody |
 
-## Why the agent stopped before MX
+> **Note:** Disposable mail previously targeted `test-email.theserverless.dev`. It moved to `email.lomvic.com` so TSD apex Google MX never needs Email Routing. Old TSD custom domain and catch-all for that subdomain are removed / disabled.
 
-Apex mail for `theserverless.dev` goes to Google Workspace. The demo must not change that.
+## Mail zone (lomvic.com)
 
-1. `wrangler email routing enable <domain>` sends `POST /zones/{zone}/email/routing/enable`. That call is for the whole zone. It does not take a subdomain.
-2. `wrangler email routing dns get theserverless.dev` shows the records that the zone-level call adds. They are MX records on the **apex**:
+Inbound demo mail uses Cloudflare Email Routing on zone `lomvic.com` (`7b0cbb059730070dc5e85f1fd9a46f28`):
 
-   ```text
-   theserverless.dev  MX  2   route1.mx.cloudflare.net.
-   theserverless.dev  MX  43  route2.mx.cloudflare.net.
-   theserverless.dev  MX  25  route3.mx.cloudflare.net.
-   theserverless.dev  TXT "v=spf1 include:_spf.mx.cloudflare.net ~all"
-   ```
+- Email Routing is enabled for the zone.
+- MX and SPF live on the subdomain `email.lomvic.com` (not on `theserverless.dev`).
+- Routing rule: catch-all and/or `*@email.lomvic.com` → Worker `tech-demos-temp-email`.
+- Worker custom domain: `email.lomvic.com`.
 
-   Those records would take apex mail away from Google. The agent did not run the command.
-3. Wrangler has no command that adds the records to a subdomain only. The agent's token has `zone (read)` only, so it cannot write DNS records.
-4. A read-only call gives the records that the subdomain needs. The records are on `test-email` only:
-
-   ```bash
-   curl -s -H "Authorization: Bearer $CF_TOKEN" \
-     "https://api.cloudflare.com/client/v4/zones/e60a45645a0c2f830636bfe7c121ca86/email/routing/dns?subdomain=test-email.theserverless.dev"
-   ```
-
-   ```text
-   test-email.theserverless.dev  MX  2   route1.mx.cloudflare.net.
-   test-email.theserverless.dev  MX  43  route2.mx.cloudflare.net.
-   test-email.theserverless.dev  MX  25  route3.mx.cloudflare.net.
-   test-email.theserverless.dev  TXT "v=spf1 include:_spf.mx.cloudflare.net ~all"
-   ```
-
-## What the owner must do
-
-### Step 0: record the apex MX before you start
-
-```bash
-dig +short MX theserverless.dev
-```
-
-The output on 2026-09-11 was:
+Expected DNS:
 
 ```text
-1 aspmx.l.google.com.
-5 alt1.aspmx.l.google.com.
-5 alt2.aspmx.l.google.com.
-10 alt3.aspmx.l.google.com.
-10 alt4.aspmx.l.google.com.
+email.lomvic.com  MX   route1.mx.cloudflare.net.
+email.lomvic.com  MX   route2.mx.cloudflare.net.
+email.lomvic.com  MX   route3.mx.cloudflare.net.
+email.lomvic.com  TXT  "v=spf1 include:_spf.mx.cloudflare.net ~all"
 ```
 
-### Step 1: add the subdomain to Email Routing (dashboard)
-
-1. Open the [Cloudflare dashboard](https://dash.cloudflare.com/3f847e2fadeef3e583701e8fa25657b5/theserverless.dev) and select the zone `theserverless.dev`.
-2. Go to **Compute** > **Email Service** > **Email Routing**.
-3. Open **Settings**.
-4. Under **Subdomains**, type `test-email` and submit.
-5. Accept the records for `test-email.theserverless.dev` only. The list must match the subdomain records above.
-
-> **Stop if the dashboard shows the apex onboarding wizard.** Some zones show "Get started" or "Add records and enable" before the Settings tab. That wizard adds MX records on `theserverless.dev` and offers to delete the Google records. Do not accept it. Go to Step 1b.
-
-### Step 1b: use the API if the dashboard forces the apex wizard
-
-This endpoint adds the Email Routing DNS records for a zone. Cloudflare documents the `name` field only as "Domain of your zone". The agent did not run this call, because Cloudflare does not document its effect on the apex. Run Step 0 again right after the call.
+### Verify
 
 ```bash
-CF_TOKEN=…   # a token with Email Routing: Edit and DNS: Edit on theserverless.dev
-curl -s -X POST \
-  -H "Authorization: Bearer $CF_TOKEN" -H "content-type: application/json" \
-  "https://api.cloudflare.com/client/v4/zones/e60a45645a0c2f830636bfe7c121ca86/email/routing/dns" \
-  -d '{"name": "test-email.theserverless.dev"}'
-dig +short MX theserverless.dev   # must still list only Google
+dig +short MX email.lomvic.com   # route*.mx.cloudflare.net
+dig +short TXT email.lomvic.com  # v=spf1 include:_spf.mx.cloudflare.net ~all
+dig +short MX theserverless.dev  # still Google only — never change this for the demo
+curl -s https://email.lomvic.com/api/v1/config | jq .
 ```
 
-Remove the apex Cloudflare MX records at once if the call adds them. The rollback section gives the steps.
+The Worker reads MX through DNS over HTTPS and caches the result for 5 minutes. After that, the yellow strip in the UI turns green when MX is healthy.
 
-### Step 2: check the records
+### Send a real message
 
-Wait one or two minutes, then run the commands below.
-
-```bash
-dig +short MX test-email.theserverless.dev   # route1, route2, route3 .mx.cloudflare.net
-dig +short TXT test-email.theserverless.dev  # v=spf1 include:_spf.mx.cloudflare.net ~all
-dig +short MX theserverless.dev              # still Google only
-curl -s https://test-email.theserverless.dev/api/v1/config | jq .mx
-```
-
-The Worker reads MX through DNS over HTTPS and keeps the result for 5 minutes. After that, the yellow strip in the UI turns green.
-
-### Step 3: send a real message
-
-1. Open <https://test-email.theserverless.dev> and press **New address**.
+1. Open <https://email.lomvic.com> and press **New address**.
 2. Start a log stream: `cd demos/temp-email && bunx wrangler tail tech-demos-temp-email`.
 3. From Gmail, send a message to the new address.
 4. The message shows in the UI within 5 seconds. The log shows `{"event":"email","outcome":"stored",…}`.
 
-Use the table to find a fault.
-
 | Symptom | Cause | Fix |
 | --- | --- | --- |
 | Gmail bounces with "No active inbox has this address" | The Worker works. The address expired or has a typo. | Mint a new address. |
-| Gmail bounces with "accepts mail for @test-email.theserverless.dev only" | Mail for another domain reached the Worker. | Check the routing rules. |
-| No bounce, no log line, no message | Email Routing did not send the message to the Worker. | Open **Email Routing** > **Routing rules**. Check that the catch-all for `test-email.theserverless.dev` is enabled and sends to the Worker `tech-demos-temp-email`. |
-| The Gmail bounce names the DNS or the MX | The subdomain records are missing. | Do Step 1 again. |
-
-The catch-all rule applies to the zone. The Cloudflare docs do not say how it applies to a subdomain. If the dashboard shows a separate catch-all for the subdomain, set that catch-all to **Send to a Worker** > `tech-demos-temp-email`.
+| Gmail bounces with "accepts mail for @email.lomvic.com only" | Mail for another domain reached the Worker. | Check the routing rules and `MAIL_DOMAIN`. |
+| No bounce, no log line, no message | Email Routing did not send the message to the Worker. | Open **Email Routing** > **Routing rules** on `lomvic.com`. Check catch-all / `*@email.lomvic.com` → `tech-demos-temp-email`. |
+| The Gmail bounce names the DNS or the MX | The subdomain records are missing. | Confirm MX/SPF on `email.lomvic.com` in the lomvic zone. |
 
 ## Rollback
 
 ```bash
-# 1. Remove the subdomain: dashboard > Email Routing > Settings > Subdomains > remove test-email.
-# 2. Set the catch-all back to disabled and drop.
-bunx wrangler email routing rules update theserverless.dev catch-all --action-type drop --enabled false
-# 3. Remove the Worker, its custom domain, its routes, and the database.
+# 1. On lomvic.com: disable catch-all / Worker routing for *@email.lomvic.com (or set drop).
+# 2. Remove the Worker custom domain email.lomvic.com, hub routes, and optionally the Worker + D1.
 cd demos/temp-email
 bunx wrangler delete tech-demos-temp-email
 bunx wrangler d1 delete tech-demos-temp-email
 ```
 
+Do **not** enable Email Routing on `theserverless.dev` and do **not** change TSD apex Google MX as part of rollback or redeploy.
+
 ## Agent API
 
-The browser and agents use one API: `https://test-email.theserverless.dev/api/v1`. Each call sends a bearer token.
+The browser and agents use one API: `https://email.lomvic.com/api/v1`. Each call sends a bearer token.
 
 - **Agent key:** the `AGENT_API_KEY` secret. It opens every inbox. It can set a TTL of up to 1440 minutes and can deliver raw MIME.
 - **Inbox token:** the create call returns it once. It opens only its own inbox. The server keeps only its SHA-256 hash.
@@ -148,7 +91,7 @@ Rate limits apply to callers without the agent key: 6 creates or samples each mi
 
 ### Endpoints
 
-`{address}` is `name@test-email.theserverless.dev` or `name`. The server drops a `+tag`.
+`{address}` is `name@email.lomvic.com` or `name`. The server drops a `+tag`.
 
 | Method and path | Body | Result |
 | --- | --- | --- |
@@ -169,8 +112,9 @@ Errors use the shape `{"error": {"code": "not_found", "message": "…"}}`. A wro
 ### Example: sign up and read the code
 
 ```bash
-BASE=https://test-email.theserverless.dev/api/v1
-KEY=$(cat demos/temp-email/.secrets/agent-api-key)
+BASE=https://email.lomvic.com/api/v1
+# Prefer ~/.theserverlessdev/temp-email.env (TEMP_EMAIL_API_KEY) or demos/temp-email/.secrets/agent-api-key
+KEY=$(grep -E '^TEMP_EMAIL_API_KEY=' ~/.theserverlessdev/temp-email.env | cut -d= -f2-)
 
 # 1. Create an inbox for 30 minutes.
 INBOX=$(curl -s -X POST "$BASE/inboxes" \
@@ -210,6 +154,7 @@ curl -s -X POST "$BASE/inboxes/$ADDRESS/deliver" \
 cd demos/temp-email
 openssl rand -hex 32 > .secrets/agent-api-key
 tr -d '\n' < .secrets/agent-api-key | bunx wrangler secret put AGENT_API_KEY
+# Also refresh ~/.theserverlessdev/temp-email.env if you keep a local copy there.
 ```
 
 ## Local development
@@ -228,5 +173,7 @@ Wrangler dev can stop with `Network connection lost` when a file changes during 
 ```bash
 cd demos/temp-email
 bun run deploy                    # build, remote migrations, wrangler deploy
-AGENT_API_KEY=$(cat .secrets/agent-api-key) bun run smoke -- https://test-email.theserverless.dev
+# smoke against the live origin (key from env file — do not echo it)
+set -a && source ~/.theserverlessdev/temp-email.env && set +a
+AGENT_API_KEY="$TEMP_EMAIL_API_KEY" bun run smoke -- https://email.lomvic.com
 ```

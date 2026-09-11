@@ -1,15 +1,15 @@
 # Temp email
 
-Disposable inboxes on `test-email.theserverless.dev`, inspired by [hirotomasato/tempik](https://github.com/hirotomasato/tempik).
+Disposable inboxes on `email.lomvic.com`, inspired by [hirotomasato/tempik](https://github.com/hirotomasato/tempik).
 
-- **Live:** <https://test-email.theserverless.dev>
+- **Live:** <https://email.lomvic.com>
 - **Plan:** [PLAN.md](./PLAN.md)
 - **Setup, owner steps, and the agent API:** [SETUP.md](./SETUP.md)
 
 ## How it works
 
 ```text
-sender ─► Cloudflare MX (test-email subdomain) ─► Email Routing catch-all ─► email() ─► postal-mime ─► D1
+sender ─► Cloudflare MX (email.lomvic.com) ─► Email Routing catch-all ─► email() ─► postal-mime ─► D1
 browser ─► /api/v1 (inbox token) ─┐
 agent   ─► /api/v1 (agent key)  ──┴► fetch() ─► D1 ◄─ scheduled() deletes expired inboxes every 15 minutes
 ```
