@@ -2,6 +2,21 @@
   "proposed": [],
   "built": [
     {
+      "slug": "resolve-hq",
+      "repo": "https://github.com/mirza-rizvi/ResolveHQ",
+      "title": "ResolveHQ",
+      "source": "approved-slice",
+      "approved_at": "2026-09-14",
+      "why": "Cloudflare-native helpdesk; demo the Paid-plan binding story (D1 + R2 + Queues + Workers AI) without WFP or Email Routing MX",
+      "built_at": "2026-09-14",
+      "path": "demos/resolve-hq",
+      "url": "https://tech-demos.theserverless.dev/demos/resolve-hq/",
+      "subdomain": "https://resolve-hq.tech-demos.theserverless.dev/",
+      "worker": "tech-demos-resolve-hq",
+      "branch": "demo/resolve-hq",
+      "notes": "Fresh small slice, not a vendor of upstream. Inbound is Queue-simulated; Email Routing deferred."
+    },
+    {
       "slug": "temp-email",
       "repo": "https://github.com/hirotomasato/tempik",
       "title": "Tempik (disposable temp mail)",

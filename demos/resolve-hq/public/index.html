@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark light" />
+  <meta name="theme-color" content="#0e0e11" />
+  <title>ResolveHQ · Tech Demos · theserverless.dev</title>
+  <meta name="description" content="A shared support inbox on Cloudflare Workers: D1 tickets, R2 attachments, a Queue-simulated inbound mail, and a Workers AI draft reply." />
+  <meta property="og:title" content="ResolveHQ slice" />
+  <meta property="og:description" content="Shared inbox on Workers with D1, R2, Queues, and Workers AI — a small slice of ResolveHQ." />
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Hanken+Grotesk:wght@400..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script src="./assets/theme.js"></script>
+  <link rel="stylesheet" href="./assets/inbox.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="https://tech-demos.theserverless.dev/" aria-label="Tech Demos gallery">
+      <svg class="brand__mark" width="26" height="26" viewBox="0 -3 128 128" aria-hidden="true">
+        <g stroke="currentColor" stroke-width="6" stroke-linecap="round" opacity="0.45"><line x1="4" y1="58" x2="20" y2="58"/><line x1="1" y1="72" x2="19" y2="72"/><line x1="6" y1="86" x2="22" y2="86"/></g>
+        <path d="M44 92 C31 92 20 82 20 69 C20 57 29 47 41 46 C45 33 57 24 70 24 C85 24 98 35 100 51 C110 53 118 62 118 72 C118 83 109 92 97 92 Z" fill="none" stroke="currentColor" stroke-width="7.5" stroke-linejoin="round"/>
+        <path d="M69 36 L50 71 L63 71 L57 102 L88 60 L72 60 L80 36 Z" fill="currentColor"/>
+      </svg>
+      <span>Tech Demos</span>
+    </a>
+    <div class="topbar__title">
+      <h1>ResolveHQ</h1>
+      <p>Shared inbox on D1, R2, Queues, and Workers AI</p>
+    </div>
+    <div class="topbar__actions">
+      <button class="btn" id="simulate" type="button">Simulate inbound</button>
+      <a class="btn btn-ghost" href="https://github.com/mirza-rizvi/ResolveHQ" rel="noopener" target="_blank">Upstream</a>
+      <button class="btn btn-ghost btn-icon" id="theme" type="button" aria-label="Switch colour theme">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9Z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="strip" id="strip" role="status">
+    <span class="strip__dot"></span>
+    <span id="strip-text">Queue is idle. Simulate inbound mail to create a ticket through the consumer.</span>
+  </div>
+
+  <main class="layout" id="layout" data-view="list">
+    <section class="list" aria-label="Tickets">
+      <header class="list__head">
+        <h2>Inbox</h2>
+        <span class="count" id="count">0</span>
+        <div class="filters" role="tablist" aria-label="Status filter">
+          <button class="filter is-on" type="button" data-filter="all">All</button>
+          <button class="filter" type="button" data-filter="open">Open</button>
+          <button class="filter" type="button" data-filter="pending">Pending</button>
+          <button class="filter" type="button" data-filter="resolved">Resolved</button>
+        </div>
+      </header>
+      <ol class="tickets" id="tickets"></ol>
+      <p class="list__empty" id="list-empty" hidden>No tickets in this filter.</p>
+    </section>
+
+    <section class="thread" id="thread" aria-label="Conversation">
+      <div class="thread__empty" id="thread-empty">
+        <p class="thread__empty-title">Pick a ticket</p>
+        <p>The middle pane is the thread. Customer mail from the Queue lands here.</p>
+      </div>
+      <article class="conv" id="conv" hidden>
+        <header class="conv__head">
+          <button class="btn btn-ghost conv__back" id="back" type="button">← Inbox</button>
+          <div class="conv__title">
+            <span class="mono" id="conv-number"></span>
+            <h2 id="conv-subject"></h2>
+          </div>
+          <p class="conv__from" id="conv-from"></p>
+          <div class="conv__meta">
+            <label>Status
+              <select id="status"></select>
+            </label>
+            <label>Priority
+              <select id="priority"></select>
+            </label>
+            <label>Assignee
+              <select id="assignee"></select>
+            </label>
+          </div>
+        </header>
+        <div class="files" id="files" hidden>
+          <span class="files__label">Attachments</span>
+          <ul class="files__list" id="files-list"></ul>
+        </div>
+        <ol class="messages" id="messages"></ol>
+      </article>
+    </section>
+
+    <aside class="composer" aria-label="Reply">
+      <p class="eyebrow">Reply</p>
+      <p class="composer__lede" id="composer-lede">Select a ticket to write back. Draft reply asks Workers AI; it fails soft if the model is down.</p>
+      <label class="sr-only" for="reply">Reply body</label>
+      <textarea id="reply" rows="10" placeholder="Write the customer-facing reply…" disabled></textarea>
+      <p class="hint" id="hint" role="status"></p>
+      <div class="composer__row">
+        <button class="btn" id="draft" type="button" disabled>Draft reply</button>
+        <button class="btn btn-primary" id="send" type="button" disabled>Send reply</button>
+      </div>
+      <div class="composer__row">
+        <button class="btn" id="customer-reply" type="button" disabled>Queue a customer reply</button>
+      </div>
+      <form class="upload" id="upload">
+        <label class="upload__label">
+          <span>Attach a file to this ticket (R2)</span>
+          <input id="file" type="file" disabled />
+        </label>
+        <button class="btn" type="submit" id="upload-btn" disabled>Upload</button>
+      </form>
+    </aside>
+  </main>
+
+  <footer class="foot">
+    <p>
+      A slice of <a href="https://github.com/mirza-rizvi/ResolveHQ" rel="noopener" target="_blank">mirza-rizvi/ResolveHQ</a>
+      on Workers, D1, R2, Queues, and Workers AI.
+      <a href="https://github.com/theserverlessdev/tech-demos/tree/main/demos/resolve-hq" rel="noopener" target="_blank">Source</a>
+    </p>
+  </footer>
+
+  <script type="module" src="./assets/app.js"></script>
+</body>
+</html>

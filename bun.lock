@@ -46,6 +46,13 @@
     "demos/hello-dynamic": {
       "name": "@tech-demos/hello-dynamic",
     },
+    "demos/resolve-hq": {
+      "name": "@tech-demos/resolve-hq",
+      "devDependencies": {
+        "typescript": "^5.9.2",
+        "wrangler": "^4.40.0",
+      },
+    },
     "demos/temp-email": {
       "name": "@tech-demos/temp-email",
       "dependencies": {
@@ -312,6 +319,8 @@
     "@tech-demos/hello-dynamic": ["@tech-demos/hello-dynamic@workspace:demos/hello-dynamic"],
 
     "@tech-demos/hub": ["@tech-demos/hub@workspace:apps/hub"],
+
+    "@tech-demos/resolve-hq": ["@tech-demos/resolve-hq@workspace:demos/resolve-hq"],
 
     "@tech-demos/shared": ["@tech-demos/shared@workspace:packages/shared"],
 
