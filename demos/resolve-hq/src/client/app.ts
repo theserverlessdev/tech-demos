@@ -328,9 +328,14 @@ $("draft").addEventListener("click", async () => {
   if (!state.detail) return;
   setHint("Asking Workers AI for a draft…");
   try {
-    const result = await api<{ draft: string; model: string }>(`/tickets/${state.detail.id}/draft`, { method: "POST" });
+    const result = await api<{ draft: string; model: string; source: "workers-ai" | "fallback" }>(`/tickets/${state.detail.id}/draft`, { method: "POST" });
     ($("reply") as HTMLTextAreaElement).value = result.draft;
-    setHint(`Draft from ${result.model}. Edit before you send.`, "ok");
+    setHint(
+      result.source === "fallback"
+        ? `Workers AI unavailable or unusable — stub draft. Edit before you send.`
+        : `Draft from ${result.model}. Edit before you send.`,
+      "ok",
+    );
   } catch (err) {
     setHint(err instanceof ApiFailure ? err.message : "Draft failed.", "error");
   }

@@ -93,7 +93,12 @@ export async function handleApi(request: Request, env: Env, pathname: string): P
   const method = request.method;
 
   if (pathname === "/api/health" && method === "GET") {
-    return json({ ok: true, model: env.AI_MODEL, tickets: await countTickets(env) });
+    return json({
+      ok: true,
+      model: env.AI_MODEL,
+      tickets: await countTickets(env),
+      mailMode: env.DEV_MAIL_MODE,
+    });
   }
 
   if (pathname === "/api/tickets" && method === "GET") {
@@ -175,13 +180,7 @@ export async function handleApi(request: Request, env: Env, pathname: string): P
 
   if (ticketMatch.rest === "draft" && method === "POST") {
     await limitWrite(env, request);
-    try {
-      const result = await draftReply(env, detail);
-      return json(result);
-    } catch (err) {
-      console.error(JSON.stringify({ event: "ai_draft_failed", error: String(err) }));
-      throw new HttpError(503, "ai_unavailable", "Workers AI did not return a draft. Type the reply yourself.");
-    }
+    return json(await draftReply(env, detail));
   }
 
   if (ticketMatch.rest === "attachments" && method === "POST") {

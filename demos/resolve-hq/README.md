@@ -16,7 +16,7 @@ Walkthrough stills and a short video: [artifacts/](./artifacts/).
 | **D1** | Tickets and messages (status, priority, assignee stub, timestamps). Five seeded conversations. |
 | **R2** | Attach a file to a ticket; list and download. Ticket `#1042` ships with a seeded invoice note. |
 | **Queues** | **Simulate inbound** enqueues a customer email. The consumer creates a ticket or appends to a thread. No live Email Routing MX. |
-| **Workers AI** | **Draft reply** fills the composer from ticket context. If the model is down, the button fails soft. |
+| **Workers AI** | **Draft reply** fills the composer from ticket context. If the model is down or the output is unusable, a stub draft is returned. |
 
 The UI is three panes: ticket list, thread, reply composer. Graphite & Ember branding matches the hub (ember `#c2410c`, background `#0e0e11`, LogoMark SVG).
 
@@ -32,7 +32,11 @@ browser ── HTTPS ──► Worker
 Queue consumer ──► create ticket or append message in D1
 ```
 
-Email Routing is **not** wired on day one. The Queue is the inbound path. A later slice can add `email()` on a throwaway zone; do not touch apex MX on `theserverless.dev` (Google Workspace).
+Email Routing is **not** wired. Inbound uses `DEV_MAIL_MODE=queue` (the analog of upstream `DEV_MAIL_MODE=capture`): **Simulate inbound** enqueues a message; the consumer writes D1. A later slice can add `email()` on a throwaway zone; do not touch apex MX on `theserverless.dev` (Google Workspace).
+
+Drafts use the **Workers AI** binding. There is no OpenAI (or Resend) secret on this Worker. If the model is down or the output is unusable, the composer gets a stub draft.
+
+Cloudflare resources are prefixed `tech-demos-resolve-hq-*` (Worker, D1, R2, Queue) so they do not collide with other demos in this repo.
 
 ## Local
 

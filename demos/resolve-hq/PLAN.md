@@ -4,77 +4,88 @@
 
 A visitor opens a shared support inbox on Workers and can list tickets, read a thread, attach a file, simulate inbound customer mail through a Queue, and draft a reply with Workers AI.
 
-Upstream is [mirza-rizvi/ResolveHQ](https://github.com/mirza-rizvi/ResolveHQ) (`dev`). That app is a multi-tenant helpdesk with Hono, React, Drizzle, Email Routing, Resend, auth, automations, and a help center. This demo is a **fresh small slice** of the binding story — not a vendor of that codebase.
+This is a **fresh small slice**, not a vendor of [mirza-rizvi/ResolveHQ](https://github.com/mirza-rizvi/ResolveHQ) (`dev`).
+
+## Research (upstream `dev`)
+
+Upstream is already **one Worker** (Hono + React SPA). It is not a multi-Worker or Workers-for-Platforms app.
+
+| Upstream | This slice |
+| --- | --- |
+| D1 (Drizzle: orgs, users, tickets, customers, mail jobs, FTS…) | D1 `tickets` + `messages` + `attachments` |
+| R2 `ATTACHMENTS` | Same binding name, one seeded file + upload |
+| Queues: inbound, outbound, maintenance + DLQs | **One** inbound producer/consumer (`tech-demos-resolve-hq-inbound`) |
+| Email Routing `email()` | Cut on day one |
+| `DEV_MAIL_MODE=capture` (mail without live routing) | `DEV_MAIL_MODE=queue` — HTTP **Simulate inbound** → `Queue.send` → consumer writes D1 |
+| Cron `*/5` (outbox, sessions, cleanup) | Cut |
+| RateLimit (auth + writes) | `WRITE_LIMIT` on inbound, draft, upload, patch |
+| `SESSION_PEPPER` secret | None — public demo inbox |
+| Optional `RESEND_*` outbound | Cut |
+| Optional `OPENAI_*` for drafts | **Workers AI** binding instead. No OpenAI secret for MVP. Fail soft if the model is down or the output is unusable. |
+
+**Cut (do not port):** multi-org, invites, knowledge base, reports, automations, GDPR export/erasure, full Radix/Lato polish, WFP / dispatch namespaces.
+
+**Resource names** (sticky-monorepo collision avoidance): prefix `tech-demos-resolve-hq-*` (Worker, D1, R2, Queue). Bindings stay short (`DB`, `ATTACHMENTS`, `INBOUND`, `AI`).
 
 ## Single-user MVP
 
 - In:
-  - One Worker with static assets (Graphite & Ember, LogoMark, Bricolage + Hanken).
-  - D1 `tickets` + `messages` (status, priority, assignee stub, timestamps). Seed 4–5 tickets.
-  - R2 attachment on at least one ticket: upload, list, download. Seed one file.
-  - Queue producer + consumer: HTTP “simulate inbound email” enqueues; the consumer creates a ticket or appends to a thread. No live Email Routing MX.
-  - Workers AI “Draft reply” that fills the composer. Opt-in per click; fail soft if AI is down.
-  - Three-pane UI: ticket list | thread | reply composer. Mobile stacks with a back control.
-  - Hub registry, `/demos/resolve-hq` zone route, docs, smoke script.
-- Out:
-  - Multi-org tenancy, sessions, invitations, Owner/Admin/Agent roles.
-  - Resend outbound, real Email Routing MX, RFC 5322 threading, DLQs, outbox cron.
-  - Help center, automations, reports, GDPR export/erasure workflows.
-  - Workers for Platforms / dispatch namespaces.
+  - One Worker + static Graphite & Ember UI (LogoMark, Bricolage / Hanken).
+  - D1 tickets + messages (status, priority, assignee stub, timestamps). Seed 5 tickets.
+  - R2 attachment round-trip; seed one file on `#1042`.
+  - Queue inbound sim (`DEV_MAIL_MODE=queue`), not live Email Routing / Resend.
+  - Workers AI **Draft reply**; no OpenAI key. Fail soft to a stub draft in the composer.
+  - Three-pane UI: list | thread | composer. Mobile stacks.
+  - Hub registry + `/demos/resolve-hq`. `PLAN.md` / `README.md` / `CHANGELOG.md`.
+- Out: everything in the research “Cut” row, plus RFC 5322 threading, DLQs, outbound outbox.
 
 ## Tasks
 
-1. D1 schema and seed tickets/messages; R2 seed object on first boot if missing.
-2. HTTP API: list/get tickets, patch status/assignee, agent reply, attachment put/get, inbound enqueue, AI draft.
-3. Queue consumer: new ticket from a simulated email, or append when `ticketId` / `[#number]` is present.
-4. Workers AI draft from ticket subject + last messages; catch and return an unavailable payload.
-5. Vanilla TypeScript UI, Bun-bundled, Graphite & Ember.
-6. Standalone Worker routes (hub path + subdomain). Hub registry fallback redirects to the subdomain.
-7. Smoke script, deploy, screenshot, short video, PR.
+1. D1 schema + seed; R2 seed object on first boot.
+2. HTTP API: tickets, replies, attachments, inbound enqueue, AI draft.
+3. Queue consumer creates or appends (`ticketId` / `[#number]`).
+4. Workers AI draft; catch and fall back.
+5. Vanilla TS UI, Bun bundle.
+6. Standalone Worker routes + hub fallback redirect.
+7. Smoke, deploy, screenshot, video, PR.
 
 ## Stack
 
-- **Workers + Static Assets:** UI is static; the Worker runs first for `/api`. Same pattern as temp-email and apollo-desk.
-- **D1:** two tables plus attachment metadata. Paid-plan, tiny row count.
-- **R2:** attachment bytes. Object keys are opaque; download re-checks the D1 row.
-- **Queues:** one inbound producer/consumer. The UI never writes tickets for “email”; the consumer does.
-- **Workers AI** (`@cf/zai-org/glm-5.3-flash`): same model as apollo-desk. Drafts only; no OpenAI key.
-- **No framework:** a handful of routes, so a plain `fetch()` router is enough.
+- **Workers + Static Assets**, `run_worker_first` for `/api`.
+- **D1 / R2 / Queues / Workers AI / RateLimit** — Paid-plan bindings already used in this repo.
+- **No Hono, no React, no Drizzle, no OpenAI, no Resend.**
 
 ## Architecture
 
 ```
 browser ──HTTPS──> Worker
-                    ├─ GET/PATCH /api/tickets* ──> D1
-                    ├─ PUT/GET attachments ──────> D1 meta + R2 bytes
-                    ├─ POST /api/inbound ────────> Queue.send
-                    └─ POST /api/tickets/:id/draft ──> Workers AI (fail soft)
+                    ├─ /api/tickets* ──────────► D1
+                    ├─ attachments ────────────► D1 meta + R2
+                    ├─ POST /api/inbound ──────► Queue.send   (DEV_MAIL_MODE=queue)
+                    └─ POST …/draft ───────────► Workers AI (fail soft → stub)
 
-Queue consumer ──> create ticket or append message in D1
+Queue consumer ──► create ticket or append message in D1
 ```
 
-Standalone Worker `tech-demos-resolve-hq` (D1 + R2 + Queues + AI cannot run inside the hub Loader):
+Worker `tech-demos-resolve-hq`:
 
 - `tech-demos.theserverless.dev/demos/resolve-hq*`
 - `resolve-hq.tech-demos.theserverless.dev/*`
 
-The hub registry keeps a fallback Dynamic Worker that redirects to the subdomain if the zone route is missing.
-
 ## Cost
 
-- D1/R2/Queue usage for a demo inbox is far below Paid included amounts.
-- One draft is a short prompt. Cap `max_tokens` at 400. Rate-limit drafts and inbound simulates per IP.
-- No Containers, Browser Rendering, Vectorize, or WFP.
+- D1/R2/Queue demo traffic is far below Paid included amounts.
+- Drafts cap `max_tokens` at 400; writes are rate-limited per IP.
+- No Containers, Browser Rendering, Vectorize, WFP.
 
 ## Testing
 
 - `bun run typecheck`
-- `scripts/smoke.ts` against local or live: seed list, attachment round-trip, queue-created ticket, draft text (or a soft-fail payload).
-- Browser pass for screenshot and video.
+- `scripts/smoke.ts`: seed list, R2 round-trip, queue-created ticket, draft text (`source` workers-ai or fallback).
+- Browser screenshot + short video on the PR.
 
 ## Deferred
 
-- Cloudflare Email Routing `email()` handler on a throwaway zone (same caution as temp-email: never touch apex MX on `theserverless.dev`).
-- Outbound mail / Resend.
-- Saved replies, internal notes, FTS search, ticket version conflicts.
-- Auth and multi-seat assignment beyond a stub name.
+- `email()` on a throwaway zone (never touch apex MX on `theserverless.dev`).
+- Resend outbound, DLQs, `*/5` recovery cron.
+- Saved replies, FTS, ticket version conflicts, real auth.

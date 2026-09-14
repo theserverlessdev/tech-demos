@@ -55,10 +55,12 @@ export type InboundMail = {
 export type DraftResult = {
   draft: string;
   model: string;
+  source: "workers-ai" | "fallback";
 };
 
 export type Health = {
   ok: true;
   model: string;
   tickets: number;
+  mailMode: string;
 };

@@ -45,7 +45,9 @@
     { "name": "WRITE_LIMIT", "namespace_id": "7331", "simple": { "limit": 20, "period": 60 } }
   ],
   "vars": {
-    "AI_MODEL": "@cf/zai-org/glm-5.3-flash"
+    "AI_MODEL": "@cf/zai-org/glm-5.3-flash",
+    // Analog of upstream DEV_MAIL_MODE=capture: inbound is Queue-simulated, not Email Routing.
+    "DEV_MAIL_MODE": "queue"
   },
   "routes": [
     { "pattern": "tech-demos.theserverless.dev/demos/resolve-hq*", "zone_name": "theserverless.dev" },

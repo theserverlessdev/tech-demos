@@ -30,8 +30,9 @@ async function call<T>(path: string, init: { method?: string; body?: unknown; fo
 
 console.log(`Target: ${base}`);
 
-const health = await call<{ ok: boolean; tickets: number }>("/health");
+const health = await call<{ ok: boolean; tickets: number; mailMode: string }>("/health");
 check("health is ok with seeded tickets", health.status === 200 && health.data?.ok && (health.data.tickets ?? 0) >= 5, health.data);
+check("health mailMode is queue (capture analog, no Email Routing)", health.data?.mailMode === "queue", health.data);
 
 const list = await call<{ tickets: TicketSummary[] }>("/tickets");
 check("lists at least 5 tickets", list.status === 200 && (list.data?.tickets.length ?? 0) >= 5, list.data?.tickets.length);
@@ -91,9 +92,8 @@ check("queue consumer created a visible ticket", Boolean(created && created.subj
 const follow = created ?? billing;
 const draft = await call<DraftResult>(`/tickets/${follow.id}/draft`, { method: "POST" });
 const draftOk = draft.status === 200 && typeof draft.data?.draft === "string" && draft.data.draft.length > 20;
-const draftSoft = draft.status === 503;
-check("draft reply returns text, or fails soft with 503", draftOk || draftSoft, { status: draft.status, preview: draft.data });
-if (draftOk) console.log(`      draft ${draft.data?.draft.slice(0, 80)}…`);
+check("draft reply returns text (Workers AI or fail-soft stub)", draftOk, { status: draft.status, source: draft.data?.source, preview: draft.data?.draft?.slice(0, 80) });
+if (draftOk) console.log(`      source=${draft.data?.source}  ${draft.data?.draft.slice(0, 80)}…`);
 
 if (failures) {
   console.error(`\n${failures} check(s) failed.`);

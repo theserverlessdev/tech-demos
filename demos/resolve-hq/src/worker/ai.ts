@@ -46,20 +46,24 @@ export async function draftReply(env: Env, ticket: TicketDetail): Promise<DraftR
     })),
   };
 
-  const out = (await env.AI.run(env.AI_MODEL, {
-    messages: [
-      {
-        role: "system",
-        content:
-          "You are a support agent. Write one customer-facing email body as the named assignee when present. Return only that body. 80–140 words. Do not invent refunds, dates, or causes. If a fact is missing, ask one question.",
-      },
-      { role: "user", content: `Ticket JSON:\n${JSON.stringify(payload)}\n\nWrite the email body now. Start with "Hi ${ticket.customerName.split(" ")[0]},"` },
-    ],
-    max_tokens: 400,
-    temperature: 0.3,
-    chat_template_kwargs: { enable_thinking: false },
-  } as never)) as ChatOutput;
-
-  const generated = modelText(out);
-  return { draft: usableDraft(generated) ? generated : fallbackDraft(ticket), model: env.AI_MODEL };
+  try {
+    const out = (await env.AI.run(env.AI_MODEL, {
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a support agent. Write one customer-facing email body as the named assignee when present. Return only that body. 80–140 words. Do not invent refunds, dates, or causes. If a fact is missing, ask one question.",
+        },
+        { role: "user", content: `Ticket JSON:\n${JSON.stringify(payload)}\n\nWrite the email body now. Start with "Hi ${ticket.customerName.split(" ")[0]},"` },
+      ],
+      max_tokens: 400,
+      temperature: 0.3,
+      chat_template_kwargs: { enable_thinking: false },
+    } as never)) as ChatOutput;
+    const generated = modelText(out);
+    if (usableDraft(generated)) return { draft: generated, model: env.AI_MODEL, source: "workers-ai" };
+  } catch (err) {
+    console.error(JSON.stringify({ event: "ai_draft_failed", error: String(err) }));
+  }
+  return { draft: fallbackDraft(ticket), model: env.AI_MODEL, source: "fallback" };
 }
