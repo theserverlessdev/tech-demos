@@ -72,7 +72,26 @@ const tempEmailFallbackSource = `export default {
 };
 `;
 
+// resolve-hq is a standalone Worker (D1, R2, Queues, Workers AI). Same pattern as apollo-desk:
+// the zone route wins, and this source only redirects if that route is missing.
+const resolveHqFallbackSource = `export default {
+  fetch(request) {
+    const url = new URL(request.url);
+    const rest = url.pathname.replace(/^\\/demos\\/resolve-hq/, "") || "/";
+    return Response.redirect("https://resolve-hq.tech-demos.theserverless.dev" + rest + url.search, 302);
+  },
+};
+`;
+
 export const demos: DemoEntry[] = [
+  {
+    slug: "resolve-hq",
+    title: "ResolveHQ",
+    description:
+      "A shared support inbox on Workers: D1 tickets, R2 attachments, a Queue-simulated inbound mail, and a Workers AI draft reply. A small slice of ResolveHQ — no tenancy, no Email Routing MX.",
+    tags: ["d1", "r2", "queues", "workers-ai"],
+    source: resolveHqFallbackSource,
+  },
   {
     slug: "temp-email",
     title: "Temp email",
