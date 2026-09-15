@@ -2,6 +2,21 @@
   "proposed": [],
   "built": [
     {
+      "slug": "edgechat",
+      "repo": "https://github.com/aozorae/Edgechat",
+      "title": "EdgeChat",
+      "source": "approved-slice",
+      "approved_at": "2026-09-15",
+      "why": "Durable Object realtime rooms plus D1 history, KV session, and R2 uploads on Workers Paid — no WFP, no GPL vendor",
+      "built_at": "2026-09-15",
+      "path": "demos/edgechat",
+      "url": "https://tech-demos.theserverless.dev/demos/edgechat/",
+      "subdomain": "https://edgechat.tech-demos.theserverless.dev/",
+      "worker": "tech-demos-edgechat",
+      "branch": "demo/edgechat",
+      "notes": "Fresh original demo inspired by Edgechat. Upstream is GPL-3.0; this slice does not copy or vendor that source."
+    },
+    {
       "slug": "resolve-hq",
       "repo": "https://github.com/mirza-rizvi/ResolveHQ",
       "title": "ResolveHQ",

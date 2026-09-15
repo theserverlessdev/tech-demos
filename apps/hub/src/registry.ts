@@ -83,7 +83,26 @@ const resolveHqFallbackSource = `export default {
 };
 `;
 
+// edgechat is a standalone Worker (Durable Objects, D1, KV, R2). Same pattern as resolve-hq:
+// the zone route wins, and this source only redirects if that route is missing.
+const edgechatFallbackSource = `export default {
+  fetch(request) {
+    const url = new URL(request.url);
+    const rest = url.pathname.replace(/^\\/demos\\/edgechat/, "") || "/";
+    return Response.redirect("https://edgechat.tech-demos.theserverless.dev" + rest + url.search, 302);
+  },
+};
+`;
+
 export const demos: DemoEntry[] = [
+  {
+    slug: "edgechat",
+    title: "EdgeChat",
+    description:
+      "Mini team chat on Workers: a Durable Object room with hibernatable WebSockets, D1 history, a KV display name, and R2 uploads. Inspired by Edgechat — original code, not a GPL vendor.",
+    tags: ["durable-objects", "d1", "kv", "r2", "websockets"],
+    source: edgechatFallbackSource,
+  },
   {
     slug: "resolve-hq",
     title: "ResolveHQ",

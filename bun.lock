@@ -43,6 +43,13 @@
         "wrangler": "^4.40.0",
       },
     },
+    "demos/edgechat": {
+      "name": "@tech-demos/edgechat",
+      "devDependencies": {
+        "typescript": "^5.9.2",
+        "wrangler": "^4.40.0",
+      },
+    },
     "demos/hello-dynamic": {
       "name": "@tech-demos/hello-dynamic",
     },
@@ -315,6 +322,8 @@
     "@tech-demos/cloudflare-os": ["@tech-demos/cloudflare-os@workspace:demos/cloudflare-os"],
 
     "@tech-demos/demo-template": ["@tech-demos/demo-template@workspace:demos/_template"],
+
+    "@tech-demos/edgechat": ["@tech-demos/edgechat@workspace:demos/edgechat"],
 
     "@tech-demos/hello-dynamic": ["@tech-demos/hello-dynamic@workspace:demos/hello-dynamic"],
 
