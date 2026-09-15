@@ -110,11 +110,14 @@ export class ChatRoom extends DurableObject<Env> {
 
   private presence(): Presence {
     const names: string[] = [];
+    const seen = new Set<string>();
     for (const client of this.ctx.getWebSockets()) {
       const state = client.deserializeAttachment() as SocketState | null;
-      if (state?.displayName) names.push(state.displayName);
+      if (!state?.displayName || seen.has(state.sessionId)) continue;
+      seen.add(state.sessionId);
+      names.push(state.displayName);
     }
-    return { count: names.length, names };
+    return { count: this.ctx.getWebSockets().length, names };
   }
 
   private broadcastPresence(): void {

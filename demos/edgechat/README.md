@@ -45,6 +45,8 @@ bun run dev
 
 Then `bun run scripts/smoke.ts http://127.0.0.1:8787`.
 
+`bun run dev` sets `CI=1` so D1 migrations apply without a prompt.
+
 Open two browser tabs on the same room. Send a message in one; the other should show it without a refresh. Refresh either tab — D1 history should still be there. Attach a file — the message should link to R2.
 
 The hub path and the demo's own `wrangler dev` both work. From the repo root you can also run `bun run --filter @tech-demos/hub dev` and hit the gallery; this demo is a standalone Worker, so for the full bindings use `bun run --filter @tech-demos/edgechat dev`.
@@ -54,6 +56,7 @@ The hub path and the demo's own `wrangler dev` both work. From the repo root you
 Needs D1, KV, R2, and Durable Objects (Workers Paid). From this folder, with the owner account (`CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5`; unset any other `CF_API_TOKEN` / `CLOUDFLARE_API_TOKEN` if they point at the wrong account):
 
 ```bash
+# if the resources do not exist yet:
 wrangler d1 create tech-demos-edgechat
 wrangler kv namespace create tech-demos-edgechat-sessions
 wrangler r2 bucket create tech-demos-edgechat
@@ -66,6 +69,13 @@ This PR already created:
 - D1 `tech-demos-edgechat` (`7c3de818-470f-445a-90c7-399d03c686c3`)
 - KV `tech-demos-edgechat-sessions` (`42b3d8c6974d464a97d0d55079a0fb71`)
 - R2 `tech-demos-edgechat`
+
+The cloud agent could not `wrangler deploy` (no `wrangler login` in this environment). After login:
+
+```bash
+cd demos/edgechat
+CI=1 bun run deploy
+```
 
 Routes:
 

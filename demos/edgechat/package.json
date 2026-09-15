@@ -4,8 +4,8 @@
   "type": "module",
   "scripts": {
     "build": "bun build src/client/app.ts --outdir public/assets --target browser --minify",
-    "dev": "bun run build && wrangler d1 migrations apply DB --local && wrangler dev",
-    "deploy": "bun run build && wrangler d1 migrations apply DB --remote && wrangler deploy",
+    "dev": "bun run build && CI=1 wrangler d1 migrations apply DB --local && wrangler dev",
+    "deploy": "bun run build && CI=1 wrangler d1 migrations apply DB --remote && wrangler deploy",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
     "cf-typegen": "wrangler types",
     "smoke": "bun run scripts/smoke.ts"
