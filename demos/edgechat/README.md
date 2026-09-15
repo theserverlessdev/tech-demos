@@ -4,8 +4,8 @@ A mini self-hosted team chat on Cloudflare Workers. This is a **small original d
 
 Upstream is **GPL-3.0**. This folder is original code under the same license as this monorepo. We did not copy, vendor, or reconstruct Edgechat source, assets, or substantial structure.
 
-- **Live:** <https://tech-demos.theserverless.dev/demos/edgechat/>
-- **Subdomain:** <https://edgechat.tech-demos.theserverless.dev/>
+- **Live (after deploy):** <https://tech-demos.theserverless.dev/demos/edgechat/>
+- **Subdomain (after deploy):** <https://edgechat.tech-demos.theserverless.dev/>
 - **Plan:** [PLAN.md](./PLAN.md)
 - **What changed vs the idea:** [CHANGELOG.md](./CHANGELOG.md)
 
