@@ -1,5 +1,17 @@
 {
-  "proposed": [],
+  "proposed": [
+    {
+      "slug": "edgechat",
+      "tech": "aozorae/Edgechat",
+      "repo": "https://github.com/aozorae/Edgechat",
+      "status": "live-pending-merge",
+      "pr": "https://github.com/theserverlessdev/tech-demos/pull/6",
+      "buildVia": "cloud-agent",
+      "approvedAt": "2026-09-15T10:53:55Z",
+      "licenseNote": "GPL-3.0 inspired-by only \u2014 do not vendor",
+      "liveUrl": "https://tech-demos.theserverless.dev/demos/edgechat/"
+    }
+  ],
   "built": [
     {
       "slug": "edgechat",
@@ -7,7 +19,7 @@
       "title": "EdgeChat",
       "source": "approved-slice",
       "approved_at": "2026-09-15",
-      "why": "Durable Object realtime rooms plus D1 history, KV session, and R2 uploads on Workers Paid — no WFP, no GPL vendor",
+      "why": "Durable Object realtime rooms plus D1 history, KV session, and R2 uploads on Workers Paid \u2014 no WFP, no GPL vendor",
       "built_at": "2026-09-15",
       "path": "demos/edgechat",
       "url": "https://tech-demos.theserverless.dev/demos/edgechat/",
@@ -83,5 +95,13 @@
       "why": "Serverless vector DB API on Workers AI + Vectorize + D1",
       "reason": "user asked for more complicated/impressive"
     }
-  ]
+  ],
+  "candidates_known": [
+    "edgechat"
+  ],
+  "_meta": {
+    "updatedBy": "tech-demos-bot",
+    "updatedAt": "2026-09-15T10:56:02Z",
+    "note": "edgechat live via Mac deploy; PR #6 open"
+  }
 }
