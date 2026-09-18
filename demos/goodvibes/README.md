@@ -7,6 +7,8 @@ A 3D multiplayer lobby on Cloudflare Workers. This is a **small original demo** 
 - **Plan:** [PLAN.md](./PLAN.md)
 - **What changed vs the idea:** [CHANGELOG.md](./CHANGELOG.md)
 
+Walkthrough stills and a short video: [artifacts/](./artifacts/).
+
 ## What it proves
 
 | Binding | What the demo does with it |
@@ -42,13 +44,18 @@ Then `bun run scripts/smoke.ts http://127.0.0.1:8787`.
 
 Open two browser tabs on the same room. Move in one; the other should follow live.
 
+If the browser cannot create a WebGL context (some CI / VM GPUs), the client draws the same floor as a 2D map. Presence and positions still sync.
+
 This demo is a standalone Worker (Durable Objects cannot run inside the hub's Dynamic Worker Loader). From the repo root the gallery still lists it; for the full bindings use `bun run --filter @tech-demos/goodvibes dev`.
 
 ## Deploy
 
 Needs Durable Objects and the Rate Limiting binding (Workers Paid). From this folder, with the owner account (`CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5`; unset any other `CF_API_TOKEN` / `CLOUDFLARE_API_TOKEN` if they point at the wrong account):
 
+This cloud agent could not `wrangler deploy` (`wrangler whoami` is unauthenticated). After login on the owner account:
+
 ```bash
+cd demos/goodvibes
 bun run deploy
 ```
 

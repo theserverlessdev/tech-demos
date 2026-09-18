@@ -99,6 +99,9 @@ function applyServer(event: ServerEvent): void {
     renderPresence();
     setStatus(`In ${event.room} · live over a Durable Object`, "ok");
     $("room-chip").textContent = event.room;
+    if (state.scene && !state.scene.webgl) {
+      setStatus(`In ${event.room} · 2D fallback (WebGL unavailable)`, "ok");
+    }
     return;
   }
   if (event.type === "join") {

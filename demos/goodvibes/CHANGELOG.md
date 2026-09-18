@@ -24,7 +24,7 @@ Original code in this folder. MIT, same as this monorepo. We did not copy the up
 
 ## What we kept (simplified)
 
-- Three.js in the browser
+- Three.js in the browser (2D canvas floor if WebGL cannot start)
 - Named rooms on Cloudflare
 - Realtime positions over WebSockets backed by a Durable Object
 - Bun as the install/build runtime
