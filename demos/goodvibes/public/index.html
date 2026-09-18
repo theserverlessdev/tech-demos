@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="theme-color" content="#0e0e11" />
+  <title>Ember Rush · GoodVibes · theserverless.dev</title>
+  <meta name="description" content="Ember Rush: a 75-second multiplayer orb hunt on Cloudflare Durable Objects with WebSocket hibernation." />
+  <meta property="og:title" content="Ember Rush — GoodVibes slice" />
+  <meta property="og:description" content="Open two tabs. Start a round. Grab ember orbs. Highest score in 75 seconds wins." />
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Hanken+Grotesk:wght@400..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script src="./assets/theme.js"></script>
+  <link rel="stylesheet" href="./assets/lobby.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="https://tech-demos.theserverless.dev/" aria-label="Tech Demos gallery">
+      <svg class="brand__mark" width="26" height="26" viewBox="0 -3 128 128" aria-hidden="true">
+        <g stroke="currentColor" stroke-width="6" stroke-linecap="round" opacity="0.45"><line x1="4" y1="58" x2="20" y2="58"/><line x1="1" y1="72" x2="19" y2="72"/><line x1="6" y1="86" x2="22" y2="86"/></g>
+        <path d="M44 92 C31 92 20 82 20 69 C20 57 29 47 41 46 C45 33 57 24 70 24 C85 24 98 35 100 51 C110 53 118 62 118 72 C118 83 109 92 97 92 Z" fill="none" stroke="currentColor" stroke-width="7.5" stroke-linejoin="round"/>
+        <path d="M69 36 L50 71 L63 71 L57 102 L88 60 L72 60 L80 36 Z" fill="currentColor"/>
+      </svg>
+      <span>Tech Demos</span>
+    </a>
+    <div class="topbar__title">
+      <h1>Ember Rush</h1>
+      <p>75s orb hunt on Durable Object WebSockets</p>
+    </div>
+    <div class="topbar__actions">
+      <span class="chip" id="room-chip">arena</span>
+      <a class="btn btn-ghost" href="https://github.com/benallfree/goodvibes" rel="noopener" target="_blank">Upstream</a>
+    </div>
+  </header>
+
+  <p class="strip" id="status" data-kind="idle" role="status">Join a room, start a round, race for ember orbs.</p>
+
+  <main>
+    <section class="lobby" id="lobby">
+      <form class="card" id="lobby-form">
+        <p class="eyebrow">Workers + Durable Objects</p>
+        <h2>Ember Rush</h2>
+        <p class="lede">2–8 players. 75 seconds. Walk over glowing orbs — gold is worth three. Highest score wins. Rematch without leaving the room.</p>
+        <label>Display name
+          <input id="name" name="name" maxlength="24" autocomplete="nickname" />
+        </label>
+        <label>Room
+          <input id="room" name="room" maxlength="32" value="arena" autocomplete="off" />
+        </label>
+        <div class="row">
+          <button class="btn" id="join" type="submit">Join arena</button>
+          <button class="btn btn-ghost" id="create" type="button">Create room</button>
+        </div>
+        <p class="hint">WASD or click to move. The Worker rate-limits create; the room Durable Object hibernates between rounds.</p>
+      </form>
+    </section>
+
+    <section class="stage" id="stage" hidden>
+      <canvas id="view" aria-label="Ember Rush arena"></canvas>
+      <div class="clock" id="clock" data-phase="wait">0:75</div>
+      <div class="banner" id="banner">
+        <div class="banner__count" id="banner-count"></div>
+        <h2 id="banner-title">Ember Rush</h2>
+        <p id="banner-sub">75 seconds. Grab glowing orbs. The gold one is +3. Highest score wins.</p>
+        <button class="btn" id="start" type="button">Start round</button>
+      </div>
+      <aside class="hud">
+        <header>
+          <h2>Scoreboard</h2>
+          <span class="count" id="count">0</span>
+        </header>
+        <ul id="presence"></ul>
+        <p class="hint">Your ember ring is you. Orbs respawn when grabbed.</p>
+        <button class="btn btn-ghost" id="leave" type="button">Leave</button>
+      </aside>
+    </section>
+  </main>
+  <script type="module" src="./assets/app.js"></script>
+</body>
+</html>

@@ -1,6 +1,29 @@
 {
-  "proposed": [],
+  "proposed": [
+    {
+      "slug": "goodvibes",
+      "status": "live-pending-merge",
+      "pr": "https://github.com/theserverlessdev/tech-demos/pull/8",
+      "buildVia": "cloud-agent",
+      "liveUrl": "https://tech-demos.theserverless.dev/demos/goodvibes/"
+    }
+  ],
   "built": [
+    {
+      "slug": "goodvibes",
+      "repo": "https://github.com/benallfree/goodvibes",
+      "title": "GoodVibes",
+      "source": "approved-slice",
+      "approved_at": "2026-09-18",
+      "why": "Playable multiplayer Ember Rush on Workers + Durable Object WebSocket hibernation; orbs, scores, round clock — not a walking simulator",
+      "built_at": "2026-09-18",
+      "path": "demos/goodvibes",
+      "url": "https://tech-demos.theserverless.dev/demos/goodvibes/",
+      "subdomain": "https://goodvibes.tech-demos.theserverless.dev/",
+      "worker": "tech-demos-goodvibes",
+      "branch": "demo/goodvibes",
+      "notes": "Ember Rush: 75s orb hunt, server-authoritative round on a hibernatable VibeRoom. Not a vendor of upstream. Room create is rate-limited."
+    },
     {
       "slug": "resolve-hq",
       "repo": "https://github.com/mirza-rizvi/ResolveHQ",
@@ -68,5 +91,13 @@
       "why": "Serverless vector DB API on Workers AI + Vectorize + D1",
       "reason": "user asked for more complicated/impressive"
     }
-  ]
+  ],
+  "candidates_known": [
+    "goodvibes"
+  ],
+  "_meta": {
+    "updatedBy": "tech-demos-bot",
+    "updatedAt": "2026-09-18T12:15:27Z",
+    "note": "goodvibes live"
+  }
 }

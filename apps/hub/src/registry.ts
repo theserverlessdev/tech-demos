@@ -83,7 +83,26 @@ const resolveHqFallbackSource = `export default {
 };
 `;
 
+// goodvibes is a standalone Worker (Durable Objects + Static Assets). Same pattern as resolve-hq:
+// the zone route wins, and this source only redirects if that route is missing.
+const goodvibesFallbackSource = `export default {
+  fetch(request) {
+    const url = new URL(request.url);
+    const rest = url.pathname.replace(/^\\/demos\\/goodvibes/, "") || "/";
+    return Response.redirect("https://goodvibes.tech-demos.theserverless.dev" + rest + url.search, 302);
+  },
+};
+`;
+
 export const demos: DemoEntry[] = [
+  {
+    slug: "goodvibes",
+    title: "GoodVibes",
+    description:
+      "Ember Rush: a 75-second multiplayer orb hunt on a Durable Object WebSocket. Collect ember orbs, gold is +3, highest score wins. Hibernation + rate-limited room create. Inspired by goodvibes — original game, not a vendor of the kit.",
+    tags: ["durable-objects", "websockets", "threejs", "game"],
+    source: goodvibesFallbackSource,
+  },
   {
     slug: "resolve-hq",
     title: "ResolveHQ",
