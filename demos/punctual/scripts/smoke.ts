@@ -1,7 +1,8 @@
 // Smoke: bun run scripts/smoke.ts [baseUrl]
-import type { Availability, Booking, Health } from "../src/shared/types";
+import type { Availability, BookResponse, Booking, Health } from "../src/shared/types";
 
 const base = (process.argv.find((a) => a.startsWith("http")) ?? "http://127.0.0.1:8787").replace(/\/$/, "");
+const adminKey = process.env.ADMIN_API_KEY?.trim() || "dev-admin-key";
 
 let failures = 0;
 function check(label: string, ok: unknown, detail?: unknown) {
@@ -9,8 +10,8 @@ function check(label: string, ok: unknown, detail?: unknown) {
   if (!ok) failures++;
 }
 
-async function call<T>(path: string, init: { method?: string; body?: unknown } = {}) {
-  const headers: Record<string, string> = {};
+async function call<T>(path: string, init: { method?: string; body?: unknown; headers?: Record<string, string>; raw?: boolean } = {}) {
+  const headers: Record<string, string> = { ...(init.headers ?? {}) };
   let body: BodyInit | undefined;
   if (init.body !== undefined) {
     headers["content-type"] = "application/json";
@@ -18,6 +19,7 @@ async function call<T>(path: string, init: { method?: string; body?: unknown } =
   }
   const res = await fetch(`${base}/api${path}`, { method: init.method ?? "GET", headers, body });
   const text = await res.text();
+  if (init.raw) return { status: res.status, data: null as T | null, text };
   let data: T | null = null;
   try {
     data = JSON.parse(text) as T;
@@ -27,14 +29,35 @@ async function call<T>(path: string, init: { method?: string; body?: unknown } =
   return { status: res.status, data, text };
 }
 
+function tokenFromLink(url: string): string {
+  try {
+    return new URL(url).searchParams.get("t") ?? "";
+  } catch {
+    return "";
+  }
+}
+
 function firstSlot(avail: Availability | null): string | null {
   return avail?.days[0]?.slots[0]?.start ?? null;
+}
+
+function slotWithinHours(avail: Availability | null, hours: number): string | null {
+  const cutoff = Date.now() + hours * 3600_000;
+  for (const day of avail?.days ?? []) {
+    for (const slot of day.slots) {
+      const t = Date.parse(slot.start);
+      if (Number.isFinite(t) && t <= cutoff) return slot.start;
+    }
+  }
+  return null;
 }
 
 console.log(`Target: ${base}`);
 
 const health = await call<Health>("/health");
 check("health is ok", health.status === 200 && health.data?.ok === true, health.data);
+check("mail is fail-soft without Resend", health.data?.mail.resend === false, health.data?.mail);
+check("turnstile default off", health.data?.turnstile === false, health.data?.turnstile);
 
 const host = await call<{ host: { id: string } }>("/host");
 check("host is ankur", host.status === 200 && host.data?.host.id === "ankur", host.data);
@@ -49,19 +72,21 @@ check("availability returns days with open slots", Boolean(avail1.data && avail1
 const avail2 = await call<Availability>("/availability");
 check("second availability may be served from KV", avail2.status === 200 && Boolean(avail2.data?.days.length), avail2.data?.source);
 
-const slotA = firstSlot(avail1.data);
+const slotA = slotWithinHours(avail1.data, 24) ?? firstSlot(avail1.data);
 if (!slotA) {
   console.error("No open slot to book; cannot continue.");
   process.exit(1);
 }
+const near = slotWithinHours(avail1.data, 24) === slotA;
+console.log(`Using slot ${slotA} (${near ? "inside 24h reminder window" : "beyond 24h — reminder stays queued until delay"})`);
 
 const stamp = Date.now().toString(36);
 const [left, right] = await Promise.all([
-  call<{ booking: Booking; error?: { code: string } }>("/book", {
+  call<BookResponse>("/book", {
     method: "POST",
     body: { slotStart: slotA, guestName: "Smoke Alpha", guestEmail: `alpha.${stamp}@example.com` },
   }),
-  call<{ booking: Booking; error?: { code: string } }>("/book", {
+  call<BookResponse>("/book", {
     method: "POST",
     body: { slotStart: slotA, guestName: "Smoke Beta", guestEmail: `beta.${stamp}@example.com` },
   }),
@@ -71,28 +96,73 @@ const statuses = [left.status, right.status].sort((a, b) => a - b);
 const winner = left.status === 201 ? left : right.status === 201 ? right : null;
 const loser = left.status === 201 ? right : left;
 check("concurrent book: one 201", statuses[0] === 201 || statuses[1] === 201, statuses);
-check("concurrent book: one 409 slot_taken", loser.status === 409 && (loser.data as { error?: { code: string } })?.error?.code === "slot_taken", {
+check("concurrent book: one 409 slot_taken", loser.status === 409 && (loser.data as { error?: { code: string } } | null)?.error?.code === "slot_taken", {
   status: loser.status,
   data: loser.data,
 });
 check("winner has a booking id", Boolean(winner?.data?.booking?.id), winner?.data);
+check("email skipped without Resend key", winner?.data?.mail.guest === "skipped", winner?.data?.mail);
+check("ICS and cancel links returned", Boolean(winner?.data?.links.ics && winner?.data?.links.cancel), winner?.data?.links);
 
 const after = await call<Availability>("/availability");
 const stillOpen = after.data?.days.some((d) => d.slots.some((s) => s.start === slotA));
 check("booked slot is gone after refresh", stillOpen === false, { slotA, source: after.data?.source });
 
-if (winner?.data?.booking?.id) {
-  const id = winner.data.booking.id;
-  let sent = false;
-  for (let i = 0; i < 15; i++) {
-    const row = await call<{ booking: Booking }>(`/bookings/${id}`);
-    if (row.data?.booking.reminderStatus === "sent") {
-      sent = true;
-      break;
-    }
+const booking = winner?.data?.booking;
+const links = winner?.data?.links;
+if (booking && links) {
+  const icsToken = tokenFromLink(links.ics);
+  const cancelToken = tokenFromLink(links.cancel);
+
+  const denied = await call(`/bookings/${booking.id}/ics`, { raw: true });
+  check("ICS without token is 403", denied.status === 403, { status: denied.status, text: denied.text.slice(0, 180) });
+
+  const ics = await call(`/bookings/${booking.id}/ics?t=${encodeURIComponent(icsToken)}`, { raw: true });
+  check("signed ICS is text/calendar", ics.status === 200 && ics.text.includes("BEGIN:VCALENDAR") && ics.text.includes("METHOD:REQUEST"), {
+    status: ics.status,
+    head: ics.text.slice(0, 120),
+  });
+
+  const unsignedCancel = await call(`/bookings/${booking.id}/cancel`, { method: "POST", body: {} });
+  check("unsigned cancel is 403", unsignedCancel.status === 403, unsignedCancel.data);
+
+  const admin = await call<{ bookings: Booking[] }>("/admin/bookings", {
+    headers: { authorization: `Bearer ${adminKey}` },
+  });
+  if (admin.status === 503) {
+    check("admin disabled when key unset (503)", true);
+  } else {
+    check("admin list includes the booking", admin.status === 200 && Boolean(admin.data?.bookings.some((row) => row.id === booking.id)), {
+      status: admin.status,
+      ids: admin.data?.bookings.map((row) => row.id),
+    });
+  }
+
+  let reminder: Booking["reminderStatus"] | undefined;
+  for (let i = 0; i < 12; i++) {
+    const row = await call<{ booking: Booking }>(`/bookings/${booking.id}`);
+    reminder = row.data?.booking.reminderStatus;
+    if (reminder && reminder !== "queued") break;
     await new Promise((r) => setTimeout(r, 700));
   }
-  check("queue consumer marks reminder sent", sent, { id });
+  if (near) {
+    check("reminder inside 24h is skipped without Resend", reminder === "skipped", { reminder });
+  } else {
+    check("reminder beyond 24h stays queued (or skipped if consumer ran)", reminder === "queued" || reminder === "skipped", { reminder });
+  }
+
+  const cancelled = await call<{ booking: Booking; cancelled: boolean }>(`/bookings/${booking.id}/cancel`, {
+    method: "POST",
+    body: { t: cancelToken },
+  });
+  check("signed cancel returns cancelled", cancelled.status === 200 && cancelled.data?.cancelled === true && cancelled.data.booking.status === "cancelled", cancelled.data);
+
+  const freed = await call<Availability>("/availability");
+  const openAgain = freed.data?.days.some((d) => d.slots.some((s) => s.start === slotA));
+  check("cancelled slot is bookable again", openAgain === true, { slotA, source: freed.data?.source });
+
+  const afterCancel = await call<{ booking: Booking }>(`/bookings/${booking.id}`);
+  check("cancelled booking reminder is not left queued", afterCancel.data?.booking.reminderStatus !== "queued", afterCancel.data?.booking.reminderStatus);
 }
 
 const bad = await call("/book", { method: "POST", body: { slotStart: slotA, guestName: "X", guestEmail: "not-an-email" } });

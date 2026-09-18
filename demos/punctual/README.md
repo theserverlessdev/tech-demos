@@ -4,8 +4,11 @@ A public booking page on Cloudflare Workers. This is a **small original demo** i
 
 - **Live:** <https://tech-demos.theserverless.dev/demos/punctual/>
 - **Subdomain:** <https://punctual.tech-demos.theserverless.dev/>
+- **Self-host:** [SETUP.md](./SETUP.md)
 - **Plan:** [PLAN.md](./PLAN.md)
 - **What changed vs upstream:** [CHANGELOG.md](./CHANGELOG.md)
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/theserverlessdev/tech-demos/tree/main/demos/punctual)
 
 Walkthrough stills and a short video: [artifacts/](./artifacts/).
 
@@ -13,35 +16,48 @@ Walkthrough stills and a short video: [artifacts/](./artifacts/).
 
 | Binding | What the demo does with it |
 | --- | --- |
-| **D1** | `slot_locks` primary key `(host_id, slot_start)` plus `bookings`. Two guests cannot hold the same slot. |
-| **Durable Object** | `Calendar` per host id serialises `book()`. Fast path; D1 unique is the guarantee. |
-| **KV** | Open-slot cache. Deleted on every successful (or conflicting) book. |
-| **Queues** | Enqueue a reminder stub on book. The consumer logs and stores `reminder_status=sent`. No email provider. |
+| **D1** | `slot_locks` primary key `(host_id, slot_start)` plus `bookings`. Cancel deletes the lock. |
+| **Durable Object** | `Calendar` per host id serialises `book()` and `cancel()`. D1 unique is the guarantee. |
+| **KV** | Open-slot cache. Deleted on book and cancel. |
+| **Queues** | Reminder ~24 h before the slot (max delay 24 h per hop). Status is `sent`, `skipped`, or `failed`. |
 | **RateLimit** | `BOOK_LIMIT` on `POST /api/book` (20 / 60s per IP). |
+| **Resend (BYOK)** | Confirmation + ICS to the guest, optional host notify, reminder, cancel. Missing key: booking still succeeds. |
 
-The UI is one public page: pick a weekday, pick a 30-minute slot, enter name + email, confirm. Graphite & Ember branding matches the hub (ember `#c2410c`, background `#0e0e11`, LogoMark SVG).
+The UI is a public page (day → slot → name/email → confirm) plus a light **Host list** behind `ADMIN_API_KEY`. Graphite & Ember branding matches the hub (ember `#c2410c`, background `#0e0e11`, LogoMark SVG).
+
+Hours, timezone, and slot length come from wrangler vars — not Google/Microsoft OAuth. ICS is the calendar interop.
+
+## Reminder behavior
+
+Queues can delay a message by at most **24 hours**.
+
+- Target send time = slot start − 24 h.
+- If that is further than 24 h away, the consumer re-enqueues the remainder.
+- If the slot is already inside 24 h, the reminder runs on the first consumer pass.
+- No `RESEND_API_KEY` / `MAIL_FROM`: `reminder_status=skipped`. Cancelled bookings also skip.
 
 ## How it works
 
 ```text
 browser ── HTTPS ──► Worker
-                      ├─ GET  /api/availability ──► KV (miss → D1 + slot engine)
-                      └─ POST /api/book ──────────► RateLimit → Calendar DO
-                                                      ├─ D1 batch: slot_locks + bookings
-                                                      ├─ CACHE.delete
-                                                      └─ REMINDERS.send
-
-Queue consumer ──► reminders row + bookings.reminder_status = sent
+                      ├─ GET  /api/availability ──► KV (miss → D1)
+                      ├─ POST /api/book ──────────► RateLimit → Calendar DO
+                      │                              Resend confirm+ICS (fail-soft)
+                      │                              Queue reminder (delay)
+                      ├─ GET  /api/bookings/:id/ics?t=
+                      ├─ POST /api/bookings/:id/cancel?t=
+                      └─ GET  /api/admin/bookings     Bearer ADMIN_API_KEY
 ```
 
-One demo host: **Ankur Singh**, weekdays 09:00–17:00 America/Los_Angeles, 30-minute slots.
+Default demo host: **Ankur Singh**, weekdays 09:00–17:00 America/Los_Angeles, 30-minute slots.
 
-Cloudflare resources are prefixed `tech-demos-punctual-*` so they do not collide with other demos in this repo.
+Cloudflare resources are prefixed `tech-demos-punctual-*`.
 
 ## Local
 
 ```bash
 cd demos/punctual
+cp .dev.vars.example .dev.vars
 bun install
 bun run dev
 ```
@@ -50,15 +66,11 @@ Then `bun run scripts/smoke.ts http://127.0.0.1:8787`.
 
 ## Deploy
 
-Needs D1, KV, a Queue, and a Durable Object (Paid). From this folder, with the owner account (unset any other `CF_API_TOKEN`):
+See [SETUP.md](./SETUP.md). From this folder, with the owner account:
 
 ```bash
 export CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5
 unset CF_API_TOKEN CLOUDFLARE_API_TOKEN
-wrangler d1 create tech-demos-punctual
-wrangler kv namespace create CACHE
-wrangler queues create tech-demos-punctual-reminders
-# put the D1 and KV ids into wrangler.jsonc, then:
 bun run deploy
 ```
 
@@ -66,5 +78,3 @@ Routes:
 
 - `tech-demos.theserverless.dev/demos/punctual*`
 - `punctual.tech-demos.theserverless.dev/*`
-
-The hub registry keeps a fallback Dynamic Worker that redirects to the subdomain if the zone route is missing.

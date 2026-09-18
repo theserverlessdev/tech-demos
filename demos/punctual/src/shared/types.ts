@@ -1,4 +1,6 @@
-export type ReminderStatus = "queued" | "sent" | "failed";
+export type ReminderStatus = "queued" | "sent" | "skipped" | "failed";
+export type MailStatus = "sent" | "skipped" | "failed";
+export type BookingStatus = "confirmed" | "cancelled";
 
 export type Host = {
   id: string;
@@ -8,7 +10,10 @@ export type Host = {
   timezoneLabel: string;
   slotMinutes: number;
   startHour: number;
+  startMinute: number;
   endHour: number;
+  endMinute: number;
+  weekdays: string[];
   horizonDays: number;
 };
 
@@ -41,25 +46,36 @@ export type Booking = {
   slotStart: string;
   slotEnd: string;
   createdAt: number;
+  status: BookingStatus;
   reminderStatus: ReminderStatus;
+  mailStatus: MailStatus;
 };
 
 export type BookRequest = {
   slotStart: string;
   guestName: string;
   guestEmail: string;
+  turnstileToken?: string;
 };
 
 export type BookResult =
   | { ok: true; booking: Booking }
   | { ok: false; code: "slot_taken" | "slot_invalid" | "slot_past"; message: string };
 
+export type MailResult = {
+  guest: MailStatus;
+  host: MailStatus;
+};
+
+export type BookResponse = {
+  booking: Booking;
+  mail: MailResult;
+  links: { ics: string; cancel: string };
+};
+
 export type ReminderMessage = {
   bookingId: string;
-  hostId: string;
-  guestName: string;
-  guestEmail: string;
-  slotStart: string;
+  sendAt: number;
   kind: "reminder";
 };
 
@@ -68,4 +84,14 @@ export type Health = {
   hostId: string;
   bookings: number;
   reminders: number;
+  mail: { resend: boolean; from: string | null };
+  turnstile: boolean;
+  admin: boolean;
+  signing: "secret" | "dev-fallback";
+};
+
+export type HostPublic = {
+  host: Host;
+  turnstileSiteKey: string | null;
+  mailEnabled: boolean;
 };

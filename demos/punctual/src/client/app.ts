@@ -1,5 +1,5 @@
-import type { Availability, Booking, DayAvailability, Host } from "../shared/types";
-import { formatClock, formatSlotRange, HOST } from "../shared/schedule";
+import type { Availability, Booking, BookResponse, DayAvailability, Host, HostPublic, MailResult } from "../shared/types";
+import { formatClock, formatSlotRange } from "../shared/schedule";
 
 const API_BASE = location.pathname.startsWith("/demos/punctual") ? "/demos/punctual" : "";
 
@@ -34,12 +34,16 @@ async function api<T>(path: string, init: { method?: string; body?: unknown } = 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
 const state = {
-  host: HOST as Host,
+  host: null as Host | null,
+  mailEnabled: false,
+  turnstileSiteKey: null as string | null,
   days: [] as DayAvailability[],
   source: "d1" as "kv" | "d1",
   selectedDate: null as string | null,
   selectedStart: null as string | null,
   booking: null as Booking | null,
+  links: null as BookResponse["links"] | null,
+  mail: null as MailResult | null,
 };
 
 function setStrip(text: string, stateName: "" | "kv" | "d1" | "error" = "") {
@@ -106,7 +110,8 @@ function renderSlots() {
       btn.textContent = slot.label;
       btn.addEventListener("click", () => {
         state.selectedStart = slot.start;
-        $("confirm-when").textContent = formatSlotRange(slot.start, slot.end);
+        const host = state.host;
+        if (host) $("confirm-when").textContent = formatSlotRange(slot.start, slot.end, host);
         showView("confirm");
         $("name").focus();
       });
@@ -116,19 +121,48 @@ function renderSlots() {
 }
 
 function renderHost() {
-  $("host-name").textContent = state.host.name;
-  $("host-meta").textContent = `${state.host.title} · ${state.host.timezoneLabel} · weekdays ${formatClock(state.host.startHour, 0)}–${formatClock(state.host.endHour, 0)}`;
-  $("confirm-host").textContent = `${state.host.name} · ${state.host.slotMinutes} min · ${state.host.timezoneLabel}`;
+  const host = state.host;
+  if (!host) return;
+  $("host-name").textContent = host.name;
+  $("host-meta").textContent = `${host.title} · ${host.timezoneLabel} · ${host.weekdays.join(", ")} ${formatClock(host.startHour, host.startMinute)}–${formatClock(host.endHour, host.endMinute)}`;
+  $("confirm-host").textContent = `${host.name} · ${host.slotMinutes} min · ${host.timezoneLabel}`;
+  $("slot-mins").textContent = `${host.slotMinutes} minutes`;
+}
+
+function mailCopy(mail: MailResult | null): string {
+  if (!mail) return "Booking saved.";
+  if (mail.guest === "sent") return "Confirmation email sent with an .ics calendar invite.";
+  if (mail.guest === "failed") return "Booked, but email failed. Download the calendar file below.";
+  return "Email skipped (no Resend key on this Worker). Download the calendar file to add it yourself.";
+}
+
+function ensureTurnstile(siteKey: string) {
+  if (document.getElementById("cf-turnstile-script")) return;
+  const box = $("turnstile");
+  box.hidden = false;
+  const script = document.createElement("script");
+  script.id = "cf-turnstile-script";
+  script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js";
+  script.async = true;
+  script.onload = () => {
+    const w = window as unknown as { turnstile?: { render: (el: string, opts: { sitekey: string }) => void } };
+    w.turnstile?.render("#turnstile", { sitekey: siteKey });
+  };
+  document.head.appendChild(script);
 }
 
 async function loadAvailability() {
   setStrip("Loading open slots…");
+  const meta = await api<HostPublic>("/host");
+  state.host = meta.host;
+  state.mailEnabled = meta.mailEnabled;
+  state.turnstileSiteKey = meta.turnstileSiteKey;
+  if (meta.turnstileSiteKey) ensureTurnstile(meta.turnstileSiteKey);
+  renderHost();
   const data = await api<Availability>("/availability");
-  state.host = data.host;
   state.days = data.days;
   state.source = data.source;
   state.selectedDate = data.days[0]?.date ?? null;
-  renderHost();
   renderDays();
   renderSlots();
   const n = data.days.reduce((sum, d) => sum + d.openCount, 0);
@@ -140,24 +174,34 @@ async function loadAvailability() {
   );
 }
 
+function turnstileToken(): string {
+  const input = document.querySelector<HTMLInputElement>("[name=cf-turnstile-response]");
+  return input?.value ?? "";
+}
+
 async function submit(event: Event) {
   event.preventDefault();
   const slot = selectedSlot();
-  if (!slot) return;
+  const host = state.host;
+  if (!slot || !host) return;
   const guestName = ($("name") as HTMLInputElement).value.trim();
   const guestEmail = ($("email") as HTMLInputElement).value.trim();
   const submitBtn = $("submit") as HTMLButtonElement;
   submitBtn.disabled = true;
   setHint("Booking through the Durable Object…");
   try {
-    const result = await api<{ booking: Booking }>("/book", {
+    const result = await api<BookResponse>("/book", {
       method: "POST",
-      body: { slotStart: slot.start, guestName, guestEmail },
+      body: { slotStart: slot.start, guestName, guestEmail, turnstileToken: turnstileToken() },
     });
     state.booking = result.booking;
-    $("done-when").textContent = formatSlotRange(result.booking.slotStart, result.booking.slotEnd);
+    state.links = result.links;
+    state.mail = result.mail;
+    $("done-when").textContent = formatSlotRange(result.booking.slotStart, result.booking.slotEnd, host);
     $("done-id").textContent = result.booking.id;
-    $("done-hint").textContent = "A reminder stub was queued. This demo does not send real email.";
+    $("done-hint").textContent = mailCopy(result.mail);
+    ($("done-ics") as HTMLAnchorElement).href = result.links.ics;
+    ($("done-cancel") as HTMLAnchorElement).href = result.links.cancel;
     showView("done");
     setStrip("Booked. KV cache invalidated. Reminder queued.", "kv");
     pollReminder(result.booking.id);
@@ -179,9 +223,15 @@ async function pollReminder(id: string) {
     await new Promise((r) => setTimeout(r, 800));
     try {
       const data = await api<{ booking: Booking }>(`/bookings/${id}`);
-      if (data.booking.reminderStatus === "sent") {
-        $("done-hint").textContent = "Queue consumer stored reminder_status=sent (no email provider).";
-        setStrip("Booked. Reminder stub recorded in D1.", "kv");
+      const status = data.booking.reminderStatus;
+      if (status === "sent" || status === "skipped" || status === "failed") {
+        const extra =
+          status === "sent"
+            ? " Reminder email is on its way (or already sent if the slot is inside 24h)."
+            : status === "skipped"
+              ? " Reminder marked skipped (no Resend key, or the slot was cancelled)."
+              : " Reminder send failed; the booking still stands.";
+        $("done-hint").textContent = mailCopy(state.mail) + extra;
         return;
       }
     } catch {

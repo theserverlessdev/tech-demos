@@ -32,7 +32,7 @@
       "subdomain": "https://punctual.tech-demos.theserverless.dev/",
       "worker": "tech-demos-punctual",
       "branch": "demo/punctual",
-      "notes": "Fresh small slice, not a vendor of upstream. Reminders are Queue-stubbed; Google/Microsoft OAuth deferred."
+      "notes": "Grown slice: Resend BYOK + ICS + signed cancel + admin list. Reminders are real mail or skipped without a key. Google/Microsoft OAuth still deferred."
     },
     {
       "slug": "resolve-hq",

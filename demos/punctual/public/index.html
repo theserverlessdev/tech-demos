@@ -6,9 +6,7 @@
   <meta name="color-scheme" content="dark light" />
   <meta name="theme-color" content="#0e0e11" />
   <title>Punctual · Tech Demos · theserverless.dev</title>
-  <meta name="description" content="Mini self-host booking on Cloudflare Workers: D1 slot locks, a Durable Object serializer, KV availability cache, and a Queue reminder stub." />
-  <meta property="og:title" content="Punctual slice" />
-  <meta property="og:description" content="Book a 30-minute slot. Double-booking is impossible at the D1 layer; a Durable Object serialises the write." />
+  <meta name="description" content="Self-host office-hours booking on Cloudflare Workers: D1 slot locks, Durable Object serializer, KV cache, Queue reminders, Resend ICS mail." />
   <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -28,9 +26,10 @@
     </a>
     <div class="topbar__title">
       <h1>Punctual</h1>
-      <p>Mini scheduler on D1, Durable Objects, KV, and Queues</p>
+      <p>Office hours on D1, Durable Objects, KV, Queues, and Resend</p>
     </div>
     <div class="topbar__actions">
+      <a class="btn btn-ghost" href="./admin">Host list</a>
       <a class="btn btn-ghost" href="https://github.com/CCCrafts/punctual" rel="noopener" target="_blank">Upstream</a>
       <button class="btn btn-ghost btn-icon" id="theme" type="button" aria-label="Switch colour theme">
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9Z"/></svg>
@@ -45,14 +44,14 @@
 
   <main class="shell" id="shell">
     <section class="host" aria-label="Host">
-      <p class="eyebrow">30 minutes</p>
+      <p class="eyebrow" id="slot-mins">30 minutes</p>
       <h2 id="host-name">Ankur Singh</h2>
       <p class="host__meta" id="host-meta">Office hours · Pacific Time · weekdays 9:00 AM–5:00 PM</p>
       <ul class="bindings">
         <li>D1 <code>slot_locks</code></li>
         <li>Durable Object</li>
         <li>KV cache</li>
-        <li>Queue stub</li>
+        <li>Queue + ICS</li>
       </ul>
     </section>
 
@@ -81,6 +80,7 @@
         <label>Email
           <input id="email" name="guestEmail" type="email" autocomplete="email" maxlength="120" required />
         </label>
+        <div id="turnstile" hidden></div>
         <p class="hint" id="form-hint" role="status"></p>
         <div class="confirm__row">
           <button class="btn" id="back" type="button">Back</button>
@@ -93,8 +93,12 @@
         <h2>You’re on the calendar.</h2>
         <p class="done__when" id="done-when"></p>
         <p class="done__id mono" id="done-id"></p>
-        <p class="hint" id="done-hint">A reminder stub was queued. This demo does not send real email.</p>
-        <button class="btn" id="again" type="button">Book another slot</button>
+        <p class="hint" id="done-hint">Download the calendar file if email is skipped.</p>
+        <div class="confirm__row">
+          <a class="btn btn-primary" id="done-ics" href="#">Download .ics</a>
+          <a class="btn" id="done-cancel" href="#">Cancel</a>
+        </div>
+        <button class="btn btn-ghost" id="again" type="button">Book another slot</button>
       </article>
     </section>
   </main>

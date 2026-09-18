@@ -48,7 +48,19 @@
     { "name": "BOOK_LIMIT", "namespace_id": "7361", "simple": { "limit": 20, "period": 60 } }
   ],
   "vars": {
-    "HOST_ID": "ankur"
+    "HOST_ID": "ankur",
+    "HOST_DISPLAY_NAME": "Ankur Singh",
+    "HOST_TITLE": "Office hours",
+    "HOST_TZ": "America/Los_Angeles",
+    "SLOT_MINUTES": "30",
+    "DAY_START": "09:00",
+    "DAY_END": "17:00",
+    "WEEKDAYS": "Mon,Tue,Wed,Thu,Fri",
+    "HOST_NOTIFY_EMAIL": "",
+    "MAIL_FROM": "",
+    "MAIL_FROM_NAME": "Punctual",
+    "PUBLIC_ORIGIN": "https://punctual.tech-demos.theserverless.dev",
+    "TURNSTILE_SITE_KEY": ""
   },
   "routes": [
     { "pattern": "tech-demos.theserverless.dev/demos/punctual*", "zone_name": "theserverless.dev" },

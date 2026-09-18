@@ -247,6 +247,13 @@ button { cursor: pointer; background: none; border: none; }
 .done__when { font-size: 16px; color: var(--text-strong); }
 .done__id { font-size: 12px; color: var(--muted); }
 
+.admin { max-width: 960px; }
+.table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.table th, .table td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.table th { color: var(--muted); font: 600 11px/1 var(--font-body); letter-spacing: 0.08em; text-transform: uppercase; }
+.table .btn { height: 32px; padding: 0 10px; }
+#turnstile { margin: 8px 0; }
+
 .foot {
   border-top: 1px solid var(--border);
   padding: 16px 20px;

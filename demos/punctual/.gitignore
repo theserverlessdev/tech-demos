@@ -1,4 +1,6 @@
 public/assets/app.js
+public/assets/admin.js
+public/assets/cancel.js
 worker-configuration.d.ts
 .dev.vars
 .wrangler/

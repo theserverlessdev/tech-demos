@@ -1,0 +1,11 @@
+# Local / self-host secrets. Do not commit real keys.
+# bunx wrangler secret put RESEND_API_KEY
+# bunx wrangler secret put ADMIN_API_KEY
+# bunx wrangler secret put SIGNING_SECRET
+# bunx wrangler secret put TURNSTILE_SECRET_KEY   # optional
+
+ADMIN_API_KEY=dev-admin-key
+SIGNING_SECRET=dev-signing-secret
+RESEND_API_KEY=
+TURNSTILE_SECRET_KEY=
+PUBLIC_ORIGIN=http://127.0.0.1:8787

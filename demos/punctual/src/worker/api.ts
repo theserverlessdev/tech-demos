@@ -1,7 +1,19 @@
-import { HOST } from "../shared/schedule";
-import type { BookRequest } from "../shared/types";
+import type { BookRequest, BookResponse, Booking, Health, HostPublic, MailResult, MailStatus, ReminderMessage } from "../shared/types";
 import { calendarStub } from "./calendar";
-import { countBookings, countReminders, getBooking } from "./db";
+import {
+  delaySecondsUntil,
+  hostFromEnv,
+  mailFrom,
+  publicBase,
+  reminderSendAt,
+  resendEnabled,
+  turnstileEnabled,
+} from "./config";
+import { countBookings, countReminders, getBooking, listUpcoming, setMailStatus } from "./db";
+import { bookingIcs } from "./ics";
+import { sendCancelled, sendConfirmation } from "./mail";
+import { bearerToken, secretEquals, signingSecret, signToken, verifyToken } from "./sign";
+import { verifyTurnstile } from "./turnstile";
 
 export class HttpError extends Error {
   constructor(
@@ -49,27 +61,80 @@ function parseBook(body: Record<string, unknown>): BookRequest {
   const guestName = str(body.guestName).trim();
   const guestEmail = str(body.guestEmail).trim().toLowerCase();
   const slotStart = str(body.slotStart).trim();
+  const turnstileToken = str(body.turnstileToken).trim() || undefined;
   if (guestName.length < 2 || guestName.length > 80) throw new HttpError(400, "invalid", "Enter a name (2–80 characters).");
   if (!EMAIL_RE.test(guestEmail) || guestEmail.length > 120) throw new HttpError(400, "invalid", "Enter a valid email.");
   if (!slotStart) throw new HttpError(400, "invalid", "Pick a slot first.");
-  return { guestName, guestEmail, slotStart };
+  return { guestName, guestEmail, slotStart, turnstileToken };
+}
+
+async function bookingLinks(env: Env, request: Request, bookingId: string): Promise<{ ics: string; cancel: string }> {
+  const base = publicBase(env, request);
+  const { secret } = signingSecret(env);
+  const ics = await signToken(secret, "ics", bookingId);
+  const cancel = await signToken(secret, "cancel", bookingId);
+  return {
+    ics: `${base}/api/bookings/${bookingId}/ics?t=${encodeURIComponent(ics)}`,
+    cancel: `${base}/cancel?id=${encodeURIComponent(bookingId)}&t=${encodeURIComponent(cancel)}`,
+  };
+}
+
+async function requireAdmin(env: Env, request: Request): Promise<void> {
+  const expected = env.ADMIN_API_KEY?.trim();
+  if (!expected) throw new HttpError(503, "admin_disabled", "Set ADMIN_API_KEY to enable the host list.");
+  const token = bearerToken(request);
+  if (!token || !(await secretEquals(token, expected))) {
+    throw new HttpError(401, "unauthorized", "Admin key required.");
+  }
+}
+
+async function tokenFromRequest(request: Request): Promise<string> {
+  const fromQuery = new URL(request.url).searchParams.get("t") ?? "";
+  if (fromQuery) return fromQuery;
+  if (request.method === "GET" || request.method === "HEAD") return "";
+  return str((await readJson(request)).t);
+}
+
+async function requireSigned(env: Env, purpose: "ics" | "cancel", bookingId: string, request: Request): Promise<void> {
+  const token = await tokenFromRequest(request);
+  const { secret } = signingSecret(env);
+  if (!(await verifyToken(secret, purpose, bookingId, token))) {
+    throw new HttpError(403, "forbidden", "That link is invalid or expired.");
+  }
+}
+
+async function enqueueReminder(env: Env, booking: Booking): Promise<void> {
+  const sendAt = reminderSendAt(booking.slotStart);
+  const body: ReminderMessage = { bookingId: booking.id, sendAt, kind: "reminder" };
+  await env.REMINDERS.send(body, { delaySeconds: delaySecondsUntil(sendAt) });
 }
 
 export async function handleApi(request: Request, env: Env, pathname: string): Promise<Response> {
   const method = request.method;
   const calendar = calendarStub(env);
+  const host = hostFromEnv(env);
 
   if (pathname === "/api/health" && method === "GET") {
-    return json({
+    const health: Health = {
       ok: true,
-      hostId: env.HOST_ID || HOST.id,
+      hostId: host.id,
       bookings: await countBookings(env.DB),
       reminders: await countReminders(env.DB),
-    });
+      mail: { resend: resendEnabled(env), from: mailFrom(env) },
+      turnstile: turnstileEnabled(env),
+      admin: Boolean(env.ADMIN_API_KEY?.trim()),
+      signing: signingSecret(env).mode,
+    };
+    return json(health);
   }
 
   if (pathname === "/api/host" && method === "GET") {
-    return json({ host: HOST });
+    const payload: HostPublic = {
+      host,
+      turnstileSiteKey: env.TURNSTILE_SITE_KEY?.trim() || null,
+      mailEnabled: resendEnabled(env),
+    };
+    return json(payload);
   }
 
   if (pathname === "/api/availability" && method === "GET") {
@@ -78,19 +143,77 @@ export async function handleApi(request: Request, env: Env, pathname: string): P
 
   if (pathname === "/api/book" && method === "POST") {
     await limitBook(env, request);
-    const result = await calendar.book(parseBook(await readJson(request)));
+    const body = parseBook(await readJson(request));
+    if (env.TURNSTILE_SECRET_KEY?.trim()) {
+      const ok = await verifyTurnstile(env, body.turnstileToken ?? "", clientIp(request));
+      if (!ok) throw new HttpError(403, "turnstile", "Turnstile verification failed. Reload and try again.");
+    }
+    const result = await calendar.book(body);
     if (!result.ok) {
       const status = result.code === "slot_taken" ? 409 : 400;
       return json({ error: { code: result.code, message: result.message } }, status);
     }
-    return json({ booking: result.booking }, 201);
+    const links = await bookingLinks(env, request, result.booking.id);
+    let mail: MailResult = { guest: "skipped", host: "skipped" };
+    try {
+      mail = await sendConfirmation(env, host, result.booking, links);
+    } catch (err) {
+      console.error(JSON.stringify({ event: "confirm_mail_error", error: String(err) }));
+      mail = { guest: "failed", host: "skipped" };
+    }
+    const mailStatus: MailStatus = mail.guest === "sent" || mail.host === "sent" ? "sent" : mail.guest;
+    await setMailStatus(env.DB, result.booking.id, mailStatus);
+    await enqueueReminder(env, result.booking);
+    const booking = { ...result.booking, mailStatus };
+    const response: BookResponse = { booking, mail, links };
+    return json(response, 201);
   }
 
-  const bookingMatch = pathname.match(/^\/api\/bookings\/([^/]+)$/);
-  if (bookingMatch && method === "GET") {
-    const booking = await getBooking(env.DB, decodeURIComponent(bookingMatch[1]!));
-    if (!booking) throw new HttpError(404, "not_found", "That booking is gone.");
-    return json({ booking });
+  if (pathname === "/api/admin/bookings" && method === "GET") {
+    await requireAdmin(env, request);
+    return json({ bookings: await listUpcoming(env.DB, host.id, new Date().toISOString()) });
+  }
+
+  const bookingMatch = pathname.match(/^\/api\/bookings\/([^/]+)(?:\/(.*))?$/);
+  if (!bookingMatch) throw new HttpError(404, "not_found", "Unknown API route.");
+  const bookingId = decodeURIComponent(bookingMatch[1]!);
+  const rest = bookingMatch[2] ?? "";
+  const booking = await getBooking(env.DB, bookingId);
+  if (!booking) throw new HttpError(404, "not_found", "That booking is gone.");
+
+  if (rest === "" && method === "GET") return json({ booking });
+
+  if (rest === "ics" && method === "GET") {
+    await requireSigned(env, "ics", bookingId, request);
+    const ics = bookingIcs(host, booking, booking.status === "cancelled" ? "CANCEL" : "REQUEST", publicBase(env, request));
+    return new Response(ics, {
+      headers: {
+        "content-type": "text/calendar; charset=utf-8",
+        "content-disposition": `attachment; filename="punctual-${booking.id}.ics"`,
+        "cache-control": "no-store",
+      },
+    });
+  }
+
+  if (rest === "cancel" && (method === "POST" || method === "GET")) {
+    const admin = Boolean(env.ADMIN_API_KEY?.trim() && (await secretEquals(bearerToken(request) ?? "", env.ADMIN_API_KEY)));
+    if (!admin) await requireSigned(env, "cancel", bookingId, request);
+    const cancelled = await calendar.cancel(bookingId);
+    if (cancelled.booking && cancelled.ok) {
+      try {
+        await sendCancelled(env, host, cancelled.booking);
+      } catch (err) {
+        console.error(JSON.stringify({ event: "cancel_mail_error", error: String(err) }));
+      }
+    }
+    const current = cancelled.booking ?? booking;
+    if (method === "GET") {
+      const url = new URL(request.url);
+      url.pathname = url.pathname.replace(/\/api\/bookings\/[^/]+\/cancel$/, "/cancel");
+      url.search = `?id=${encodeURIComponent(bookingId)}&done=1`;
+      return Response.redirect(url.toString(), 303);
+    }
+    return json({ booking: current, cancelled: cancelled.ok });
   }
 
   throw new HttpError(404, "not_found", "Unknown API route.");
