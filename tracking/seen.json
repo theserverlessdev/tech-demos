@@ -2,6 +2,21 @@
   "proposed": [],
   "built": [
     {
+      "slug": "goodvibes",
+      "repo": "https://github.com/benallfree/goodvibes",
+      "title": "GoodVibes",
+      "source": "approved-slice",
+      "approved_at": "2026-09-18",
+      "why": "Multiplayer Three.js lobby on Workers + Durable Object WebSocket hibernation; presence and positions without vendoring the starter kit",
+      "built_at": "2026-09-18",
+      "path": "demos/goodvibes",
+      "url": "https://tech-demos.theserverless.dev/demos/goodvibes/",
+      "subdomain": "https://goodvibes.tech-demos.theserverless.dev/",
+      "worker": "tech-demos-goodvibes",
+      "branch": "demo/goodvibes",
+      "notes": "Fresh small slice, not a vendor of upstream. Positions + presence over hibernatable WebSockets. Room create is rate-limited."
+    },
+    {
       "slug": "resolve-hq",
       "repo": "https://github.com/mirza-rizvi/ResolveHQ",
       "title": "ResolveHQ",
