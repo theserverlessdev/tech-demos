@@ -1,5 +1,23 @@
 {
-  "proposed": [],
+  "proposed": [
+    {
+      "slug": "punctual",
+      "status": "live-pending-merge",
+      "pr": "https://github.com/theserverlessdev/tech-demos/pull/7",
+      "buildVia": "cloud-agent",
+      "tech": "CCCrafts/punctual",
+      "repo": "https://github.com/CCCrafts/punctual",
+      "liveUrl": "https://tech-demos.theserverless.dev/demos/punctual/"
+    },
+    {
+      "slug": "goodvibes",
+      "status": "building",
+      "buildVia": "cloud-agent",
+      "tech": "benallfree/goodvibes",
+      "repo": "https://github.com/benallfree/goodvibes",
+      "approvedAt": "2026-09-18T11:48:37Z"
+    }
+  ],
   "built": [
     {
       "slug": "punctual",
@@ -83,5 +101,14 @@
       "why": "Serverless vector DB API on Workers AI + Vectorize + D1",
       "reason": "user asked for more complicated/impressive"
     }
-  ]
+  ],
+  "candidates_known": [
+    "goodvibes",
+    "punctual"
+  ],
+  "_meta": {
+    "updatedBy": "tech-demos-bot",
+    "updatedAt": "2026-09-18T11:49:36Z",
+    "note": "punctual live"
+  }
 }
