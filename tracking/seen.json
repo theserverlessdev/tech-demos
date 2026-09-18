@@ -15,14 +15,14 @@
       "title": "GoodVibes",
       "source": "approved-slice",
       "approved_at": "2026-09-18",
-      "why": "Multiplayer Three.js lobby on Workers + Durable Object WebSocket hibernation; presence and positions without vendoring the starter kit",
+      "why": "Playable multiplayer Ember Rush on Workers + Durable Object WebSocket hibernation; orbs, scores, round clock — not a walking simulator",
       "built_at": "2026-09-18",
       "path": "demos/goodvibes",
       "url": "https://tech-demos.theserverless.dev/demos/goodvibes/",
       "subdomain": "https://goodvibes.tech-demos.theserverless.dev/",
       "worker": "tech-demos-goodvibes",
       "branch": "demo/goodvibes",
-      "notes": "Fresh small slice, not a vendor of upstream. Positions + presence over hibernatable WebSockets. Room create is rate-limited."
+      "notes": "Ember Rush: 75s orb hunt, server-authoritative round on a hibernatable VibeRoom. Not a vendor of upstream. Room create is rate-limited."
     },
     {
       "slug": "resolve-hq",

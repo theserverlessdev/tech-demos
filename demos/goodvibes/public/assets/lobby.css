@@ -156,12 +156,56 @@ input:focus { outline: 1px solid rgba(var(--ember-rgb), 0.55); border-color: rgb
   font-size: 0.75rem;
   color: var(--ember-2);
 }
-#presence { list-style: none; display: grid; gap: 0.35rem; max-height: 12rem; overflow: auto; }
+#presence { list-style: none; display: grid; gap: 0.35rem; max-height: 14rem; overflow: auto; }
 #presence li { display: flex; align-items: center; gap: 0.45rem; font-size: 0.85rem; }
 #presence li.is-you { color: var(--text-strong); }
+#presence li b { margin-left: auto; font-family: var(--font-mono); color: var(--ember-2); }
 .swatch { width: 0.65rem; height: 0.65rem; border-radius: 99px; flex-shrink: 0; }
+
+.clock {
+  position: absolute;
+  top: 0.85rem;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: var(--font-heading);
+  font-size: clamp(1.8rem, 4vw, 2.6rem);
+  letter-spacing: -0.04em;
+  color: var(--text-strong);
+  text-shadow: 0 2px 12px rgba(0,0,0,0.65);
+  pointer-events: none;
+}
+.clock[data-phase="low"] { color: var(--ember-2); }
+.clock[data-phase="cd"] { color: #fbbf24; }
+
+.banner {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -54%);
+  width: min(22rem, calc(100% - 2rem));
+  padding: 1.15rem 1.2rem 1.2rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  text-align: center;
+  display: grid;
+  gap: 0.45rem;
+  z-index: 3;
+}
+.banner[hidden] { display: none !important; }
+.banner__count {
+  font-family: var(--font-heading);
+  font-size: 3.2rem;
+  line-height: 1;
+  color: var(--ember-2);
+  min-height: 0.2em;
+}
+.banner h2 { font-size: 1.45rem; }
+.banner .btn { justify-self: center; margin-top: 0.35rem; }
 
 @media (max-width: 640px) {
   .topbar__title p { display: none; }
   .hud { top: auto; bottom: 0.7rem; right: 0.7rem; left: 0.7rem; width: auto; }
+  .banner { top: 42%; }
+  .clock { top: 0.5rem; }
 }

@@ -99,8 +99,8 @@ export const demos: DemoEntry[] = [
     slug: "goodvibes",
     title: "GoodVibes",
     description:
-      "A 3D multiplayer lobby on Workers: Static Assets plus a Durable Object room that hibernates while it syncs presence and positions over WebSockets. Inspired by goodvibes — original code, not a vendor of the kit.",
-    tags: ["durable-objects", "websockets", "threejs", "static-assets"],
+      "Ember Rush: a 75-second multiplayer orb hunt on a Durable Object WebSocket. Collect ember orbs, gold is +3, highest score wins. Hibernation + rate-limited room create. Inspired by goodvibes — original game, not a vendor of the kit.",
+    tags: ["durable-objects", "websockets", "threejs", "game"],
     source: goodvibesFallbackSource,
   },
   {

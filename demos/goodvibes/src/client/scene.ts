@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { ARENA, clampPos, type Player } from "../shared/types";
+import { ARENA, clampPos, type Orb, type Player } from "../shared/types";
 
 type Marker3 = {
   group: THREE.Group;
@@ -7,8 +7,13 @@ type Marker3 = {
   target: THREE.Vector3;
 };
 
-const SPEED = 5.6;
-const REMOTE_LERP = 10;
+type Orb3 = { mesh: THREE.Mesh; kind: Orb["kind"] };
+
+type Flat = { x: number; z: number; color: string; name: string; self: boolean; tx: number; tz: number; score: number };
+type Spark = { x: number; z: number; vx: number; vz: number; life: number; color: string };
+
+const SPEED = 8.4;
+const REMOTE_LERP = 12;
 
 function nameSprite(text: string): THREE.Sprite {
   const canvas = document.createElement("canvas");
@@ -101,9 +106,7 @@ function tryWebGL(canvas: HTMLCanvasElement): WebGLRenderingContext | WebGL2Rend
   }
 }
 
-type Flat = { x: number; z: number; color: string; name: string; self: boolean; tx: number; tz: number };
-
-export class LobbyScene {
+export class ArenaScene {
   readonly keys = new Set<string>();
   readonly webgl: boolean;
   private readonly canvas: HTMLCanvasElement;
@@ -114,7 +117,10 @@ export class LobbyScene {
   private floor: THREE.Mesh | null = null;
   private readonly pointer = new THREE.Vector2();
   private readonly markers = new Map<string, Marker3>();
+  private readonly orbMeshes = new Map<string, Orb3>();
   private readonly flats = new Map<string, Flat>();
+  private orbs: Orb[] = [];
+  private sparks: Spark[] = [];
   private readonly clock = new THREE.Clock();
   private ctx2d: CanvasRenderingContext2D | null = null;
   private localId: string | null = null;
@@ -125,6 +131,7 @@ export class LobbyScene {
   private lastX = 0;
   private lastZ = 0;
   private disposed = false;
+  private t = 0;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -171,6 +178,7 @@ export class LobbyScene {
       color: player.color,
       name: player.name,
       self: player.id === this.localId,
+      score: player.score,
     });
     if (!this.webgl || !this.scene) return;
     let marker = this.markers.get(player.id);
@@ -189,6 +197,50 @@ export class LobbyScene {
     if (!marker || !this.scene) return;
     this.scene.remove(marker.group);
     this.markers.delete(id);
+  }
+
+  setOrbs(orbs: Orb[]): void {
+    this.orbs = orbs;
+    if (!this.webgl || !this.scene) return;
+    const keep = new Set(orbs.map((o) => o.id));
+    for (const [id, row] of this.orbMeshes) {
+      if (keep.has(id)) continue;
+      this.scene.remove(row.mesh);
+      this.orbMeshes.delete(id);
+    }
+    for (const orb of orbs) {
+      let row = this.orbMeshes.get(orb.id);
+      if (!row) {
+        const hot = orb.kind === "hot";
+        const mesh = new THREE.Mesh(
+          new THREE.SphereGeometry(hot ? 0.42 : 0.28, 16, 12),
+          new THREE.MeshStandardMaterial({
+            color: hot ? "#fbbf24" : "#c2410c",
+            emissive: hot ? "#e2622e" : "#c2410c",
+            emissiveIntensity: hot ? 1.1 : 0.7,
+            roughness: 0.25,
+          }),
+        );
+        this.scene.add(mesh);
+        row = { mesh, kind: orb.kind };
+        this.orbMeshes.set(orb.id, row);
+      }
+      row.mesh.position.set(orb.x, 0.45, orb.z);
+    }
+  }
+
+  burst(x: number, z: number, color: string): void {
+    for (let i = 0; i < 14; i++) {
+      const a = (i / 14) * Math.PI * 2;
+      this.sparks.push({
+        x,
+        z,
+        vx: Math.cos(a) * (3 + Math.random() * 4),
+        vz: Math.sin(a) * (3 + Math.random() * 4),
+        life: 0.45 + Math.random() * 0.2,
+        color,
+      });
+    }
   }
 
   localPosition(): { x: number; z: number } | null {
@@ -213,6 +265,7 @@ export class LobbyScene {
     this.renderer?.dispose();
     this.markers.clear();
     this.flats.clear();
+    this.orbMeshes.clear();
   }
 
   private initWebGL(gl: WebGLRenderingContext | WebGL2RenderingContext): void {
@@ -242,8 +295,8 @@ export class LobbyScene {
     const key = new THREE.DirectionalLight(0xe8e8e4, 0.85);
     key.position.set(8, 18, 6);
     scene.add(key);
-    const ember = new THREE.PointLight(0xc2410c, 18, 28, 2);
-    ember.position.set(-4, 5, 3);
+    const ember = new THREE.PointLight(0xc2410c, 22, 30, 2);
+    ember.position.set(0, 6, 0);
     scene.add(ember);
 
     const ground = new THREE.Mesh(
@@ -376,7 +429,7 @@ export class LobbyScene {
       if (marker) {
         marker.group.position.set(x, 0, z);
         marker.target.set(x, 0, z);
-        marker.ring.rotation.z += dt * 0.8;
+        marker.ring.rotation.z += dt * 1.4;
       }
     }
     const flat = this.localId ? this.flats.get(this.localId) : undefined;
@@ -425,6 +478,22 @@ export class LobbyScene {
     ctx.stroke();
     ctx.restore();
 
+    const pulse = 0.65 + Math.sin(this.t * 6) * 0.35;
+    for (const orb of this.orbs) {
+      const sx = originX + orb.x * scale;
+      const sy = originY + orb.z * scale;
+      const hot = orb.kind === "hot";
+      const r = (hot ? 11 : 7) * (hot ? 1 : pulse);
+      ctx.beginPath();
+      ctx.arc(sx, sy, r + 8, 0, Math.PI * 2);
+      ctx.fillStyle = hot ? "rgba(251, 191, 36, 0.18)" : "rgba(194, 65, 12, 0.2)";
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(sx, sy, r, 0, Math.PI * 2);
+      ctx.fillStyle = hot ? "#fbbf24" : "#e2622e";
+      ctx.fill();
+    }
+
     const k = 1 - Math.exp(-REMOTE_LERP * dt);
     for (const [id, p] of this.flats) {
       if (id !== this.localId) {
@@ -447,24 +516,38 @@ export class LobbyScene {
       ctx.font = "600 14px 'Hanken Grotesk', system-ui, sans-serif";
       ctx.textAlign = "center";
       ctx.fillStyle = "#e8e8e4";
-      ctx.fillText(p.name.slice(0, 18), sx, sy - 28);
+      ctx.fillText(`${p.name.slice(0, 14)}  ${p.score}`, sx, sy - 28);
+    }
+
+    this.sparks = this.sparks.filter((s) => s.life > 0);
+    for (const s of this.sparks) {
+      s.life -= dt;
+      s.x += s.vx * dt;
+      s.z += s.vz * dt;
+      ctx.globalAlpha = Math.max(s.life, 0);
+      ctx.fillStyle = s.color;
+      ctx.beginPath();
+      ctx.arc(originX + s.x * scale, originY + s.z * scale, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
     }
 
     ctx.font = "500 12px 'JetBrains Mono', ui-monospace, monospace";
     ctx.fillStyle = "#8a8a85";
     ctx.textAlign = "left";
-    ctx.fillText("2D fallback · WebGL unavailable in this browser", 16, this.canvas.height - 18);
+    ctx.fillText("WASD / click · grab ember orbs · hot orb is +3", 16, this.canvas.height - 18);
   }
 
   private tick = (): void => {
     if (this.disposed) return;
     this.raf = requestAnimationFrame(this.tick);
     const dt = Math.min(this.clock.getDelta(), 0.05);
+    this.t += dt;
     const local = this.stepLocal(dt);
     if (local) {
       const now = performance.now();
       const moved = Math.hypot(local.x - this.lastX, local.z - this.lastZ);
-      if (moved > 0.02 && now - this.lastSent > 50) {
+      if (moved > 0.02 && now - this.lastSent > 40) {
         this.lastSent = now;
         this.lastX = local.x;
         this.lastZ = local.z;
@@ -475,6 +558,9 @@ export class LobbyScene {
       for (const [id, marker] of this.markers) {
         if (id === this.localId) continue;
         marker.group.position.lerp(marker.target, 1 - Math.exp(-REMOTE_LERP * dt));
+      }
+      for (const row of this.orbMeshes.values()) {
+        row.mesh.position.y = 0.4 + Math.sin(this.t * 5 + row.mesh.position.x) * 0.12;
       }
       this.renderer.render(this.scene, this.camera);
     } else {

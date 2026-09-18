@@ -41,7 +41,7 @@ async function readJson(request: Request): Promise<Record<string, unknown>> {
 
 export async function handleApi(request: Request, env: Env, path: string): Promise<Response> {
   if (path === "/api/health" && request.method === "GET") {
-    const body: Health = { ok: true, demo: "goodvibes", hibernation: true };
+    const body: Health = { ok: true, demo: "goodvibes", game: "ember-rush", hibernation: true };
     return json(body);
   }
 

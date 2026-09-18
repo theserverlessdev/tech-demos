@@ -1,6 +1,6 @@
-# GoodVibes slice
+# GoodVibes — Ember Rush
 
-A 3D multiplayer lobby on Cloudflare Workers. This is a **small original demo** inspired by [benallfree/goodvibes](https://github.com/benallfree/goodvibes) (MIT), not a vendor of that starter kit.
+A **75-second multiplayer orb hunt** on Cloudflare Workers. Inspired by [benallfree/goodvibes](https://github.com/benallfree/goodvibes) (MIT), not a vendor of that starter kit.
 
 - **Live (after deploy):** <https://tech-demos.theserverless.dev/demos/goodvibes/>
 - **Subdomain (after deploy):** <https://goodvibes.tech-demos.theserverless.dev/>
@@ -9,15 +9,23 @@ A 3D multiplayer lobby on Cloudflare Workers. This is a **small original demo** 
 
 Walkthrough stills and a short video: [artifacts/](./artifacts/).
 
+## How to play
+
+1. Join (or create) a named room. Open a second tab.
+2. Hit **Start round**. 3–2–1, then 75 seconds.
+3. WASD or click-to-move. Walk over glowing orbs.
+4. Regular ember **+1**. Gold hot orb **+3**. Orbs respawn.
+5. Highest score wins. **Play again** without leaving.
+
+2–8 players. Graphite & Ember chrome (ember `#c2410c`, background `#0e0e11`, LogoMark).
+
 ## What it proves
 
 | Binding | What the demo does with it |
 | --- | --- |
-| **Static Assets** | Lobby UI (join/create by room name) plus the bundled Three.js client. |
-| **Durable Objects** | One `VibeRoom` per room name. Hibernatable WebSockets broadcast presence and `{x,z}` positions. |
+| **Static Assets** | Lobby + bun-bundled Three.js (2D floor if WebGL cannot start). |
+| **Durable Objects** | One `VibeRoom` per room. Hibernatable WebSockets. Server-authoritative orbs, scores, round clock via `setAlarm`. |
 | **Rate Limiting** | `CREATE_LIMIT` on `POST /api/rooms` (8 creates / 60s / IP). |
-
-Open two tabs on the same room. Click the floor or use WASD — the other tab should see the marker move without a refresh. Graphite & Ember chrome matches the hub (ember `#c2410c`, background `#0e0e11`, LogoMark SVG). The 3D floor stays dark and readable; we do not force a purple→cyan look.
 
 ## How it works
 
@@ -26,11 +34,12 @@ browser ── HTTPS ──► Worker
                       ├─ POST /api/rooms ──────────► CREATE_LIMIT
                       ├─ GET  /api/health
                       └─ GET  /ws/:room ───────────► VibeRoom Durable Object
-                                                       ├─ serializeAttachment (id, name, pose)
-                                                       └─ hibernatable WS fan-out
+                                                       ├─ serializeAttachment (pose, score)
+                                                       ├─ storage (phase, orbs, scores)
+                                                       └─ alarm (countdown + 75s round)
 ```
 
-Cloudflare resources are prefixed `tech-demos-goodvibes-*` so they do not collide with other demos in this repo.
+Resources are prefixed `tech-demos-goodvibes-*`.
 
 ## Local
 
@@ -42,20 +51,18 @@ bun run dev
 
 Then `bun run scripts/smoke.ts http://127.0.0.1:8787`.
 
-Open two browser tabs on the same room. Move in one; the other should follow live.
+Open two tabs on the same room, start a round, and race. If WebGL cannot start, the same game draws as a 2D map.
 
-If the browser cannot create a WebGL context (some CI / VM GPUs), the client draws the same floor as a 2D map. Presence and positions still sync.
-
-This demo is a standalone Worker (Durable Objects cannot run inside the hub's Dynamic Worker Loader). From the repo root the gallery still lists it; for the full bindings use `bun run --filter @tech-demos/goodvibes dev`.
+Standalone Worker (Durable Objects cannot run in the hub Loader). Use `bun run --filter @tech-demos/goodvibes dev` for the full bindings.
 
 ## Deploy
 
-Needs Durable Objects and the Rate Limiting binding (Workers Paid). From this folder, with the owner account (`CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5`; unset any other `CF_API_TOKEN` / `CLOUDFLARE_API_TOKEN` if they point at the wrong account):
-
-This cloud agent could not `wrangler deploy` (`wrangler whoami` is unauthenticated). After login on the owner account:
+Needs Durable Objects + Rate Limiting (Workers Paid). This cloud agent could not `wrangler deploy` (`wrangler whoami` unauthenticated). On the owner account:
 
 ```bash
 cd demos/goodvibes
+CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5
+unset CF_API_TOKEN CLOUDFLARE_API_TOKEN
 bun run deploy
 ```
 
@@ -63,5 +70,3 @@ Routes:
 
 - `tech-demos.theserverless.dev/demos/goodvibes*`
 - `goodvibes.tech-demos.theserverless.dev/*`
-
-The hub registry keeps a fallback Dynamic Worker that redirects to the subdomain if the zone route is missing.
