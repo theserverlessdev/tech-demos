@@ -7,6 +7,8 @@ A public booking page on Cloudflare Workers. This is a **small original demo** i
 - **Plan:** [PLAN.md](./PLAN.md)
 - **What changed vs upstream:** [CHANGELOG.md](./CHANGELOG.md)
 
+Walkthrough stills and a short video: [artifacts/](./artifacts/).
+
 ## What it proves
 
 | Binding | What the demo does with it |

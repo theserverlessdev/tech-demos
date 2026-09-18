@@ -1,5 +1,5 @@
 import type { Availability, Booking, DayAvailability, Host } from "../shared/types";
-import { formatSlotRange, HOST } from "../shared/schedule";
+import { formatClock, formatSlotRange, HOST } from "../shared/schedule";
 
 const API_BASE = location.pathname.startsWith("/demos/punctual") ? "/demos/punctual" : "";
 
@@ -117,7 +117,7 @@ function renderSlots() {
 
 function renderHost() {
   $("host-name").textContent = state.host.name;
-  $("host-meta").textContent = `${state.host.title} · ${state.host.timezoneLabel} · weekdays ${state.host.startHour}:00–${state.host.endHour}:00`;
+  $("host-meta").textContent = `${state.host.title} · ${state.host.timezoneLabel} · weekdays ${formatClock(state.host.startHour, 0)}–${formatClock(state.host.endHour, 0)}`;
   $("confirm-host").textContent = `${state.host.name} · ${state.host.slotMinutes} min · ${state.host.timezoneLabel}`;
 }
 

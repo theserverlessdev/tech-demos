@@ -240,6 +240,7 @@ button { cursor: pointer; background: none; border: none; }
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   background: var(--surface);
+  color: var(--text-strong);
 }
 .confirm input:focus { border-color: var(--ember); outline: none; }
 .confirm__row { display: flex; gap: 8px; margin-top: 4px; }
