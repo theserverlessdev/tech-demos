@@ -1,0 +1,59 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tech-demos-punctual",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none"
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "CALENDAR", "class_name": "Calendar" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Calendar"] }],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "tech-demos-punctual",
+      "database_id": "b856b123-57ee-4970-b7bb-e50095670ede",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "CACHE",
+      "id": "d8f2374ceed24d328fe37737b69d42f1"
+    }
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "REMINDERS",
+        "queue": "tech-demos-punctual-reminders"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "tech-demos-punctual-reminders",
+        "max_batch_size": 5,
+        "max_batch_timeout": 2,
+        "max_retries": 3
+      }
+    ]
+  },
+  "ratelimits": [
+    { "name": "BOOK_LIMIT", "namespace_id": "7361", "simple": { "limit": 20, "period": 60 } }
+  ],
+  "vars": {
+    "HOST_ID": "ankur"
+  },
+  "routes": [
+    { "pattern": "tech-demos.theserverless.dev/demos/punctual*", "zone_name": "theserverless.dev" },
+    { "pattern": "punctual.tech-demos.theserverless.dev/*", "zone_name": "theserverless.dev" }
+  ],
+  "workers_dev": true,
+  "observability": { "enabled": true }
+}

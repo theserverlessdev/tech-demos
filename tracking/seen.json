@@ -2,6 +2,21 @@
   "proposed": [],
   "built": [
     {
+      "slug": "punctual",
+      "repo": "https://github.com/CCCrafts/punctual",
+      "title": "Punctual",
+      "source": "approved-slice",
+      "approved_at": "2026-09-18",
+      "why": "Self-host Calendly-class scheduler on Workers; demo the Paid-plan binding story (D1 slot_locks + Durable Object + KV + Queues) without WFP or calendar OAuth",
+      "built_at": "2026-09-18",
+      "path": "demos/punctual",
+      "url": "https://tech-demos.theserverless.dev/demos/punctual/",
+      "subdomain": "https://punctual.tech-demos.theserverless.dev/",
+      "worker": "tech-demos-punctual",
+      "branch": "demo/punctual",
+      "notes": "Fresh small slice, not a vendor of upstream. Reminders are Queue-stubbed; Google/Microsoft OAuth deferred."
+    },
+    {
       "slug": "resolve-hq",
       "repo": "https://github.com/mirza-rizvi/ResolveHQ",
       "title": "ResolveHQ",

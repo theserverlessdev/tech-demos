@@ -83,7 +83,26 @@ const resolveHqFallbackSource = `export default {
 };
 `;
 
+// punctual is a standalone Worker (D1, Durable Objects, KV, Queues). Same pattern as resolve-hq:
+// the zone route wins, and this source only redirects if that route is missing.
+const punctualFallbackSource = `export default {
+  fetch(request) {
+    const url = new URL(request.url);
+    const rest = url.pathname.replace(/^\\/demos\\/punctual/, "") || "/";
+    return Response.redirect("https://punctual.tech-demos.theserverless.dev" + rest + url.search, 302);
+  },
+};
+`;
+
 export const demos: DemoEntry[] = [
+  {
+    slug: "punctual",
+    title: "Punctual",
+    description:
+      "Mini self-host booking on Workers: D1 slot locks, a Durable Object serializer, a KV open-slot cache, and a Queue reminder stub. Inspired by Punctual — original code, not a vendor.",
+    tags: ["d1", "durable-objects", "kv", "queues"],
+    source: punctualFallbackSource,
+  },
   {
     slug: "resolve-hq",
     title: "ResolveHQ",
