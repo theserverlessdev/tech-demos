@@ -229,9 +229,17 @@ async function pollReminder(id: string) {
           status === "sent"
             ? " Reminder email is on its way (or already sent if the slot is inside 24h)."
             : status === "skipped"
-              ? " Reminder marked skipped (no Resend key, or the slot was cancelled)."
+              ? " Reminder marked skipped (no Resend key)."
               : " Reminder send failed; the booking still stands.";
         $("done-hint").textContent = mailCopy(state.mail) + extra;
+        setStrip(
+          status === "sent"
+            ? "Booked. Reminder email handled (sent, or already inside the 24h window)."
+            : status === "skipped"
+              ? "Booked. Reminder skipped — no Resend key on this Worker."
+              : "Booked. Reminder send failed; the booking still stands.",
+          status === "failed" ? "error" : "kv",
+        );
         return;
       }
     } catch {
