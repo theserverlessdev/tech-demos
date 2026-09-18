@@ -272,6 +272,7 @@ function applyServer(event: ServerEvent): void {
     const p = state.players.get(event.playerId);
     if (p) p.score = event.score;
     if (state.you?.id === event.playerId) state.you.score = event.score;
+    state.scene?.setScore(event.playerId, event.score);
     if (state.round) {
       state.round.orbs = event.orbs;
       state.round.scores = event.scores;

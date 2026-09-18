@@ -199,6 +199,11 @@ export class ArenaScene {
     this.markers.delete(id);
   }
 
+  setScore(id: string, score: number): void {
+    const flat = this.flats.get(id);
+    if (flat) flat.score = score;
+  }
+
   setOrbs(orbs: Orb[]): void {
     this.orbs = orbs;
     if (!this.webgl || !this.scene) return;
