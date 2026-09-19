@@ -32,7 +32,7 @@ Upstream is a full single-team Calendly alternative on Workers: booking pages, G
   - Scopes: `calendar.freebusy` + `calendar.events`.
   - Tokens encrypted-at-rest in D1 `host_google` for `HOST_ID`. Key: `TOKEN_ENCRYPTION_KEY` (falls back to `SIGNING_SECRET` if documented).
   - `/admin` Connect / Disconnect + connected account email (behind `ADMIN_API_KEY`).
-  - Availability merges D1 locks with Google freeBusy; busy slots hidden. KV TTL 30s when Google is in play.
+  - Availability merges D1 locks with Google freeBusy; busy slots hidden. KV TTL 60s (platform minimum).
   - Book creates a Calendar event (fail-soft: D1 lock wins, `google=failed`). Cancel deletes the event.
   - No Google secrets → OAuth 503 `google_disabled`; availability stays D1-only.
   - Optional `GOOGLE_MOCK_BUSY` JSON for local screenshots/smoke without OAuth.
@@ -89,7 +89,7 @@ Unchanged: Queues delay at most 24 h per hop; target = slot − 24 h; cancelled 
 - D1/KV/Queue/DO demo traffic is far below Paid included amounts.
 - Booking creates are rate-limited per IP (20 / 60s).
 - Resend and Google are BYOK; no call if the keys are missing.
-- freeBusy is one POST per availability miss (30s cache).
+- freeBusy is one POST per availability miss (60s KV cache).
 - No Containers, Browser Rendering, Vectorize, WFP, R2, Workers AI.
 
 ## Testing

@@ -84,4 +84,5 @@ export const GOOGLE_SCOPES = [
   "https://www.googleapis.com/auth/calendar.events",
 ].join(" ");
 
-export const GOOGLE_CACHE_TTL = 30;
+/** KV rejects TTLs under 60s. */
+export const GOOGLE_CACHE_TTL = 60;

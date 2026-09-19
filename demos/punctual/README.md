@@ -41,7 +41,7 @@ Queues can delay a message by at most **24 hours**.
 
 ```text
 browser ── HTTPS ──► Worker
-                      ├─ GET  /api/availability ──► KV (miss → D1 ∪ Google freeBusy)
+                      ├─ GET  /api/availability ──► KV 60s (miss → D1 ∪ Google freeBusy)
                       ├─ POST /api/book ──────────► RateLimit → Calendar DO
                       │                              Google event + Resend ICS (fail-soft)
                       │                              Queue reminder (delay)

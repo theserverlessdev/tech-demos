@@ -141,7 +141,7 @@ Default **off**. To connect the host calendar:
 
 When connected:
 
-- `GET /api/availability` hides slots that overlap Google freeBusy (30s KV TTL).
+- `GET /api/availability` hides slots that overlap Google freeBusy (60s KV TTL).
 - A successful book creates a Calendar event on `primary` (`google=sent`). If the write fails, the D1 lock still stands (`google=failed`).
 - Cancel deletes that event (404 is ignored).
 
