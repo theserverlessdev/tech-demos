@@ -99,7 +99,7 @@ export const demos: DemoEntry[] = [
     slug: "punctual",
     title: "Punctual",
     description:
-      "Self-host office-hours booking on Workers: D1 slot locks, a Durable Object serializer, KV cache, Queue reminders, Resend ICS mail, and signed cancel. Inspired by Punctual — original code, not a vendor.",
+      "Self-host office-hours booking on Workers: D1 slot locks, a Durable Object serializer, KV cache, Queue reminders, Resend ICS mail, signed cancel, and optional Google Calendar free/busy. Inspired by Punctual — original code, not a vendor.",
     tags: ["d1", "durable-objects", "kv", "queues"],
     source: punctualFallbackSource,
   },

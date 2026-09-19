@@ -32,7 +32,7 @@
       "subdomain": "https://punctual.tech-demos.theserverless.dev/",
       "worker": "tech-demos-punctual",
       "branch": "demo/punctual",
-      "notes": "Grown slice: Resend BYOK + ICS + signed cancel + admin list. Reminders are real mail or skipped without a key. Google/Microsoft OAuth still deferred."
+      "notes": "Grown slice: Resend BYOK + ICS + signed cancel + admin list + optional one-host Google Calendar free/busy and event write. Microsoft still deferred."
     },
     {
       "slug": "resolve-hq",

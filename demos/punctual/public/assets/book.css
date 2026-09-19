@@ -247,6 +247,7 @@ button { cursor: pointer; background: none; border: none; }
 .done__when { font-size: 16px; color: var(--text-strong); }
 .done__id { font-size: 12px; color: var(--muted); }
 
+.google { margin-bottom: 28px; padding-bottom: 20px; border-bottom: 1px solid var(--border); }
 .admin { max-width: 960px; }
 .table { width: 100%; border-collapse: collapse; font-size: 14px; }
 .table th, .table td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }

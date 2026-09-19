@@ -1,4 +1,4 @@
-import type { DayAvailability, Host, Slot } from "./types";
+import type { BusyInterval, DayAvailability, Host, Slot } from "./types";
 
 export const WEEKDAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 
@@ -139,8 +139,32 @@ export function slotsForDate(host: Host, date: string, now = Date.now()): Slot[]
   return slots;
 }
 
+export function slotOverlapsBusy(slot: Pick<Slot, "start" | "end">, busy: BusyInterval[]): boolean {
+  const a = Date.parse(slot.start);
+  const b = Date.parse(slot.end);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return false;
+  return busy.some((iv) => {
+    const start = Date.parse(iv.start);
+    const end = Date.parse(iv.end);
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return false;
+    return a < end && b > start;
+  });
+}
+
+export function availabilityWindow(host: Host, now = Date.now()): { timeMin: string; timeMax: string } {
+  return {
+    timeMin: new Date(now).toISOString(),
+    timeMax: new Date(now + (host.horizonDays + 2) * 24 * 60 * 60 * 1000).toISOString(),
+  };
+}
+
 /** `taken` is the set of booked slot_start ISO strings. */
-export function availabilityFromLocks(host: Host, taken: Set<string>, now = Date.now()): DayAvailability[] {
+export function availabilityFromLocks(
+  host: Host,
+  taken: Set<string>,
+  now = Date.now(),
+  busy: BusyInterval[] = [],
+): DayAvailability[] {
   const days: DayAvailability[] = [];
   const today = zonedParts(now, host.timezone);
   let cursor = zonedToUtc(host.timezone, today.year, today.month, today.day, 12, 0);
@@ -149,7 +173,7 @@ export function availabilityFromLocks(host: Host, taken: Set<string>, now = Date
     const p = zonedParts(cursor, host.timezone);
     if (openDays.has(p.weekday)) {
       const date = `${p.year}-${String(p.month).padStart(2, "0")}-${String(p.day).padStart(2, "0")}`;
-      const slots = slotsForDate(host, date, now).filter((slot) => !taken.has(slot.start));
+      const slots = slotsForDate(host, date, now).filter((slot) => !taken.has(slot.start) && !slotOverlapsBusy(slot, busy));
       if (slots.length > 0) {
         days.push({
           date,

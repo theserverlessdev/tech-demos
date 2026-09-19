@@ -11,6 +11,18 @@ type BookingRow = {
   status: BookingStatus;
   reminder_status: ReminderStatus;
   mail_status: MailStatus;
+  google_event_id?: string | null;
+  google_status?: MailStatus | null;
+};
+
+export type HostGoogleRow = {
+  host_id: string;
+  email: string;
+  access_token_enc: string;
+  refresh_token_enc: string;
+  token_expires_at: number;
+  scopes: string | null;
+  updated_at: number;
 };
 
 export function toBooking(row: BookingRow): Booking {
@@ -25,6 +37,8 @@ export function toBooking(row: BookingRow): Booking {
     status: row.status,
     reminderStatus: row.reminder_status,
     mailStatus: row.mail_status,
+    googleEventId: row.google_event_id ?? null,
+    googleStatus: row.google_status ?? "skipped",
   };
 }
 
@@ -140,4 +154,70 @@ export async function cancelBooking(db: D1Database, booking: Booking, now: numbe
       .bind(newId("rem"), booking.id, "cancel", "skipped", "Booking cancelled; slot unlocked.", now),
   ]);
   return true;
+}
+
+export async function setGoogleEvent(
+  db: D1Database,
+  bookingId: string,
+  eventId: string | null,
+  status: MailStatus,
+): Promise<void> {
+  await db
+    .prepare("UPDATE bookings SET google_event_id = ?, google_status = ? WHERE id = ?")
+    .bind(eventId, status, bookingId)
+    .run();
+}
+
+export async function getHostGoogle(db: D1Database, hostId: string): Promise<HostGoogleRow | null> {
+  return db.prepare("SELECT * FROM host_google WHERE host_id = ?").bind(hostId).first<HostGoogleRow>();
+}
+
+export async function upsertHostGoogle(
+  db: D1Database,
+  row: {
+    hostId: string;
+    email: string;
+    accessTokenEnc: string;
+    refreshTokenEnc: string;
+    tokenExpiresAt: number;
+    scopes: string;
+    now: number;
+  },
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO host_google (host_id, email, access_token_enc, refresh_token_enc, token_expires_at, scopes, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(host_id) DO UPDATE SET
+         email = excluded.email,
+         access_token_enc = excluded.access_token_enc,
+         refresh_token_enc = excluded.refresh_token_enc,
+         token_expires_at = excluded.token_expires_at,
+         scopes = excluded.scopes,
+         updated_at = excluded.updated_at`,
+    )
+    .bind(row.hostId, row.email, row.accessTokenEnc, row.refreshTokenEnc, row.tokenExpiresAt, row.scopes, row.now)
+    .run();
+}
+
+export async function updateHostGoogleAccess(
+  db: D1Database,
+  hostId: string,
+  accessTokenEnc: string,
+  tokenExpiresAt: number,
+  now: number,
+): Promise<void> {
+  await db
+    .prepare("UPDATE host_google SET access_token_enc = ?, token_expires_at = ?, updated_at = ? WHERE host_id = ?")
+    .bind(accessTokenEnc, tokenExpiresAt, now, hostId)
+    .run();
+}
+
+export async function deleteHostGoogle(db: D1Database, hostId: string): Promise<void> {
+  await db.prepare("DELETE FROM host_google WHERE host_id = ?").bind(hostId).run();
+}
+
+export async function isGoogleConnected(db: D1Database, hostId: string): Promise<boolean> {
+  const row = await db.prepare("SELECT host_id FROM host_google WHERE host_id = ?").bind(hostId).first<{ host_id: string }>();
+  return Boolean(row);
 }

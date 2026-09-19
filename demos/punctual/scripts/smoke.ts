@@ -1,5 +1,6 @@
 // Smoke: bun run scripts/smoke.ts [baseUrl]
-import type { Availability, BookResponse, Booking, Health } from "../src/shared/types";
+import { slotOverlapsBusy } from "../src/shared/schedule";
+import type { Availability, BookResponse, Booking, GoogleStatus, Health } from "../src/shared/types";
 
 const base = (process.argv.find((a) => a.startsWith("http")) ?? "http://127.0.0.1:8787").replace(/\/$/, "");
 const adminKey = process.env.ADMIN_API_KEY?.trim() || "dev-admin-key";
@@ -58,6 +59,17 @@ const health = await call<Health>("/health");
 check("health is ok", health.status === 200 && health.data?.ok === true, health.data);
 check("mail is fail-soft without Resend", health.data?.mail.resend === false, health.data?.mail);
 check("turnstile default off", health.data?.turnstile === false, health.data?.turnstile);
+check("google unconfigured without client secrets", health.data?.google.configured === false, health.data?.google);
+
+check(
+  "busy overlap helper",
+  slotOverlapsBusy({ start: "2026-09-19T16:00:00.000Z", end: "2026-09-19T16:30:00.000Z" }, [
+    { start: "2026-09-19T16:15:00.000Z", end: "2026-09-19T17:00:00.000Z" },
+  ]) &&
+    !slotOverlapsBusy({ start: "2026-09-19T16:00:00.000Z", end: "2026-09-19T16:30:00.000Z" }, [
+      { start: "2026-09-19T17:00:00.000Z", end: "2026-09-19T17:30:00.000Z" },
+    ]),
+);
 
 const host = await call<{ host: { id: string } }>("/host");
 check("host is ankur", host.status === 200 && host.data?.host.id === "ankur", host.data);
@@ -67,7 +79,22 @@ check("availability returns days with open slots", Boolean(avail1.data && avail1
   days: avail1.data?.days.length,
   firstOpen: avail1.data?.days[0]?.openCount,
   source: avail1.data?.source,
+  google: avail1.data?.google,
 });
+check("availability google is off without OAuth/mock", avail1.data?.google === "off" || avail1.data?.google === "merged", avail1.data?.google);
+
+const googleStart = await call<{ url?: string; error?: { code: string } }>("/google/start", {
+  method: "POST",
+  body: {},
+  headers: { authorization: `Bearer ${adminKey}` },
+});
+check("google start is 503 when unset", googleStart.status === 503 && (googleStart.data as { error?: { code: string } } | null)?.error?.code === "google_disabled", googleStart.data);
+
+const googleCb = await call("/google/callback");
+check("google callback is 503 when unset", googleCb.status === 503, googleCb.data);
+
+const googleStatus = await call<GoogleStatus>("/google/status", { headers: { authorization: `Bearer ${adminKey}` } });
+check("google status reports configured false", googleStatus.status === 200 && googleStatus.data?.configured === false && googleStatus.data.connected === false, googleStatus.data);
 
 const avail2 = await call<Availability>("/availability");
 check("second availability may be served from KV", avail2.status === 200 && Boolean(avail2.data?.days.length), avail2.data?.source);
@@ -102,6 +129,7 @@ check("concurrent book: one 409 slot_taken", loser.status === 409 && (loser.data
 });
 check("winner has a booking id", Boolean(winner?.data?.booking?.id), winner?.data);
 check("email skipped without Resend key", winner?.data?.mail.guest === "skipped", winner?.data?.mail);
+check("google write skipped when not connected", winner?.data?.google === "skipped", winner?.data?.google);
 check("ICS and cancel links returned", Boolean(winner?.data?.links.ics && winner?.data?.links.cancel), winner?.data?.links);
 
 const after = await call<Availability>("/availability");

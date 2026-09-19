@@ -22,10 +22,11 @@ Walkthrough stills and a short video: [artifacts/](./artifacts/).
 | **Queues** | Reminder ~24 h before the slot (max delay 24 h per hop). Status is `sent`, `skipped`, or `failed`. |
 | **RateLimit** | `BOOK_LIMIT` on `POST /api/book` (20 / 60s per IP). |
 | **Resend (BYOK)** | Confirmation + ICS to the guest, optional host notify, reminder, cancel. Missing key: booking still succeeds. |
+| **Google Calendar (BYOK)** | Host OAuth on `/admin`. freeBusy hides busy slots; a book writes an event. Missing secrets: D1-only, OAuth `503`. |
 
 The UI is a public page (day → slot → name/email → confirm) plus a light **Host list** behind `ADMIN_API_KEY`. Graphite & Ember branding matches the hub (ember `#c2410c`, background `#0e0e11`, LogoMark SVG).
 
-Hours, timezone, and slot length come from wrangler vars — not Google/Microsoft OAuth. ICS is the calendar interop.
+Hours and timezone come from wrangler vars. When Google is connected, free/busy is merged in. ICS remains the guest calendar file.
 
 ## Reminder behavior
 
@@ -40,10 +41,12 @@ Queues can delay a message by at most **24 hours**.
 
 ```text
 browser ── HTTPS ──► Worker
-                      ├─ GET  /api/availability ──► KV (miss → D1)
+                      ├─ GET  /api/availability ──► KV (miss → D1 ∪ Google freeBusy)
                       ├─ POST /api/book ──────────► RateLimit → Calendar DO
-                      │                              Resend confirm+ICS (fail-soft)
+                      │                              Google event + Resend ICS (fail-soft)
                       │                              Queue reminder (delay)
+                      ├─ POST /api/google/start ────── admin Bearer
+                      ├─ GET  /api/google/callback
                       ├─ GET  /api/bookings/:id/ics?t=
                       ├─ POST /api/bookings/:id/cancel?t=
                       └─ GET  /api/admin/bookings     Bearer ADMIN_API_KEY

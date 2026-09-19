@@ -39,6 +39,7 @@ const state = {
   turnstileSiteKey: null as string | null,
   days: [] as DayAvailability[],
   source: "d1" as "kv" | "d1",
+  google: "off" as "off" | "merged" | "failed",
   selectedDate: null as string | null,
   selectedStart: null as string | null,
   booking: null as Booking | null,
@@ -162,15 +163,22 @@ async function loadAvailability() {
   const data = await api<Availability>("/availability");
   state.days = data.days;
   state.source = data.source;
+  state.google = data.google ?? "off";
   state.selectedDate = data.days[0]?.date ?? null;
   renderDays();
   renderSlots();
   const n = data.days.reduce((sum, d) => sum + d.openCount, 0);
+  const googleNote =
+    data.google === "merged"
+      ? " Google busy times hidden."
+      : data.google === "failed"
+        ? " Google free/busy failed — showing D1 locks only."
+        : "";
   setStrip(
     data.source === "kv"
-      ? `KV cache hit · ${n} open slots across ${data.days.length} days.`
-      : `D1 miss-fill · ${n} open slots cached to KV.`,
-    data.source,
+      ? `KV cache hit · ${n} open slots across ${data.days.length} days.${googleNote}`
+      : `D1 miss-fill · ${n} open slots cached to KV.${googleNote}`,
+    data.google === "failed" ? "error" : data.source,
   );
 }
 
@@ -199,7 +207,13 @@ async function submit(event: Event) {
     state.mail = result.mail;
     $("done-when").textContent = formatSlotRange(result.booking.slotStart, result.booking.slotEnd, host);
     $("done-id").textContent = result.booking.id;
-    $("done-hint").textContent = mailCopy(result.mail);
+    const googleBit =
+      result.google === "sent"
+        ? " Google Calendar event created."
+        : result.google === "failed"
+          ? " Google Calendar write failed; the D1 lock still holds."
+          : "";
+    $("done-hint").textContent = mailCopy(result.mail) + googleBit;
     ($("done-ics") as HTMLAnchorElement).href = result.links.ics;
     ($("done-cancel") as HTMLAnchorElement).href = result.links.cancel;
     showView("done");

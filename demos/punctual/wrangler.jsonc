@@ -60,7 +60,9 @@
     "MAIL_FROM": "",
     "MAIL_FROM_NAME": "Punctual",
     "PUBLIC_ORIGIN": "https://punctual.tech-demos.theserverless.dev",
-    "TURNSTILE_SITE_KEY": ""
+    "TURNSTILE_SITE_KEY": "",
+    "GOOGLE_CLIENT_ID": "",
+    "GOOGLE_MOCK_BUSY": ""
   },
   "routes": [
     { "pattern": "tech-demos.theserverless.dev/demos/punctual*", "zone_name": "theserverless.dev" },

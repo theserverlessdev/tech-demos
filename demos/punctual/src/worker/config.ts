@@ -70,3 +70,18 @@ export function resendEnabled(env: { RESEND_API_KEY?: string; MAIL_FROM?: string
 export function turnstileEnabled(env: { TURNSTILE_SECRET_KEY?: string; TURNSTILE_SITE_KEY?: string }): boolean {
   return Boolean(env.TURNSTILE_SECRET_KEY?.trim() && env.TURNSTILE_SITE_KEY?.trim());
 }
+
+export function googleEnabled(env: { GOOGLE_CLIENT_ID?: string; GOOGLE_CLIENT_SECRET?: string }): boolean {
+  return Boolean(env.GOOGLE_CLIENT_ID?.trim() && env.GOOGLE_CLIENT_SECRET?.trim());
+}
+
+export function googleRedirectUri(env: { PUBLIC_ORIGIN?: string }, request: Request): string {
+  return `${publicBase(env, request)}/api/google/callback`;
+}
+
+export const GOOGLE_SCOPES = [
+  "https://www.googleapis.com/auth/calendar.freebusy",
+  "https://www.googleapis.com/auth/calendar.events",
+].join(" ");
+
+export const GOOGLE_CACHE_TTL = 30;

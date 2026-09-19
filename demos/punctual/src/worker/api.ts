@@ -2,6 +2,7 @@ import type { BookRequest, BookResponse, Booking, Health, HostPublic, MailResult
 import { calendarStub } from "./calendar";
 import {
   delaySecondsUntil,
+  googleEnabled,
   hostFromEnv,
   mailFrom,
   publicBase,
@@ -9,7 +10,17 @@ import {
   resendEnabled,
   turnstileEnabled,
 } from "./config";
-import { countBookings, countReminders, getBooking, listUpcoming, setMailStatus } from "./db";
+import { countBookings, countReminders, getBooking, isGoogleConnected, listUpcoming, setGoogleEvent, setMailStatus } from "./db";
+import {
+  adminRedirect,
+  createGoogleEvent,
+  deleteGoogleEvent,
+  disconnectGoogle,
+  googleStatus,
+  handleGoogleCallback,
+  parseMockBusy,
+  startGoogleOAuth,
+} from "./google";
 import { bookingIcs } from "./ics";
 import { sendCancelled, sendConfirmation } from "./mail";
 import { bearerToken, secretEquals, signingSecret, signToken, verifyToken } from "./sign";
@@ -124,6 +135,7 @@ export async function handleApi(request: Request, env: Env, pathname: string): P
       turnstile: turnstileEnabled(env),
       admin: Boolean(env.ADMIN_API_KEY?.trim()),
       signing: signingSecret(env).mode,
+      google: { configured: googleEnabled(env), connected: await isGoogleConnected(env.DB, host.id) },
     };
     return json(health);
   }
@@ -133,6 +145,7 @@ export async function handleApi(request: Request, env: Env, pathname: string): P
       host,
       turnstileSiteKey: env.TURNSTILE_SITE_KEY?.trim() || null,
       mailEnabled: resendEnabled(env),
+      google: (await isGoogleConnected(env.DB, host.id)) || parseMockBusy(env).length > 0 ? "merged" : "off",
     };
     return json(payload);
   }
@@ -163,10 +176,45 @@ export async function handleApi(request: Request, env: Env, pathname: string): P
     }
     const mailStatus: MailStatus = mail.guest === "sent" || mail.host === "sent" ? "sent" : mail.guest;
     await setMailStatus(env.DB, result.booking.id, mailStatus);
+    let google: MailStatus = "skipped";
+    try {
+      const created = await createGoogleEvent(env, host, result.booking);
+      google = created.status;
+      await setGoogleEvent(env.DB, result.booking.id, created.eventId, created.status);
+    } catch (err) {
+      console.error(JSON.stringify({ event: "google_book_error", error: String(err) }));
+      google = "failed";
+      await setGoogleEvent(env.DB, result.booking.id, null, "failed");
+    }
     await enqueueReminder(env, result.booking);
-    const booking = { ...result.booking, mailStatus };
-    const response: BookResponse = { booking, mail, links };
+    const booking = { ...result.booking, mailStatus, googleStatus: google };
+    const response: BookResponse = { booking, mail, google, links };
     return json(response, 201);
+  }
+
+  if (pathname === "/api/google/status" && method === "GET") {
+    await requireAdmin(env, request);
+    return json(await googleStatus(env, request));
+  }
+
+  if (pathname === "/api/google/start" && method === "POST") {
+    await requireAdmin(env, request);
+    if (!googleEnabled(env)) throw new HttpError(503, "google_disabled", "Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to connect Calendar.");
+    const url = await startGoogleOAuth(env, request);
+    return json({ url });
+  }
+
+  if (pathname === "/api/google/callback" && method === "GET") {
+    if (!googleEnabled(env)) throw new HttpError(503, "google_disabled", "Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to connect Calendar.");
+    const result = await handleGoogleCallback(env, request);
+    if (!result.ok) return adminRedirect(env, request, `google=error&reason=${encodeURIComponent(result.message)}`);
+    return adminRedirect(env, request, "google=connected");
+  }
+
+  if (pathname === "/api/google/disconnect" && method === "POST") {
+    await requireAdmin(env, request);
+    await disconnectGoogle(env);
+    return json({ connected: false });
   }
 
   if (pathname === "/api/admin/bookings" && method === "GET") {
@@ -204,6 +252,11 @@ export async function handleApi(request: Request, env: Env, pathname: string): P
         await sendCancelled(env, host, cancelled.booking);
       } catch (err) {
         console.error(JSON.stringify({ event: "cancel_mail_error", error: String(err) }));
+      }
+      try {
+        await deleteGoogleEvent(env, booking.googleEventId);
+      } catch (err) {
+        console.error(JSON.stringify({ event: "google_cancel_error", error: String(err) }));
       }
     }
     const current = cancelled.booking ?? booking;

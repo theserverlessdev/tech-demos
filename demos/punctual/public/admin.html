@@ -25,7 +25,7 @@
     </a>
     <div class="topbar__title">
       <h1>Upcoming</h1>
-      <p>Bearer ADMIN_API_KEY · cancel frees the slot</p>
+      <p>Bearer ADMIN_API_KEY · Google connect · cancel frees the slot</p>
     </div>
     <div class="topbar__actions">
       <a class="btn btn-ghost" href="./">Booking page</a>
@@ -45,6 +45,17 @@
     </form>
 
     <section id="list" hidden>
+      <section class="google" id="google-box">
+        <header class="book__head">
+          <h2>Google Calendar</h2>
+          <span class="count" id="google-state">Off</span>
+        </header>
+        <p class="hint" id="google-hint">Not connected. Availability is D1 slot locks only.</p>
+        <div class="confirm__row">
+          <button class="btn btn-primary" id="google-connect" type="button" hidden>Connect Google</button>
+          <button class="btn" id="google-disconnect" type="button" hidden>Disconnect</button>
+        </div>
+      </section>
       <header class="book__head">
         <h2>Confirmed</h2>
         <span class="count" id="count">0</span>
@@ -52,7 +63,7 @@
       <p class="empty" id="empty" hidden>No upcoming bookings.</p>
       <table class="table" id="table">
         <thead>
-          <tr><th>When</th><th>Guest</th><th>Mail</th><th>Reminder</th><th></th></tr>
+          <tr><th>When</th><th>Guest</th><th>Mail</th><th>Reminder</th><th>Google</th><th></th></tr>
         </thead>
         <tbody id="rows"></tbody>
       </table>

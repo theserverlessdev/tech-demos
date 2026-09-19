@@ -32,9 +32,17 @@ export type DayAvailability = {
   slots: Slot[];
 };
 
+export type BusyInterval = {
+  start: string;
+  end: string;
+};
+
+export type GoogleAvail = "off" | "merged" | "failed";
+
 export type Availability = {
   host: Host;
   source: "kv" | "d1";
+  google: GoogleAvail;
   days: DayAvailability[];
 };
 
@@ -49,6 +57,8 @@ export type Booking = {
   status: BookingStatus;
   reminderStatus: ReminderStatus;
   mailStatus: MailStatus;
+  googleEventId: string | null;
+  googleStatus: MailStatus;
 };
 
 export type BookRequest = {
@@ -70,6 +80,7 @@ export type MailResult = {
 export type BookResponse = {
   booking: Booking;
   mail: MailResult;
+  google: MailStatus;
   links: { ics: string; cancel: string };
 };
 
@@ -88,10 +99,20 @@ export type Health = {
   turnstile: boolean;
   admin: boolean;
   signing: "secret" | "dev-fallback";
+  google: { configured: boolean; connected: boolean };
 };
 
 export type HostPublic = {
   host: Host;
   turnstileSiteKey: string | null;
   mailEnabled: boolean;
+  google: GoogleAvail;
+};
+
+export type GoogleStatus = {
+  configured: boolean;
+  connected: boolean;
+  email: string | null;
+  redirectUri: string;
+  mock: boolean;
 };

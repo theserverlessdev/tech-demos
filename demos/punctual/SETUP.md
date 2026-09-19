@@ -1,12 +1,12 @@
 # Setup — punctual
 
-Self-host office-hours booking on **Workers Paid**. One host, one Worker. Guests get ICS mail (Resend BYOK), can cancel, and you can list upcoming bookings.
+Self-host office-hours booking on **Workers Paid**. One host, one Worker. Guests get ICS mail (Resend BYOK), can cancel, and you can list upcoming bookings. Optional Google Calendar connect hides busy times and writes events.
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/theserverlessdev/tech-demos/tree/main/demos/punctual)
 
 The button clones this folder. **Replace the D1 / KV IDs and routes** with resources on *your* account before the first deploy. The IDs in `wrangler.jsonc` belong to the hosted demo.
 
-This is **not** Workers for Platforms and **not** a multi-tenant SaaS. No Google/Microsoft OAuth in this slice — ICS is the calendar interop.
+This is **not** Workers for Platforms and **not** a multi-tenant SaaS. Microsoft Outlook is out of this slice. ICS remains the calendar interop when Google is unset.
 
 ---
 
@@ -35,6 +35,9 @@ openssl rand -hex 32 | bunx wrangler secret put SIGNING_SECRET
 openssl rand -hex 32 | bunx wrangler secret put ADMIN_API_KEY
 # optional real mail:
 bunx wrangler secret put RESEND_API_KEY
+# optional Google Calendar:
+# bunx wrangler secret put GOOGLE_CLIENT_SECRET
+# openssl rand -hex 32 | bunx wrangler secret put TOKEN_ENCRYPTION_KEY
 ```
 
 Then apply the grow migration if deploy did not: `CI=true bunx wrangler d1 migrations apply DB --remote`.
@@ -77,6 +80,8 @@ Remove or rewrite the `routes` array (those hostnames are the demo zone). `worke
 | `MAIL_FROM_NAME` | `Punctual` | From display name |
 | `PUBLIC_ORIGIN` | `https://book.example.com` | Canonical origin for ICS/cancel links in Queue mail |
 | `TURNSTILE_SITE_KEY` | *(empty)* | Public widget key. Leave empty to keep Turnstile **off**. |
+| `GOOGLE_CLIENT_ID` | OAuth client id | Public. Leave empty to keep Google **off**. |
+| `GOOGLE_MOCK_BUSY` | `[{"start":"…Z","end":"…Z"}]` | Local-only busy intervals when OAuth is unset. |
 
 ### 3. Secrets
 
@@ -86,7 +91,13 @@ openssl rand -hex 32 | bunx wrangler secret put ADMIN_API_KEY    # Bearer for /a
 bunx wrangler secret put RESEND_API_KEY                          # omit → bookings still succeed, mail skipped
 # optional:
 bunx wrangler secret put TURNSTILE_SECRET_KEY
+bunx wrangler secret put GOOGLE_CLIENT_SECRET
+openssl rand -hex 32 | bunx wrangler secret put TOKEN_ENCRYPTION_KEY
 ```
+
+`TOKEN_ENCRYPTION_KEY` encrypts Google refresh/access tokens in D1. If it is unset, the Worker falls back to `SIGNING_SECRET` (documented here so you know). Prefer a dedicated key.
+
+If `GOOGLE_CLIENT_ID` or `GOOGLE_CLIENT_SECRET` is missing, OAuth routes return `503 google_disabled`. Availability stays D1-only. Bookings still succeed; `google` on the book response is `skipped`.
 
 If `RESEND_API_KEY` or `MAIL_FROM` is missing, `POST /api/book` still returns `201`. The UI says email was skipped; `mail_status` / `reminder_status` stay `skipped` once the Queue consumer runs.
 
@@ -96,7 +107,7 @@ If `RESEND_API_KEY` or `MAIL_FROM` is missing, `POST /api/book` still returns `2
 bun run deploy    # build client, apply D1 migrations remotely, wrangler deploy
 ```
 
-Migrations: `0001_init.sql` (locks + bookings) then `0002_mail_cancel.sql` (status / mail / cancel).
+Migrations: `0001_init.sql` → `0002_mail_cancel.sql` → `0003_google.sql` (host tokens + `google_event_id`).
 
 ### 5. Optional Turnstile
 
@@ -108,6 +119,35 @@ Default **off**. To gate `POST /api/book`:
 4. Redeploy. The booking form loads the widget only when the site key is set.
 
 Rate limit `BOOK_LIMIT` stays on regardless.
+
+### 6. Optional Google Calendar
+
+Default **off**. To connect the host calendar:
+
+1. In [Google Cloud Console](https://console.cloud.google.com/apis/credentials) create an OAuth **Web application** client.
+2. Enable the **Google Calendar API**.
+3. Authorized redirect URI (exact):
+
+   `${PUBLIC_ORIGIN}/api/google/callback`
+
+   Examples:
+
+   - `https://punctual.tech-demos.theserverless.dev/api/google/callback`
+   - `http://127.0.0.1:8787/api/google/callback` (local)
+
+4. Put the client id in `GOOGLE_CLIENT_ID` (wrangler var). `bunx wrangler secret put GOOGLE_CLIENT_SECRET`.
+5. Set `TOKEN_ENCRYPTION_KEY`. Redeploy.
+6. Open `/admin`, unlock with `ADMIN_API_KEY`, click **Connect Google**. Scopes: `calendar.freebusy` + `calendar.events`.
+
+When connected:
+
+- `GET /api/availability` hides slots that overlap Google freeBusy (30s KV TTL).
+- A successful book creates a Calendar event on `primary` (`google=sent`). If the write fails, the D1 lock still stands (`google=failed`).
+- Cancel deletes that event (404 is ignored).
+
+Disconnect from `/admin` deletes the encrypted tokens and invalidates KV.
+
+`GOOGLE_MOCK_BUSY` is a local screenshot/smoke hook only. It hides intervals without OAuth and does not write events.
 
 ---
 

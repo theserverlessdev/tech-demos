@@ -1,8 +1,9 @@
 import { DurableObject } from "cloudflare:workers";
-import { availabilityFromLocks, findGeneratedSlot } from "../shared/schedule";
+import { availabilityFromLocks, findGeneratedSlot, slotOverlapsBusy } from "../shared/schedule";
 import type { Availability, BookRequest, BookResult } from "../shared/types";
-import { hostFromEnv } from "./config";
+import { GOOGLE_CACHE_TTL, hostFromEnv } from "./config";
 import { cancelBooking, getBooking, insertBooking, isUniqueError, listTakenStarts, newId } from "./db";
+import { loadBusyIntervals, queryFreeBusy } from "./google";
 
 const CACHE_KEY = (hostId: string) => `avail:${hostId}`;
 const CACHE_TTL = 60;
@@ -12,13 +13,15 @@ export class Calendar extends DurableObject<Env> {
     const host = hostFromEnv(this.env);
     const cached = await this.env.CACHE.get(CACHE_KEY(host.id), "json");
     if (cached && typeof cached === "object") {
-      return { ...(cached as Omit<Availability, "source">), source: "kv", host };
+      const hit = cached as Omit<Availability, "source">;
+      return { ...hit, source: "kv", host, google: hit.google ?? "off" };
     }
     const taken = await listTakenStarts(this.env.DB, host.id);
-    const days = availabilityFromLocks(host, taken);
-    const payload: Availability = { host, source: "d1", days };
-    await this.env.CACHE.put(CACHE_KEY(host.id), JSON.stringify({ host, days }), {
-      expirationTtl: CACHE_TTL,
+    const { google, busy } = await loadBusyIntervals(this.env, host);
+    const days = availabilityFromLocks(host, taken, Date.now(), busy);
+    const payload: Availability = { host, source: "d1", google, days };
+    await this.env.CACHE.put(CACHE_KEY(host.id), JSON.stringify({ host, google, days }), {
+      expirationTtl: google === "off" ? CACHE_TTL : GOOGLE_CACHE_TTL,
     });
     return payload;
   }
@@ -33,6 +36,18 @@ export class Calendar extends DurableObject<Env> {
         code: past ? "slot_past" : "slot_invalid",
         message: past ? "That slot is already in the past." : "That slot is not on this calendar.",
       };
+    }
+
+    const { busy } = await loadBusyIntervals(this.env, host);
+    if (slotOverlapsBusy(slot, busy)) {
+      await this.env.CACHE.delete(CACHE_KEY(host.id));
+      return { ok: false, code: "slot_taken", message: "That slot is busy on Google Calendar. Pick another time." };
+    }
+
+    const live = await queryFreeBusy(this.env, host, { timeMin: slot.start, timeMax: slot.end });
+    if (live.ok && slotOverlapsBusy(slot, live.busy)) {
+      await this.env.CACHE.delete(CACHE_KEY(host.id));
+      return { ok: false, code: "slot_taken", message: "That slot is busy on Google Calendar. Pick another time." };
     }
 
     const id = newId("bk");

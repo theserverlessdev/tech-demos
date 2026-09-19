@@ -1,4 +1,4 @@
-import type { Booking, HostPublic } from "../shared/types";
+import type { Booking, GoogleStatus, HostPublic } from "../shared/types";
 import { formatSlotRange } from "../shared/schedule";
 
 const API_BASE = location.pathname.startsWith("/demos/punctual") ? "/demos/punctual" : "";
@@ -20,6 +20,45 @@ async function call<T>(path: string, key: string, init: { method?: string; body?
   return { status: res.status, data: res.ok ? (json as T) : null, message };
 }
 
+function renderGoogle(status: GoogleStatus | null, params: URLSearchParams) {
+  const connect = $("google-connect") as HTMLButtonElement;
+  const disconnect = $("google-disconnect") as HTMLButtonElement;
+  const hint = $("google-hint");
+  const badge = $("google-state");
+  connect.hidden = true;
+  disconnect.hidden = true;
+  if (params.get("google") === "connected") {
+    hint.textContent = "Google Calendar connected. Busy times are hidden on the public page.";
+    hint.dataset.tone = "ok";
+  } else if (params.get("google") === "error") {
+    hint.textContent = `Google connect failed: ${params.get("reason") || "unknown"}.`;
+    hint.dataset.tone = "error";
+  } else {
+    delete hint.dataset.tone;
+  }
+  if (!status) {
+    badge.textContent = "Unknown";
+    hint.textContent = hint.textContent || "Could not load Google status.";
+    return;
+  }
+  if (!status.configured) {
+    badge.textContent = status.mock ? "Mock" : "Off";
+    hint.textContent = status.mock
+      ? "GOOGLE_MOCK_BUSY is set. Slots in those intervals are hidden. OAuth stays off until you set client secrets."
+      : `Google is off. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET, then add redirect URI ${status.redirectUri}`;
+    return;
+  }
+  if (status.connected) {
+    badge.textContent = "On";
+    hint.textContent = `Connected as ${status.email ?? "primary"}. Busy times are hidden; new bookings write a Calendar event.`;
+    disconnect.hidden = false;
+    return;
+  }
+  badge.textContent = "Ready";
+  hint.textContent = `Redirect URI: ${status.redirectUri}`;
+  connect.hidden = false;
+}
+
 async function load(key: string) {
   $("hint").textContent = "Loading…";
   const host = await call<HostPublic>("/host", key);
@@ -29,18 +68,20 @@ async function load(key: string) {
     $("hint").dataset.tone = "error";
     return;
   }
+  const google = await call<GoogleStatus>("/google/status", key);
   const bookings = list.data?.bookings ?? [];
   $("gate").hidden = true;
   $("list").hidden = false;
   $("count").textContent = String(bookings.length);
   $("empty").hidden = bookings.length > 0;
+  renderGoogle(google.data, new URLSearchParams(location.search));
   const hostInfo = host.data?.host;
   const rows = $("rows");
   rows.replaceChildren(
     ...bookings.map((booking) => {
       const tr = document.createElement("tr");
       const when = hostInfo ? formatSlotRange(booking.slotStart, booking.slotEnd, hostInfo) : booking.slotStart;
-      tr.innerHTML = `<td>${when}</td><td>${booking.guestName}<br><span class="mono">${booking.guestEmail}</span></td><td>${booking.mailStatus}</td><td>${booking.reminderStatus}</td>`;
+      tr.innerHTML = `<td>${when}</td><td>${booking.guestName}<br><span class="mono">${booking.guestEmail}</span></td><td>${booking.mailStatus}</td><td>${booking.reminderStatus}</td><td>${booking.googleStatus ?? "skipped"}</td>`;
       const td = document.createElement("td");
       const btn = document.createElement("button");
       btn.className = "btn";
@@ -66,6 +107,23 @@ $("gate").addEventListener("submit", async (event) => {
   } catch {
     /* ignore */
   }
+  await load(key);
+});
+
+$("google-connect").addEventListener("click", async () => {
+  const key = sessionStorage.getItem(KEY) || ($("key") as HTMLInputElement).value.trim();
+  const start = await call<{ url: string }>("/google/start", key, { method: "POST", body: {} });
+  if (!start.data?.url) {
+    $("google-hint").textContent = start.message;
+    $("google-hint").dataset.tone = "error";
+    return;
+  }
+  location.href = start.data.url;
+});
+
+$("google-disconnect").addEventListener("click", async () => {
+  const key = sessionStorage.getItem(KEY) || ($("key") as HTMLInputElement).value.trim();
+  await call("/google/disconnect", key, { method: "POST", body: {} });
   await load(key);
 });
 
