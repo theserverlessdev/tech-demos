@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark light" />
+  <meta name="theme-color" content="#0e0e11" />
+  <title>Host list · Punctual</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Hanken+Grotesk:wght@400..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script src="./assets/theme.js"></script>
+  <link rel="stylesheet" href="./assets/book.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="./" aria-label="Punctual booking">
+      <svg class="brand__mark" width="26" height="26" viewBox="0 -3 128 128" aria-hidden="true">
+        <g stroke="currentColor" stroke-width="6" stroke-linecap="round" opacity="0.45"><line x1="4" y1="58" x2="20" y2="58"/><line x1="1" y1="72" x2="19" y2="72"/><line x1="6" y1="86" x2="22" y2="86"/></g>
+        <path d="M44 92 C31 92 20 82 20 69 C20 57 29 47 41 46 C45 33 57 24 70 24 C85 24 98 35 100 51 C110 53 118 62 118 72 C118 83 109 92 97 92 Z" fill="none" stroke="currentColor" stroke-width="7.5" stroke-linejoin="round"/>
+        <path d="M69 36 L50 71 L63 71 L57 102 L88 60 L72 60 L80 36 Z" fill="currentColor"/>
+      </svg>
+      <span>Punctual</span>
+    </a>
+    <div class="topbar__title">
+      <h1>Upcoming</h1>
+      <p>Bearer ADMIN_API_KEY · Google connect · cancel frees the slot</p>
+    </div>
+    <div class="topbar__actions">
+      <a class="btn btn-ghost" href="./">Booking page</a>
+    </div>
+  </header>
+
+  <main class="book admin">
+    <form class="confirm" id="gate">
+      <p class="eyebrow">Host</p>
+      <h2>Unlock the list</h2>
+      <p class="hint">Paste the Worker secret ADMIN_API_KEY. It stays in this browser only.</p>
+      <label>Admin key
+        <input id="key" type="password" autocomplete="off" required />
+      </label>
+      <p class="hint" id="hint" role="status"></p>
+      <button class="btn btn-primary" type="submit">Load bookings</button>
+    </form>
+
+    <section id="list" hidden>
+      <section class="google" id="google-box">
+        <header class="book__head">
+          <h2>Google Calendar</h2>
+          <span class="count" id="google-state">Off</span>
+        </header>
+        <p class="hint" id="google-hint">Not connected. Availability is D1 slot locks only.</p>
+        <div class="confirm__row">
+          <button class="btn btn-primary" id="google-connect" type="button" hidden>Connect Google</button>
+          <button class="btn" id="google-disconnect" type="button" hidden>Disconnect</button>
+        </div>
+      </section>
+      <header class="book__head">
+        <h2>Confirmed</h2>
+        <span class="count" id="count">0</span>
+      </header>
+      <p class="empty" id="empty" hidden>No upcoming bookings.</p>
+      <table class="table" id="table">
+        <thead>
+          <tr><th>When</th><th>Guest</th><th>Mail</th><th>Reminder</th><th>Google</th><th></th></tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </section>
+  </main>
+
+  <script type="module" src="./assets/admin.js"></script>
+</body>
+</html>

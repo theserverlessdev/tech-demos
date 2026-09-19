@@ -1,6 +1,39 @@
 {
-  "proposed": [],
+  "proposed": [
+    {
+      "slug": "punctual",
+      "status": "live-pending-merge",
+      "pr": "https://github.com/theserverlessdev/tech-demos/pull/7",
+      "buildVia": "cloud-agent",
+      "tech": "CCCrafts/punctual",
+      "repo": "https://github.com/CCCrafts/punctual",
+      "liveUrl": "https://tech-demos.theserverless.dev/demos/punctual/"
+    },
+    {
+      "slug": "goodvibes",
+      "status": "building",
+      "buildVia": "cloud-agent",
+      "tech": "benallfree/goodvibes",
+      "repo": "https://github.com/benallfree/goodvibes",
+      "approvedAt": "2026-09-18T11:48:37Z"
+    }
+  ],
   "built": [
+    {
+      "slug": "punctual",
+      "repo": "https://github.com/CCCrafts/punctual",
+      "title": "Punctual",
+      "source": "approved-slice",
+      "approved_at": "2026-09-18",
+      "why": "Self-host Calendly-class scheduler on Workers; demo the Paid-plan binding story (D1 slot_locks + Durable Object + KV + Queues) without WFP or calendar OAuth",
+      "built_at": "2026-09-18",
+      "path": "demos/punctual",
+      "url": "https://tech-demos.theserverless.dev/demos/punctual/",
+      "subdomain": "https://punctual.tech-demos.theserverless.dev/",
+      "worker": "tech-demos-punctual",
+      "branch": "demo/punctual",
+      "notes": "Grown slice: Resend BYOK + ICS + signed cancel + admin list + optional one-host Google Calendar free/busy and event write. Microsoft still deferred."
+    },
     {
       "slug": "resolve-hq",
       "repo": "https://github.com/mirza-rizvi/ResolveHQ",
@@ -68,5 +101,14 @@
       "why": "Serverless vector DB API on Workers AI + Vectorize + D1",
       "reason": "user asked for more complicated/impressive"
     }
-  ]
+  ],
+  "candidates_known": [
+    "goodvibes",
+    "punctual"
+  ],
+  "_meta": {
+    "updatedBy": "tech-demos-bot",
+    "updatedAt": "2026-09-18T11:49:36Z",
+    "note": "punctual live"
+  }
 }
