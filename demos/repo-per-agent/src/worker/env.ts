@@ -1,5 +1,4 @@
 import type { ActivityRow, CommitSummary, TaskSummary } from "../shared/types";
-import type { TaskAgent } from "./agent";
 
 /** Control-plane handle. File bytes move through Git smart HTTP, not this binding. */
 export type ArtifactsRepo = {
@@ -44,20 +43,7 @@ export type ArtifactsBinding = {
   list(opts?: { limit?: number; cursor?: string }): Promise<{ repos?: { name: string; status?: string }[] }>;
 };
 
-export interface DemoEnv {
-  ASSETS: Fetcher;
-  AI: Ai;
-  DB: D1Database;
-  ARTIFACTS: ArtifactsBinding;
-  TaskAgent: DurableObjectNamespace<TaskAgent>;
-  CREATE_LIMIT: RateLimit;
-  RUN_LIMIT: RateLimit;
-  TOKEN_LIMIT: RateLimit;
-  AI_MODEL: string;
-  TASK_TTL_SECONDS: string;
-  MAX_TASKS_PER_VISITOR: string;
-  TURNSTILE_SITE_KEY: string;
-  TURNSTILE_SECRET?: string;
-}
+/** Bindings from `wrangler types`. The Artifacts aliases below are the subset this worker calls. */
+export interface DemoEnv extends Env {}
 
 export type { ActivityRow, CommitSummary, TaskSummary };

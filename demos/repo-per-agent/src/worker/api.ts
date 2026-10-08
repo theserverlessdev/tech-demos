@@ -142,15 +142,15 @@ export async function handleApi(request: Request, env: DemoEnv, path: string): P
 
 async function route(request: Request, env: DemoEnv, path: string, visitorId: string): Promise<Response> {
   if (request.method === "GET" && path === "/api/health") return health(env);
-  if (request.method === "GET" && path === "/api/session") return session(env, visitorId);
+  if (request.method === "GET" && path === "/api/session") return session(request, env, visitorId);
   if (request.method === "POST" && path === "/api/tasks") return createTask(request, env, visitorId);
 
   const taskPath = taskIdFrom(path);
   if (!taskPath) throw new HttpError(404, "not_found", "Unknown API path.");
 
-  if (request.method === "GET" && taskPath.rest === "") return taskDetail(env, visitorId, taskPath.id);
+  if (request.method === "GET" && taskPath.rest === "") return taskDetail(request, env, visitorId, taskPath.id);
   const commit = taskPath.rest.match(/^commits\/([0-9a-f]{40})$/);
-  if (request.method === "GET" && commit?.[1]) return commitDetail(env, visitorId, taskPath.id, commit[1]);
+  if (request.method === "GET" && commit?.[1]) return commitDetail(request, env, visitorId, taskPath.id, commit[1]);
   if (request.method === "POST" && taskPath.rest === "run") return runTask(request, env, visitorId, taskPath.id);
   if (request.method === "POST" && taskPath.rest === "token") return mintToken(request, env, visitorId, taskPath.id);
   throw new HttpError(404, "not_found", "Unknown API path.");
@@ -168,7 +168,8 @@ async function health(env: DemoEnv): Promise<Response> {
   return json({ ok: artifacts === "ok", artifacts, turnstile: turnstileConfigured(env) });
 }
 
-async function session(env: DemoEnv, visitorId: string): Promise<Response> {
+async function session(request: Request, env: DemoEnv, visitorId: string): Promise<Response> {
+  await limit(env.READ_LIMIT, request);
   const { ttl, maxTasks } = numbers(env);
   const tasks = await listTasks(env, visitorId, Date.now());
   return json({
@@ -269,7 +270,8 @@ async function wakeAgent(env: DemoEnv, id: string): Promise<void> {
   }
 }
 
-async function taskDetail(env: DemoEnv, visitorId: string, id: string): Promise<Response> {
+async function taskDetail(request: Request, env: DemoEnv, visitorId: string, id: string): Promise<Response> {
+  await limit(env.READ_LIMIT, request);
   const task = await requireTask(env, visitorId, id);
   const [activity, commits] = await Promise.all([
     listActivity(env, id),
@@ -283,7 +285,8 @@ async function taskDetail(env: DemoEnv, visitorId: string, id: string): Promise<
   return json(body);
 }
 
-async function commitDetail(env: DemoEnv, visitorId: string, id: string, hash: string): Promise<Response> {
+async function commitDetail(request: Request, env: DemoEnv, visitorId: string, id: string, hash: string): Promise<Response> {
+  await limit(env.READ_LIMIT, request);
   const task = await requireTask(env, visitorId, id);
   const detail = await withRepo(env.ARTIFACTS, task.repoName, async (repo) => {
     const history = asCommits(await repo.log({ ref: "main", limit: 20 }));

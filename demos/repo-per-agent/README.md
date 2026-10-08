@@ -1,5 +1,7 @@
 # Repo per agent
 
+Live at [tech-demos.theserverless.dev/demos/repo-per-agent](https://tech-demos.theserverless.dev/demos/repo-per-agent/).
+
 One [Agents SDK](https://developers.cloudflare.com/agents/) agent and one [Cloudflare Artifacts](https://developers.cloudflare.com/artifacts/) git repository per task. Workers AI edits a three-file tree. The page shows the commit log, a unified diff, and a ten-minute read-only `git clone` token.
 
 Inspired by [choyiny/gitorange](https://github.com/choyiny/gitorange) (Apache-2.0, by choyiny). The note that pointed at Artifacts: [x.com/haipingfu/status/2107011097039605909](https://x.com/haipingfu/status/2107011097039605909).
@@ -9,7 +11,7 @@ Inspired by [choyiny/gitorange](https://github.com/choyiny/gitorange) (Apache-2.
 - Artifacts namespace `tech-demos` on the Workers Paid account. Creating a repo, pushing a commit, and reading it back was verified before this demo was written.
 - The agent commits through Git smart HTTP (`git-receive-pack`). The Artifacts binding creates repos, reads trees, and mints tokens. It does not write file bytes.
 - D1 stores the task and the activity rows. A cron deletes expired repos and those rows.
-- Turnstile is checked on create and run. Rate limits cover create, run, and token mint. A browser cookie can hold 3 live repos.
+- Turnstile is checked on create and run. Rate limits cover create (7381), run (7382), token mint (7383), and reads (7384). A browser cookie can hold 3 live repos.
 
 Workers AI authors the commit. If the model fails or returns the same file, nothing is committed.
 
@@ -43,6 +45,8 @@ Resources already created on the account:
 | Turnstile widget | `tech-demos-repo-per-agent`, site key `0x4AAAAAAFRUoj5qDpf7XyIW` |
 
 Routes: `tech-demos.theserverless.dev/demos/repo-per-agent*` and `repo-per-agent.tech-demos.theserverless.dev/*`.
+
+Rate-limit namespaces in this config are 7381–7384. The worker that is live still uses 7341–7343 until the next deploy of this file. `bun run typecheck` runs `wrangler types` before `tsc`, so a clean clone does not need a committed `worker-configuration.d.ts`.
 
 Secret (do not commit it):
 
