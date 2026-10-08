@@ -156,7 +156,7 @@ Vars in `wrangler.jsonc`:
 | `TEAM_DOMAIN` | `https://theserverlessdev.cloudflareaccess.com` |
 | `POLICY_AUD` | `3d1c9fc7ef7c5c384934b5edd070862ba4405742c2a020a449cd907f4fb54574` |
 | `ADMIN_EMAIL` | `hello@anks.in` |
-| `CF_ZONE_ID` | Zone id of `theserverless.dev`. Replace `replace-with-zone-id`. |
+| `CF_ZONE_ID` | `e60a45645a0c2f830636bfe7c121ca86` |
 | `ROUTING_WORKER_NAME` | `agent-mail` |
 
 `ADMIN_EMAIL` is the bootstrap address. The first valid Access login with that email creates the admin row. An empty value creates nobody. Change the var before that first login if you want a different admin.
@@ -170,17 +170,51 @@ bunx wrangler secret put WEBHOOK_KEY
 
 `WEBHOOK_KEY` encrypts webhook secrets and signs panel forms.
 
-Optional routing token. Create a second token with only this permission:
+Optional routing token. Production uses an account-owned token named `agent-mail-routing`. Create it with the API. Its only permission is Email Routing Rules Write, and that permission is scoped to zone `e60a45645a0c2f830636bfe7c121ca86` (`theserverless.dev`). Do not add any other permission group.
 
-- Zone `theserverless.dev`: Email Routing Rules:Edit
+Look up the permission group id, then create the token. The secret in the response is shown once. Store it as `CF_ROUTING_TOKEN`. Do not commit it.
+
+```bash
+curl "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/tokens/permission_groups" \
+  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+```
+
+Use the group whose name is `Email Routing Rules Write`. Then:
+
+```bash
+curl "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/tokens" \
+  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "agent-mail-routing",
+    "policies": [{
+      "effect": "allow",
+      "resources": { "com.cloudflare.api.account.zone.e60a45645a0c2f830636bfe7c121ca86": "*" },
+      "permission_groups": [{ "id": "EMAIL_ROUTING_RULES_WRITE_GROUP_ID" }]
+    }]
+  }'
+```
+
+The dashboard label for that same permission is Zone > Email Routing Rules:Edit.
 
 ```bash
 bunx wrangler secret put CF_ROUTING_TOKEN
 ```
 
-Put the zone id of `theserverless.dev` in `CF_ZONE_ID` before you set the secret. The zone id is on the zone Overview page. `ROUTING_WORKER_NAME` is `agent-mail`.
+`CF_ZONE_ID` is already `e60a45645a0c2f830636bfe7c121ca86`. `ROUTING_WORKER_NAME` is `agent-mail`.
 
 When the secret is unset, inbox create still succeeds. The panel shows `routing rule missing: add it in Cloudflare` and the literal rule, for example `rescue@agents.theserverless.dev -> worker agent-mail`.
+
+An `INSERT` straight into D1 does not run that path. `inboxes.routing_rule_id` stays null, and Cloudflare gets no literal rule. After you add the rule by hand, set `routing_rule_id` to that rule's id. Prefer the panel, or `scripts/provision.ts`, which calls the same admin handlers. The script writes the API key to a file and does not print it.
+
+```bash
+bun run dev
+bun scripts/provision.ts --name Rescue --local rescue --out ./rescue.key
+```
+
+`bun run dev` must already be running. On `127.0.0.1` the Worker signs in as `DEV_PANEL_EMAIL`. Do not commit `rescue.key`.
+
+Against production, set `ORIGIN=https://agents.theserverless.dev` and `ACCESS_JWT` to a Cloudflare Access token for an invited user. The script sends it as `Cf-Access-Jwt-Assertion`.
 
 Never set `ENVIRONMENT=test` in production. That switch trusts the test signing key.
 

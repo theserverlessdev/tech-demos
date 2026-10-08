@@ -30,8 +30,8 @@
     "POLICY_AUD": "3d1c9fc7ef7c5c384934b5edd070862ba4405742c2a020a449cd907f4fb54574",
     // First admin. Change this var to bootstrap a different email. The Worker reads the var.
     "ADMIN_EMAIL": "hello@anks.in",
-    // Zone id for theserverless.dev. Copy it from the zone Overview page.
-    "CF_ZONE_ID": "replace-with-zone-id",
+    // Zone id for theserverless.dev. This is an id, not a secret.
+    "CF_ZONE_ID": "e60a45645a0c2f830636bfe7c121ca86",
     "ROUTING_WORKER_NAME": "agent-mail"
   },
   "triggers": { "crons": ["17 * * * *"] },
@@ -60,7 +60,7 @@
         "TEAM_DOMAIN": "https://theserverlessdev.cloudflareaccess.com",
         "POLICY_AUD": "3d1c9fc7ef7c5c384934b5edd070862ba4405742c2a020a449cd907f4fb54574",
         "ADMIN_EMAIL": "hello@anks.in",
-        "CF_ZONE_ID": "replace-with-zone-id",
+        "CF_ZONE_ID": "e60a45645a0c2f830636bfe7c121ca86",
         "ROUTING_WORKER_NAME": "agent-mail"
       }
     }
