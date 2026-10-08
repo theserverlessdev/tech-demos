@@ -83,6 +83,17 @@ const resolveHqFallbackSource = `export default {
 };
 `;
 
+// personal-agent is a standalone Worker (Agents SDK Durable Object, R2, Workers AI).
+// The zone route wins, and this source only redirects if that route is missing.
+const personalAgentFallbackSource = `export default {
+  fetch(request) {
+    const url = new URL(request.url);
+    const rest = url.pathname.replace(/^\\/demos\\/personal-agent/, "") || "/";
+    return Response.redirect("https://personal-agent.tech-demos.theserverless.dev" + rest + url.search, 302);
+  },
+};
+`;
+
 export const demos: DemoEntry[] = [
   {
     slug: "resolve-hq",
@@ -122,6 +133,14 @@ export const demos: DemoEntry[] = [
     description: "Minimal HTML demo loaded via the hub Worker Loader.",
     tags: ["dynamic-workers", "starter"],
     source: helloDynamicSource,
+  },
+  {
+    slug: "personal-agent",
+    title: "Personal agent",
+    description:
+      "An anonymous assistant with one Durable Object per visitor. Markdown notes live in R2, recall runs in DO SQLite, and a research call fetches a few allowlisted pages.",
+    tags: ["agents-sdk", "durable-objects", "r2", "workers-ai"],
+    source: personalAgentFallbackSource,
   },
 ];
 
