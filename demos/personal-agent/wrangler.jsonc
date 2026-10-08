@@ -33,11 +33,10 @@
     // Empty in production. .dev.vars sets "local" so the Turnstile test secret
     // works under wrangler dev, which rewrites Host to the first route.
     "ENVIRONMENT": "",
-    // Public site key. Empty until the owner sets a real widget key.
-    // Local dev overrides this from .dev.vars with Cloudflare's always-pass test key.
-    "TURNSTILE_SITE_KEY": ""
+    // Public widget key. Local .dev.vars overrides this with the always-pass test key.
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFRgrYxN6MUtsC0C"
   },
-  // Secret (never commit): TURNSTILE_SECRET
+  "secrets": { "required": ["TURNSTILE_SECRET"] },
   "routes": [
     { "pattern": "tech-demos.theserverless.dev/demos/personal-agent*", "zone_name": "theserverless.dev" },
     { "pattern": "personal-agent.tech-demos.theserverless.dev/*", "zone_name": "theserverless.dev" }

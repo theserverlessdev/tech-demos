@@ -2,7 +2,7 @@
 
 An anonymous personal assistant on Cloudflare Workers. This is a **small demo** inspired by [DomWane/workers-personal-agent](https://github.com/DomWane/workers-personal-agent) by DomWane (MIT), not a fork of that app. The post that pointed at the upstream repo is [on X](https://x.com/tonycasavan/status/2101803028315537806).
 
-- **Hub path:** <https://tech-demos.theserverless.dev/demos/personal-agent/>
+- **Live:** <https://tech-demos.theserverless.dev/demos/personal-agent/>
 - **Subdomain:** <https://personal-agent.tech-demos.theserverless.dev/>
 - **Plan:** [PLAN.md](./PLAN.md)
 - **What changed vs upstream:** [CHANGELOG.md](./CHANGELOG.md)
@@ -44,12 +44,7 @@ bun run dev
 
 `.dev.vars` holds Cloudflare's [always-pass Turnstile test keys](https://developers.cloudflare.com/turnstile/troubleshooting/testing/) and `ENVIRONMENT=local`. The widget token for those keys is `XXXX.DUMMY.TOKEN.XXXX`. `wrangler dev` rewrites the Host header to the first production route, so the test secret is accepted only when `ENVIRONMENT` is `local` or the host really is localhost. Production `wrangler.jsonc` leaves `ENVIRONMENT` empty, and the Worker rejects the test secret there.
 
-Typecheck needs generated bindings (`worker-configuration.d.ts` is gitignored):
-
-```bash
-bun run cf-typegen
-bun run typecheck
-```
+`bun run typecheck` runs `wrangler types` before `tsc`, so a clean clone does not need a committed `worker-configuration.d.ts`. `TURNSTILE_SECRET` is listed under `secrets.required`, which is what puts it on `Env`.
 
 Then, in another shell:
 
@@ -61,25 +56,19 @@ The test secret is refused when the request host is not localhost. A deployed Wo
 
 ## Deploy
 
-Needs R2, a SQLite Durable Object, Workers AI, rate-limit bindings, and Turnstile (Paid). From this folder, with the owner account (unset any other `CF_API_TOKEN`):
+Live Worker `tech-demos-personal-agent`. The R2 bucket `tech-demos-personal-agent` exists. `TURNSTILE_SITE_KEY` in `wrangler.jsonc` is the public widget key. `TURNSTILE_SECRET` is a Worker secret (already set on the live Worker; never commit it).
+
+Rate-limit namespace ids are `7404` (chat and note writes), `7405` (research), and `7406` (reads). Those do not overlap main (`7301`–`7331`) or the open demo PRs (`7341`–`7344`, `7351`–`7353`, `7361`–`7364`, `7371`–`7374`, `7381`–`7384`, `7391`–`7394`, `7411`–`7412`).
+
+To rotate the Turnstile secret or redeploy, from this folder, with the owner account (unset any other `CF_API_TOKEN`):
 
 ```bash
 cd demos/personal-agent
-env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bunx wrangler whoami
-env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bunx wrangler r2 bucket create tech-demos-personal-agent
-```
-
-Create a Turnstile widget whose hostnames are `tech-demos.theserverless.dev`, `personal-agent.tech-demos.theserverless.dev`, and the `workers.dev` hostname. Put the public site key in `wrangler.jsonc` as `TURNSTILE_SITE_KEY`. Set the secret:
-
-```bash
 env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bunx wrangler secret put TURNSTILE_SECRET
-```
-
-Do not put the always-pass test secret in production. The Worker rejects that secret off localhost.
-
-```bash
 env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bunx wrangler deploy
 ```
+
+Do not put the always-pass test secret in production. The Worker rejects that secret unless `ENVIRONMENT` is `local` or the host is localhost.
 
 Routes:
 
@@ -92,7 +81,7 @@ After the Worker is deployed, redeploy `apps/hub` so the gallery card is registe
 
 | Name | Where | What |
 | --- | --- | --- |
-| `TURNSTILE_SITE_KEY` | wrangler var (public) | Widget site key. Empty in git. Local `.dev.vars` uses `1x00000000000000000000AA`. |
+| `TURNSTILE_SITE_KEY` | wrangler var (public) | Widget site key `0x4AAAAAAFRgrYxN6MUtsC0C`. Local `.dev.vars` overrides it with `1x00000000000000000000AA`. |
 | `TURNSTILE_SECRET` | `wrangler secret put` | Siteverify secret. Local `.dev.vars` uses `1x0000000000000000000000000000000AA`. |
 
 No other secrets. Workers AI uses the platform binding.
