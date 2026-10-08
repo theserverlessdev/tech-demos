@@ -83,6 +83,17 @@ const resolveHqFallbackSource = `export default {
 };
 `;
 
+// clef-gate is a standalone Worker (Agents SDK Durable Object, Workers AI, D1). Same pattern as resolve-hq:
+// the zone route wins, and this source only redirects if that route is missing.
+const clefGateFallbackSource = `export default {
+  fetch(request) {
+    const url = new URL(request.url);
+    const rest = url.pathname.replace(/^\\/demos\\/clef-gate/, "") || "/";
+    return Response.redirect("https://clef-gate.tech-demos.theserverless.dev" + rest + url.search, 302);
+  },
+};
+`;
+
 export const demos: DemoEntry[] = [
   {
     slug: "resolve-hq",
@@ -122,6 +133,14 @@ export const demos: DemoEntry[] = [
     description: "Minimal HTML demo loaded via the hub Worker Loader.",
     tags: ["dynamic-workers", "starter"],
     source: helloDynamicSource,
+  },
+  {
+    slug: "clef-gate",
+    title: "Clef Gate",
+    description:
+      "An Agents SDK desk where every sandboxed tool call stops at Clef or Clef-flash. The model returns allow, deny, or ask-human with probabilities, and a low-confidence call waits in the Durable Object until you approve it. Decisions land in a D1 audit log.",
+    tags: ["workers-ai", "agents-sdk", "d1", "durable-objects"],
+    source: clefGateFallbackSource,
   },
 ];
 

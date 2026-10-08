@@ -32,6 +32,18 @@
         "wrangler": "^4.40.0",
       },
     },
+    "demos/clef-gate": {
+      "name": "@tech-demos/clef-gate",
+      "dependencies": {
+        "agents": "0.22.0",
+      },
+      "devDependencies": {
+        "@cloudflare/workers-types": "^4.20250906.0",
+        "playwright": "^1.63.0",
+        "typescript": "^5.9.2",
+        "wrangler": "^4.40.0",
+      },
+    },
     "demos/cloudflare-os": {
       "name": "@tech-demos/cloudflare-os",
       "dependencies": {
@@ -312,6 +324,8 @@
 
     "@tech-demos/apollo-desk": ["@tech-demos/apollo-desk@workspace:demos/apollo-desk"],
 
+    "@tech-demos/clef-gate": ["@tech-demos/clef-gate@workspace:demos/clef-gate"],
+
     "@tech-demos/cloudflare-os": ["@tech-demos/cloudflare-os@workspace:demos/cloudflare-os"],
 
     "@tech-demos/demo-template": ["@tech-demos/demo-template@workspace:demos/_template"],
@@ -525,6 +539,10 @@
     "picomatch": ["picomatch@4.0.7", "", {}, "sha512-qcJu88Q2IWqJsDD529JKMdwGm/dvInW4HvQnRwiH9JtihJvzGOscDtHE3x1pBKeUOTysQ8kVmLnJ2kJu7yhcGA=="],
 
     "pkce-challenge": ["pkce-challenge@5.0.1", "", {}, "sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ=="],
+
+    "playwright": ["playwright@1.63.0", "", { "dependencies": { "playwright-core": "1.63.0" }, "bin": { "playwright": "cli.js" } }, "sha512-+7ziBLidS4NaNCdt57SUDT+wYmmd5fmiQejUic/kb+YsYSCPyOOE9sebzMjNmQrsnNpDJqd4WHvV/8lfKfUDUg=="],
+
+    "playwright-core": ["playwright-core@1.63.0", "", { "bin": { "playwright-core": "cli.js" } }, "sha512-rYCsBF/M5HjUch52bbtVONEFjv6Xu8sm8h72dNlR5bzIE1fvC/bxgspzkjSfU+MweEMmPM8KJebG6nnyxo5mCg=="],
 
     "postal-mime": ["postal-mime@3.0.0", "", {}, "sha512-Z4a9ar2Bv3YpK3IXag+Yda30k7bMZfpRuUGyqtHnZ2pjHG8Bl62EhZIk4n1dzv00gfzP9g+94e9kd8+XmjVWLA=="],
 

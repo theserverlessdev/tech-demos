@@ -1,0 +1,48 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tech-demos-clef-gate",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none"
+  },
+  "ai": { "binding": "AI" },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "tech-demos-clef-gate",
+      // Placeholder so `wrangler dev` can apply migrations locally.
+      // Replace with the id from `wrangler d1 create tech-demos-clef-gate` before deploy.
+      "database_id": "00000000-0000-4000-8000-000000000734",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "GATE", "class_name": "GateAgent" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["GateAgent"] }],
+  "ratelimits": [
+    { "name": "CHAT_LIMIT", "namespace_id": "7341", "simple": { "limit": 12, "period": 60 } },
+    { "name": "SESSION_LIMIT", "namespace_id": "7342", "simple": { "limit": 6, "period": 60 } }
+  ],
+  "triggers": { "crons": ["17 * * * *"] },
+  "vars": {
+    "CHAT_MODEL": "@cf/zai-org/glm-5.3-flash",
+    "CLEF_MODEL": "@cf/cloudflare/clef",
+    "CLEF_FLASH_MODEL": "@cf/cloudflare/clef-flash",
+    "CONFIDENCE_FLOOR": "0.62",
+    "SESSION_TTL_SECONDS": "21600",
+    "PENDING_TTL_SECONDS": "600",
+    "TURNSTILE_SITE_KEY": "1x00000000000000000000AA"
+  },
+  "routes": [
+    { "pattern": "tech-demos.theserverless.dev/demos/clef-gate*", "zone_name": "theserverless.dev" },
+    { "pattern": "clef-gate.tech-demos.theserverless.dev/*", "zone_name": "theserverless.dev" }
+  ],
+  "workers_dev": true,
+  "observability": { "enabled": true }
+}

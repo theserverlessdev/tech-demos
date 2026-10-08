@@ -1,0 +1,4 @@
+# Cloudflare's published always-pass Turnstile test secret. Localhost only.
+# Production: wrangler secret put TURNSTILE_SECRET
+# and replace TURNSTILE_SITE_KEY in wrangler.jsonc with the real widget site key.
+TURNSTILE_SECRET=1x0000000000000000000000000000000AA
