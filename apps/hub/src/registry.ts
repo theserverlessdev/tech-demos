@@ -83,6 +83,17 @@ const resolveHqFallbackSource = `export default {
 };
 `;
 
+// feedlog is a standalone Worker (D1, R2, Vectorize, Workers AI). Same pattern as resolve-hq:
+// the zone route wins, and this source only redirects if that route is missing.
+const feedlogFallbackSource = `export default {
+  fetch(request) {
+    const url = new URL(request.url);
+    const rest = url.pathname.replace(/^\\/demos\\/feedlog/, "") || "/";
+    return Response.redirect("https://feedlog.tech-demos.theserverless.dev" + rest + url.search, 302);
+  },
+};
+`;
+
 export const demos: DemoEntry[] = [
   {
     slug: "resolve-hq",
@@ -122,6 +133,14 @@ export const demos: DemoEntry[] = [
     description: "Minimal HTML demo loaded via the hub Worker Loader.",
     tags: ["dynamic-workers", "starter"],
     source: helloDynamicSource,
+  },
+  {
+    slug: "feedlog",
+    title: "Feedlog",
+    description:
+      "A public feedback board on Workers: D1 posts and votes, a roadmap, a changelog, R2 images, and Workers AI plus Vectorize duplicate spotting.",
+    tags: ["d1", "r2", "vectorize", "workers-ai", "turnstile"],
+    source: feedlogFallbackSource,
   },
 ];
 
