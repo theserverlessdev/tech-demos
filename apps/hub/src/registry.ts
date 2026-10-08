@@ -138,6 +138,17 @@ const clefGateFallbackSource = `export default {
 };
 `;
 
+// tanbase is a standalone Worker (D1, Board Durable Object, R2, Workflows, Workers AI).
+// The zone route wins; this source only redirects if that route is missing.
+const tanbaseFallbackSource = `export default {
+  fetch(request) {
+    const url = new URL(request.url);
+    const rest = url.pathname.replace(/^\\/demos\\/tanbase/, "") || "/";
+    return Response.redirect("https://tanbase.tech-demos.theserverless.dev" + rest + url.search, 302);
+  },
+};
+`;
+
 export const demos: DemoEntry[] = [
   {
     slug: "resolve-hq",
@@ -217,6 +228,14 @@ export const demos: DemoEntry[] = [
       "An Agents SDK desk where every sandboxed tool call stops at Clef or Clef-flash. The model returns allow, deny, or ask-human with probabilities, and a low-confidence call waits in the Durable Object until you approve it. Decisions land in a D1 audit log.",
     tags: ["workers-ai", "agents-sdk", "d1", "durable-objects"],
     source: clefGateFallbackSource,
+  },
+  {
+    slug: "tanbase",
+    title: "Tanbase",
+    description:
+      "An anonymous kanban on Workers: D1 cards, a hibernating Board Durable Object for live sync, R2 attachments, and a Workflow that splits a task with Workers AI. A small slice of TanBase — no accounts, no email, no MCP.",
+    tags: ["d1", "durable-objects", "r2", "workflows", "workers-ai"],
+    source: tanbaseFallbackSource,
   },
 ];
 
