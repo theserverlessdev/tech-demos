@@ -35,4 +35,4 @@ Hub Graphite & Ember. Ember `#c2410c`, background `#0e0e11`. LogoMark SVG. No pu
 
 ## 2026-10-09
 
-Phone layout: 16px fields, 44px buttons, and safe-area padding. Ember Rush has an on-screen pad, and a tap on the floor still walks there.
+Phone layout: 16px fields, 44px buttons, and safe-area padding. Ember Rush has an on-screen pad, and a tap on the floor still walks there. The 2D hint is drawn above that pad.

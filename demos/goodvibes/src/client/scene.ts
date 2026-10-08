@@ -551,7 +551,10 @@ export class ArenaScene {
     ctx.font = "500 12px 'JetBrains Mono', ui-monospace, monospace";
     ctx.fillStyle = "#8a8a85";
     ctx.textAlign = "left";
-    ctx.fillText("WASD / click · grab ember orbs · hot orb is +3", 16, this.canvas.height - 18);
+    const pad = document.getElementById("pad");
+    const padOn = !!pad && getComputedStyle(pad).display !== "none";
+    const hintY = padOn ? this.canvas.height - pad.getBoundingClientRect().height - 28 : this.canvas.height - 18;
+    ctx.fillText("WASD / click · grab ember orbs · hot orb is +3", 16, hintY);
   }
 
   private tick = (): void => {

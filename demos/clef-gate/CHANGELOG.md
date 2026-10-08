@@ -31,4 +31,4 @@ What this slice changes relative to [yologdev/yoagent `clef-worker`](https://git
 
 ## 2026-10-09
 
-Phone layout: 16px composer, 44px chips and buttons, and safe-area padding. The pending card and layout stack on a narrow screen.
+Phone layout: 16px composer, 44px chips and buttons, and safe-area padding. The pending card and layout stack on a narrow screen. Under 720px the Turnstile widget sits above Send so the 300px widget is not clipped.

@@ -170,7 +170,11 @@ canvas {
 
 @media (max-width: 860px) {
   .topbar { grid-template-columns: 1fr auto; height: auto; padding: 12px 14px; gap: 8px; }
-  .topbar__title { display: none; }
+  .brand { grid-column: 1; grid-row: 1; }
+  .topbar__actions { grid-column: 2; grid-row: 1; }
+  .topbar__title { display: block; grid-column: 1 / -1; grid-row: 2; min-width: 0; }
+  .topbar__title p { display: none; }
+  .topbar__title h1 { font-size: 16px; }
   .card h2 { font-size: 28px; }
   .stage { grid-template-columns: 1fr; }
   .canvas-wrap { min-height: 62dvh; }
