@@ -1,0 +1,7 @@
+# Public Cloudflare Turnstile always-pass test secret. Local `wrangler dev` only.
+# Production secret is `wrangler secret put TURNSTILE_SECRET` (not a var).
+TURNSTILE_SECRET=1x0000000000000000000000000000000AA
+# Match the test secret. wrangler.jsonc holds the live site key.
+TURNSTILE_SITE_KEY=1x00000000000000000000AA
+# Lets smoke set a short board TTL and call POST /api/sweep. Do not set this in production.
+ALLOW_LOCAL_HOOKS=1

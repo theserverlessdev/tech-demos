@@ -1,0 +1,272 @@
+/* Tanbase slice — Graphite & Ember. One flat ember accent. */
+
+:root {
+  --ember: #c2410c;
+  --ember-2: #e2622e;
+  --font-heading: "Bricolage Grotesque", "Space Grotesk", system-ui, sans-serif;
+  --font-body: "Hanken Grotesk", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  --radius: 12px;
+  --topbar-h: 64px;
+}
+
+:root, [data-theme="dark"] {
+  --bg: #0e0e11;
+  --surface: #141418;
+  --surface-2: #1b1b20;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --text: #c9c9c4;
+  --text-strong: #e8e8e4;
+  --muted: #8a8a85;
+  --accent-text: #e2622e;
+  --ok: #5aa877;
+  --warn: #d19a2a;
+  --danger: #d0533f;
+}
+
+[data-theme="light"] {
+  --ember: #b23a0a;
+  --ember-2: #c2410c;
+  --bg: #f6f4ef;
+  --surface: #ffffff;
+  --surface-2: #f3f1eb;
+  --border: rgba(23, 23, 26, 0.1);
+  --border-strong: rgba(23, 23, 26, 0.18);
+  --text: #3d3a34;
+  --text-strong: #17171a;
+  --muted: #6b675e;
+  --accent-text: #b23a0a;
+  --ok: #2f7d4f;
+  --warn: #a86f0a;
+  --danger: #b43d2b;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { min-height: 100%; }
+body {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.5;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+h1, h2, h3 { font-family: var(--font-heading); color: var(--text-strong); letter-spacing: -0.03em; margin: 0; }
+button, input, textarea, select { font: inherit; color: inherit; }
+a { color: var(--text-strong); }
+button { cursor: pointer; }
+
+.topbar {
+  min-height: var(--topbar-h);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.brand { display: flex; align-items: center; gap: 8px; text-decoration: none; font-weight: 650; color: var(--text-strong); }
+.brand__mark { color: var(--ember); }
+.topbar__title { flex: 1; min-width: 0; }
+.topbar__title h1 { font-size: 1.25rem; }
+.topbar__title p { margin: 2px 0 0; color: var(--muted); font-size: 0.86rem; }
+.topbar__actions { display: flex; gap: 8px; align-items: center; }
+
+.btn, .btn-primary, .btn-ghost, .btn-danger {
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text-strong);
+  border-radius: 999px;
+  padding: 7px 12px;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.btn-primary { background: var(--ember); border-color: var(--ember); color: #fffaf7; }
+.btn-ghost { background: transparent; }
+.btn-danger { color: var(--danger); }
+.btn-icon { width: 36px; padding: 7px; }
+.icon { width: 18px; height: 18px; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 18px;
+  background: #120e0c;
+  color: #f0d2c4;
+  font-size: 0.88rem;
+}
+[data-theme="light"] .strip { background: #f3e6df; color: #6a331c; }
+.strip__dot { width: 8px; height: 8px; border-radius: 99px; background: var(--muted); flex: none; }
+.strip__dot.is-live { background: var(--ok); box-shadow: 0 0 0 4px rgba(90, 168, 119, 0.18); }
+
+#app { flex: 1; display: flex; min-height: 0; padding: 16px 18px 20px; }
+
+.workspace, .empty { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.board-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
+.board-bar label, .field { display: flex; flex-direction: column; gap: 4px; font-size: 0.78rem; color: var(--muted); }
+.board-bar input, .board-bar select, .field input, .field textarea, .field select {
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 8px 10px;
+  min-width: 0;
+}
+.title-input { font-family: var(--font-heading); font-size: 1.15rem; color: var(--text-strong); min-width: 220px; }
+.expiry { margin-left: auto; color: var(--muted); font-size: 0.82rem; font-family: var(--font-mono); }
+
+.columns { flex: 1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; align-items: stretch; min-height: 420px; }
+.column {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  min-height: 280px;
+  min-width: 0;
+}
+.column.is-over { border-color: var(--ember); box-shadow: inset 0 0 0 1px var(--ember); }
+.column header { display: flex; align-items: center; gap: 8px; padding: 12px 12px 8px; }
+.column header h2 { font-size: 0.95rem; }
+.column[data-column="doing"] header h2 { color: var(--accent-text); }
+.column[data-column="done"] header h2 { color: var(--ok); }
+.count { font-family: var(--font-mono); font-size: 0.75rem; color: var(--muted); }
+.adder { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; padding: 0 12px 10px; }
+.adder input { width: 100%; min-width: 0; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+.adder .btn-primary { padding: 7px 10px; }
+.cards { list-style: none; margin: 0; padding: 0 10px 12px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
+.card {
+  text-align: left;
+  width: 100%;
+  cursor: grab;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.card.is-selected { border-color: var(--ember); }
+.card.is-dragging { opacity: 0.45; }
+.card h3 { font-size: 0.98rem; }
+.card p { margin: 0; color: var(--muted); font-size: 0.86rem; }
+.card__meta { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font-size: 0.72rem; border-radius: 999px; padding: 2px 7px; background: rgba(255, 255, 255, 0.04); color: var(--muted); }
+.chip-warn { color: var(--warn); background: rgba(209, 154, 42, 0.12); }
+.chip-ember { color: var(--accent-text); background: rgba(194, 65, 12, 0.12); }
+.drop-hint { margin: auto; color: var(--muted); font-size: 0.82rem; padding: 12px; }
+
+.layout { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 12px; }
+.drawer {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.drawer h2 { font-size: 1.05rem; }
+.drawer .field textarea { min-height: 88px; resize: vertical; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; }
+.hint { min-height: 1.2em; margin: 0; color: var(--warn); font-size: 0.86rem; }
+.files { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.files a { font-size: 0.86rem; }
+.steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.steps li { display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 0.88rem; }
+.steps li::before { content: ""; width: 8px; height: 8px; border-radius: 99px; background: var(--border-strong); flex: none; }
+.steps li.is-done { color: var(--text-strong); }
+.steps li.is-done::before { background: var(--ok); }
+.steps li.is-run { color: var(--accent-text); }
+.steps li.is-run::before { background: var(--ember); }
+.lede { margin: 0; color: var(--muted); }
+
+.empty {
+  margin: auto;
+  max-width: 440px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 28px 24px;
+  gap: 14px;
+}
+.empty h2 { font-size: 1.8rem; }
+.turnstile { min-height: 65px; }
+
+.foot { padding: 12px 18px 18px; color: var(--muted); font-size: 0.82rem; }
+.foot a { color: var(--accent-text); }
+
+@media (max-width: 900px) {
+  .topbar { flex-wrap: wrap; }
+  .layout, .columns { grid-template-columns: 1fr; }
+  .expiry { margin-left: 0; }
+  .drawer { order: -1; }
+}
+
+/* Phone layout. Graphite and Ember stay; controls grow to a finger and fields stay at 16px so iOS does not zoom. */
+input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="hidden"]),
+textarea,
+select {
+  font-size: 16px;
+}
+.turnstile { max-width: 100%; overflow: auto; }
+@media (max-width: 900px) {
+  .btn,
+  a.btn,
+  .btn-primary,
+  .btn-ghost,
+  .filter,
+  button.chip,
+  .size,
+  .swatch,
+  .n,
+  .toggle__btn,
+  .room-btn,
+  .tabs a,
+  .note {
+    min-height: 44px;
+  }
+  .btn-icon,
+  .swatch,
+  .filter,
+  .n,
+  .size {
+    min-width: 44px;
+  }
+  .btn-icon,
+  .swatch {
+    width: 44px;
+    height: 44px;
+  }
+  .topbar {
+    padding-top: max(10px, env(safe-area-inset-top));
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+  }
+  .topbar__actions { flex-wrap: wrap; justify-content: flex-end; max-width: 100%; }
+  .composer { padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+  .title-input, .composer input, .join input { min-width: 0; max-width: 100%; }
+}
+@media (max-width: 900px) and (max-height: 520px) {
+  .canvas-wrap { min-height: 42dvh; }
+  .chat { min-height: 0; }
+  .lobby { min-height: 0; padding-top: 0.5rem; padding-bottom: 0.5rem; }
+}
+
+.card { touch-action: manipulation; }
+@media (max-width: 900px) {
+  .title-input { min-width: 0; width: 100%; }
+  #app { padding-left: 12px; padding-right: 12px; }
+  .columns, .layout { min-width: 0; }
+}
+

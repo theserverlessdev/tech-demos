@@ -1,0 +1,4 @@
+# Local only. These are Cloudflare's always-pass Turnstile test keys.
+# Production reads TURNSTILE_SITE_KEY from wrangler.jsonc and TURNSTILE_SECRET from `wrangler secret put`.
+TURNSTILE_SITE_KEY=1x00000000000000000000AA
+TURNSTILE_SECRET=1x0000000000000000000000000000000AA

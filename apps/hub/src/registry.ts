@@ -83,7 +83,133 @@ const resolveHqFallbackSource = `export default {
 };
 `;
 
+// personal-agent is a standalone Worker (Agents SDK Durable Object, R2, Workers AI).
+// The zone route wins, and this source only redirects if that route is missing.
+const personalAgentFallbackSource = `export default {
+  fetch(request) {
+    const url = new URL(request.url);
+    const rest = url.pathname.replace(/^\\/demos\\/personal-agent/, "") || "/";
+    return Response.redirect("https://personal-agent.tech-demos.theserverless.dev" + rest + url.search, 302);
+  },
+};
+`;
+
+// partyserver is a standalone Worker (hibernating PartyServer Durable Object + Yjs). Same pattern as resolve-hq:
+// the zone route wins, and this source only redirects if that route is missing.
+const partyserverFallbackSource = `export default {
+  fetch(request) {
+    const url = new URL(request.url);
+    const rest = url.pathname.replace(/^\\/demos\\/partyserver/, "") || "/";
+    return Response.redirect("https://partyserver.tech-demos.theserverless.dev" + rest + url.search, 302);
+  },
+};
+`;
+
+// feedlog is a standalone Worker (D1, R2, Vectorize, Workers AI). Same pattern as resolve-hq:
+// the zone route wins, and this source only redirects if that route is missing.
+const feedlogFallbackSource = `export default {
+  fetch(request) {
+    const url = new URL(request.url);
+    const rest = url.pathname.replace(/^\\/demos\\/feedlog/, "") || "/";
+    return Response.redirect("https://feedlog.tech-demos.theserverless.dev" + rest + url.search, 302);
+  },
+};
+`;
+
+// company-brain is a standalone Worker (Agents SDK Durable Object, Workers AI). Same pattern as resolve-hq:
+// the zone route wins, and this source only redirects if that route is missing.
+const companyBrainFallbackSource = `export default {
+  fetch(request) {
+    const url = new URL(request.url);
+    const rest = url.pathname.replace(/^\\/demos\\/company-brain/, "") || "/";
+    return Response.redirect("https://company-brain.tech-demos.theserverless.dev" + rest + url.search, 302);
+  },
+};
+`;
+
+// clef-gate is a standalone Worker (Agents SDK Durable Object, Workers AI, D1). Same pattern as resolve-hq:
+// the zone route wins, and this source only redirects if that route is missing.
+const clefGateFallbackSource = `export default {
+  fetch(request) {
+    const url = new URL(request.url);
+    const rest = url.pathname.replace(/^\\/demos\\/clef-gate/, "") || "/";
+    return Response.redirect("https://clef-gate.tech-demos.theserverless.dev" + rest + url.search, 302);
+  },
+};
+`;
+
+// tanbase is a standalone Worker (D1, Board Durable Object, R2, Workflows, Workers AI).
+// The zone route wins; this source only redirects if that route is missing.
+const tanbaseFallbackSource = `export default {
+  fetch(request) {
+    const url = new URL(request.url);
+    const rest = url.pathname.replace(/^\\/demos\\/tanbase/, "") || "/";
+    return Response.redirect("https://tanbase.tech-demos.theserverless.dev" + rest + url.search, 302);
+  },
+};
+`;
+
+// actor-lab is a standalone Worker (SQLite Durable Objects, Workers AI, hibernatable WebSockets).
+// Same pattern as resolve-hq: the zone route wins, and this source only redirects if that route is missing.
+const actorLabFallbackSource = `export default {
+  fetch(request) {
+    const url = new URL(request.url);
+    const rest = url.pathname.replace(/^\\/demos\\/actor-lab/, "") || "/";
+    return Response.redirect("https://actor-lab.tech-demos.theserverless.dev" + rest + url.search, 302);
+  },
+};
+`;
+
+// repo-per-agent is a standalone Worker (Artifacts, Agents SDK, D1). Same pattern as resolve-hq:
+// the zone route wins, and this source only redirects if that route is missing.
+const repoPerAgentFallbackSource = `export default {
+  fetch(request) {
+    const url = new URL(request.url);
+    const rest = url.pathname.replace(/^\\/demos\\/repo-per-agent/, "") || "/";
+    return Response.redirect("https://repo-per-agent.tech-demos.theserverless.dev" + rest + url.search, 302);
+  },
+};
+`;
+
+// edgechat is a standalone Worker (Durable Objects, D1, KV, R2). Same pattern as resolve-hq:
+// the zone route wins, and this source only redirects if that route is missing.
+const edgechatFallbackSource = `export default {
+  fetch(request) {
+    const url = new URL(request.url);
+    const rest = url.pathname.replace(/^\\/demos\\/edgechat/, "") || "/";
+    return Response.redirect("https://edgechat.tech-demos.theserverless.dev" + rest + url.search, 302);
+  },
+};
+`;
+
+// goodvibes is a standalone Worker (Durable Objects + Static Assets). Same pattern as resolve-hq:
+// the zone route wins, and this source only redirects if that route is missing.
+const goodvibesFallbackSource = `export default {
+  fetch(request) {
+    const url = new URL(request.url);
+    const rest = url.pathname.replace(/^\\/demos\\/goodvibes/, "") || "/";
+    return Response.redirect("https://goodvibes.tech-demos.theserverless.dev" + rest + url.search, 302);
+  },
+};
+`;
+
 export const demos: DemoEntry[] = [
+  {
+    slug: "goodvibes",
+    title: "GoodVibes",
+    description:
+      "Ember Rush: a 75-second multiplayer orb hunt on a Durable Object WebSocket. Collect ember orbs, gold is +3, highest score wins. Hibernation + rate-limited room create. Inspired by goodvibes — original game, not a vendor of the kit.",
+    tags: ["durable-objects", "websockets", "threejs", "game"],
+    source: goodvibesFallbackSource,
+  },
+  {
+    slug: "edgechat",
+    title: "EdgeChat",
+    description:
+      "Mini team chat on Workers: a Durable Object room with hibernatable WebSockets, D1 history, a KV display name, and R2 uploads. Inspired by Edgechat — original code, not a GPL vendor.",
+    tags: ["durable-objects", "d1", "kv", "r2", "websockets"],
+    source: edgechatFallbackSource,
+  },
   {
     slug: "resolve-hq",
     title: "ResolveHQ",
@@ -122,6 +248,70 @@ export const demos: DemoEntry[] = [
     description: "Minimal HTML demo loaded via the hub Worker Loader.",
     tags: ["dynamic-workers", "starter"],
     source: helloDynamicSource,
+  },
+  {
+    slug: "personal-agent",
+    title: "Personal agent",
+    description:
+      "An anonymous assistant with one Durable Object per visitor. Markdown notes live in R2, recall runs in DO SQLite, and a research call fetches a few allowlisted pages.",
+    tags: ["agents-sdk", "durable-objects", "r2", "workers-ai"],
+    source: personalAgentFallbackSource,
+  },
+  {
+    slug: "partyserver",
+    title: "Partyboard",
+    description:
+      "A shared ink board on a hibernating PartyServer Durable Object. Yjs strokes and live cursors sync in the room, state sits in DO storage, and an alarm wipes anonymous rooms.",
+    tags: ["partyserver", "yjs", "durable-objects", "websockets"],
+    source: partyserverFallbackSource,
+  },
+  {
+    slug: "feedlog",
+    title: "Feedlog",
+    description:
+      "A public feedback board on Workers: D1 posts and votes, a roadmap, a changelog, R2 images, and Workers AI plus Vectorize duplicate spotting.",
+    tags: ["d1", "r2", "vectorize", "workers-ai", "turnstile"],
+    source: feedlogFallbackSource,
+  },
+  {
+    slug: "company-brain",
+    title: "Company Brain",
+    description:
+      "A sandbox company brain. One Agents SDK Durable Object per visitor stores facts and decisions, and Workers AI answers only from that memory.",
+    tags: ["agents-sdk", "durable-objects", "workers-ai", "turnstile"],
+    source: companyBrainFallbackSource,
+  },
+  {
+    slug: "clef-gate",
+    title: "Clef Gate",
+    description:
+      "An Agents SDK desk where every sandboxed tool call stops at Clef or Clef-flash. The model returns allow, deny, or ask-human with probabilities, and a low-confidence call waits in the Durable Object until you approve it. Decisions land in a D1 audit log.",
+    tags: ["workers-ai", "agents-sdk", "d1", "durable-objects"],
+    source: clefGateFallbackSource,
+  },
+  {
+    slug: "tanbase",
+    title: "Tanbase",
+    description:
+      "An anonymous kanban on Workers: D1 cards, a hibernating Board Durable Object for live sync, R2 attachments, and a Workflow that splits a task with Workers AI. A small slice of TanBase — no accounts, no email, no MCP.",
+    tags: ["d1", "durable-objects", "r2", "workflows", "workers-ai"],
+    source: tanbaseFallbackSource,
+  },
+  {
+    slug: "actor-lab",
+    title: "Actor lab",
+    description:
+      "A Durable Object actor with auto-persisted fields and a one-at-a-time mailbox. Race a counter across a Workers AI wait, then chat on a hibernating WebSocket that keeps SQLite across a simulated eviction.",
+    tags: ["durable-objects", "workers-ai", "websockets", "turnstile"],
+    source: actorLabFallbackSource,
+  },
+  {
+    slug: "repo-per-agent",
+    title: "Repo per agent",
+    description:
+      "One Agents SDK agent and one Artifacts git repo per task. Workers AI commits a small file edit. The page shows the log, the diff, and a short-lived read-only clone token.",
+    tags: ["artifacts", "agents-sdk", "workers-ai", "d1", "turnstile"],
+    source: repoPerAgentFallbackSource,
   },
 ];
 

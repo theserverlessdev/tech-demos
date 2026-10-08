@@ -1,0 +1,23 @@
+{
+  "name": "@tech-demos/company-brain",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun build src/client/app.ts --outdir public/assets --target browser --minify",
+    "dev": "bun run build && wrangler dev",
+    "dev:offline": "bun run build && wrangler dev -c wrangler.offline.jsonc",
+    "deploy": "bun run build && wrangler deploy",
+    "typecheck": "wrangler types --env-file /dev/null && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
+    "cf-typegen": "wrangler types --env-file /dev/null",
+    "smoke": "bun run scripts/smoke.ts"
+  },
+  "dependencies": {
+    "agents": "0.22.0",
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250906.0",
+    "typescript": "^5.9.2",
+    "wrangler": "^4.40.0"
+  }
+}

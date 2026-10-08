@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark light" />
+  <meta name="theme-color" content="#0e0e11" />
+  <title>EdgeChat · Tech Demos · theserverless.dev</title>
+  <meta name="description" content="Mini team chat on Cloudflare Workers: Durable Object rooms, D1 history, KV display names, and R2 uploads." />
+  <meta property="og:title" content="EdgeChat slice" />
+  <meta property="og:description" content="Realtime rooms on Durable Objects, with D1 history, KV sessions, and R2 files — a small original demo inspired by Edgechat." />
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Hanken+Grotesk:wght@400..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script src="./assets/theme.js"></script>
+  <link rel="stylesheet" href="./assets/chat.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="https://tech-demos.theserverless.dev/" aria-label="Tech Demos gallery">
+      <svg class="brand__mark" width="26" height="26" viewBox="0 -3 128 128" aria-hidden="true">
+        <g stroke="currentColor" stroke-width="6" stroke-linecap="round" opacity="0.45"><line x1="4" y1="58" x2="20" y2="58"/><line x1="1" y1="72" x2="19" y2="72"/><line x1="6" y1="86" x2="22" y2="86"/></g>
+        <path d="M44 92 C31 92 20 82 20 69 C20 57 29 47 41 46 C45 33 57 24 70 24 C85 24 98 35 100 51 C110 53 118 62 118 72 C118 83 109 92 97 92 Z" fill="none" stroke="currentColor" stroke-width="7.5" stroke-linejoin="round"/>
+        <path d="M69 36 L50 71 L63 71 L57 102 L88 60 L72 60 L80 36 Z" fill="currentColor"/>
+      </svg>
+      <span>Tech Demos</span>
+    </a>
+    <div class="topbar__title">
+      <h1>EdgeChat</h1>
+      <p>Durable Object rooms, D1 history, KV names, R2 files</p>
+    </div>
+    <div class="topbar__actions">
+      <label class="you">
+        <span>You</span>
+        <input id="display-name" type="text" maxlength="32" autocomplete="nickname" placeholder="Display name" />
+      </label>
+      <button class="btn" id="save-name" type="button">Save name</button>
+      <a class="btn btn-ghost" href="https://github.com/aozorae/Edgechat" rel="noopener" target="_blank">Inspired by</a>
+      <button class="btn btn-ghost btn-icon" id="theme" type="button" aria-label="Switch colour theme">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9Z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="strip" id="strip" role="status">
+    <span class="strip__dot"></span>
+    <span id="strip-text">Connecting to a Durable Object room…</span>
+  </div>
+
+  <main class="layout">
+    <section class="rooms" aria-label="Rooms">
+      <header class="rooms__head">
+        <h2>Rooms</h2>
+        <span class="count" id="room-count">0</span>
+      </header>
+      <form class="join" id="join">
+        <label class="sr-only" for="room-name">Room name</label>
+        <input id="room-name" type="text" maxlength="48" placeholder="Join or create a room" autocomplete="off" />
+        <button class="btn btn-primary" type="submit">Join</button>
+      </form>
+      <ol class="room-list" id="room-list"></ol>
+      <p class="hint rooms__hint">Same room name, two tabs: messages fan out from one Durable Object. Refresh still shows D1 history.</p>
+    </section>
+
+    <section class="chat" aria-label="Conversation">
+      <header class="chat__head">
+        <div>
+          <p class="eyebrow" id="room-label">room</p>
+          <h2 id="room-title">lobby</h2>
+        </div>
+        <p class="presence" id="presence">0 in room</p>
+      </header>
+      <ol class="messages" id="messages"></ol>
+      <p class="empty" id="empty" hidden>No messages yet. Say hello.</p>
+      <form class="composer" id="composer">
+        <label class="attach">
+          <span class="sr-only">Attach a file (R2)</span>
+          <input id="file" type="file" />
+          <span class="btn" id="attach-label">Attach</span>
+        </label>
+        <span class="filechip" id="filechip" hidden></span>
+        <label class="sr-only" for="draft">Message</label>
+        <input id="draft" type="text" maxlength="2000" placeholder="Message this room…" autocomplete="off" />
+        <button class="btn btn-primary" type="submit" id="send">Send</button>
+      </form>
+      <p class="hint" id="hint" role="status"></p>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <p>
+      Original demo inspired by <a href="https://github.com/aozorae/Edgechat" rel="noopener" target="_blank">aozorae/Edgechat</a>
+      (GPL-3.0 — we did not copy that source).
+      <a href="https://github.com/theserverlessdev/tech-demos/tree/main/demos/edgechat" rel="noopener" target="_blank">Source</a>
+    </p>
+  </footer>
+
+  <script type="module" src="./assets/app.js"></script>
+</body>
+</html>

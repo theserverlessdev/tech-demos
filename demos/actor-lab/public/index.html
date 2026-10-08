@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="theme-color" content="#0e0e11" />
+  <meta name="referrer" content="no-referrer" />
+  <title>Actor lab · Tech Demos · theserverless.dev</title>
+  <meta name="description" content="Race a Durable Object counter through a Workers AI wait, then keep a multiplayer chat whose SQLite history survives eviction." />
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Hanken+Grotesk:wght@400..700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./assets/lab.css" />
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="https://tech-demos.theserverless.dev/" aria-label="Tech Demos gallery">
+      <svg class="brand__mark" width="26" height="26" viewBox="0 -3 128 128" aria-hidden="true">
+        <g stroke="currentColor" stroke-width="6" stroke-linecap="round" opacity="0.45"><line x1="4" y1="58" x2="20" y2="58"/><line x1="1" y1="72" x2="19" y2="72"/><line x1="6" y1="86" x2="22" y2="86"/></g>
+        <path d="M44 92 C31 92 20 82 20 69 C20 57 29 47 41 46 C45 33 57 24 70 24 C85 24 98 35 100 51 C110 53 118 62 118 72 C118 83 109 92 97 92 Z" fill="none" stroke="currentColor" stroke-width="7.5" stroke-linejoin="round"/>
+        <path d="M69 36 L50 71 L63 71 L57 102 L88 60 L72 60 L80 36 Z" fill="currentColor"/>
+      </svg>
+      <span>Tech Demos</span>
+    </a>
+    <div class="topbar__title">
+      <h1>Actor lab</h1>
+      <p>Persisted fields and a one-at-a-time mailbox, on Durable Objects</p>
+    </div>
+    <div class="topbar__actions">
+      <a class="btn btn-ghost" href="https://github.com/TerseAI/durable-actors" rel="noopener noreferrer" target="_blank">Upstream</a>
+      <a class="btn" href="https://theserverless.dev/contact" rel="noopener noreferrer">Contact</a>
+    </div>
+  </header>
+
+  <p class="lede">Four updates read one counter, wait on Workers AI, and write back. The mailbox lines them up. An open input gate lets them overwrite each other.</p>
+
+  <div class="gate-bar">
+    <div id="turnstile"></div>
+    <p id="ai-note" class="ai-note">Checking whether AI runs are unlocked…</p>
+  </div>
+
+  <p id="status" class="status" role="status"></p>
+
+  <main class="layout">
+    <section class="panel" aria-labelledby="race-title">
+      <header class="panel__head">
+        <h2 id="race-title">Race lab</h2>
+        <p>Each racer reads the counter, awaits the model, then writes read + 1.</p>
+      </header>
+
+      <fieldset class="modes">
+        <legend>Execution</legend>
+        <label class="mode">
+          <input type="radio" name="mode" value="interleaved" checked />
+          <span>
+            <strong>Interleaved</strong>
+            <small>Like @Interleave. The input gate opens during the model wait.</small>
+          </span>
+        </label>
+        <label class="mode">
+          <input type="radio" name="mode" value="serialized" />
+          <span>
+            <strong>Serialized mailbox</strong>
+            <small>The actor default. The next handler waits until this write finishes.</small>
+          </span>
+        </label>
+      </fieldset>
+
+      <div class="n-row">
+        <span id="n-label">4 updates</span>
+        <div class="n-picks" role="group" aria-label="How many updates">
+          <button class="n" type="button" data-n="2">2</button>
+          <button class="n" type="button" data-n="3">3</button>
+          <button class="n is-on" type="button" data-n="4">4</button>
+          <button class="n" type="button" data-n="5">5</button>
+          <button class="n" type="button" data-n="6">6</button>
+        </div>
+        <button class="btn" id="fire" type="button" disabled>Fire</button>
+      </div>
+
+      <div class="score" id="score" hidden>
+        <p><span>Expected</span><strong id="score-expected">0</strong></p>
+        <p><span>Actual</span><strong id="score-actual">0</strong></p>
+        <p><span>Lost</span><strong id="score-lost">0</strong></p>
+      </div>
+      <p id="summary" class="summary"></p>
+
+      <div class="legend" aria-hidden="true">
+        <span><i class="dot dot-read"></i> Read</span>
+        <span><i class="bar-key"></i> Waiting on AI</span>
+        <span><i class="dot dot-write"></i> Write</span>
+      </div>
+      <div id="timeline" class="timeline">
+        <p class="empty">Fire a run to see who read the counter, who waited, and who wrote back.</p>
+      </div>
+      <div class="table-wrap">
+        <table id="table">
+          <caption class="sr">Read, wait, and write for each racer</caption>
+          <thead>
+            <tr><th>Racer</th><th>Read</th><th>Wait</th><th>Wrote</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="chat-title">
+      <header class="panel__head">
+        <h2 id="chat-title">Room actor</h2>
+        <p>Hibernating WebSocket. Messages are SQLite. The scratch note is only in memory.</p>
+      </header>
+
+      <div class="room-setup" id="room-setup">
+        <label>Name
+          <input id="nick" name="nick" maxlength="24" autocomplete="nickname" value="Ada" />
+        </label>
+        <button class="btn" id="create" type="button">Open a room</button>
+        <label>Code
+          <input id="code" name="code" maxlength="6" autocapitalize="characters" placeholder="ABCD23" />
+        </label>
+        <button class="btn btn-ghost" id="join" type="button">Join</button>
+      </div>
+
+      <div id="room" hidden>
+        <div class="room-bar">
+          <p class="code" id="room-code"></p>
+          <button class="btn btn-ghost" id="copy" type="button">Copy link</button>
+          <span class="pill" id="memory">Memory</span>
+          <span class="pill" id="peers">0 sockets</span>
+        </div>
+        <p class="hint" id="room-hint"></p>
+        <ol id="transcript" class="transcript" aria-live="polite"></ol>
+        <form id="composer" class="composer">
+          <input id="message" name="message" maxlength="500" placeholder="Say something to the room" autocomplete="off" />
+          <label class="ask"><input id="ask" type="checkbox" /> Ask actor</label>
+          <button class="btn" id="send" type="submit">Send</button>
+        </form>
+        <div class="scratch-block">
+          <label for="scratch">Scratch, memory only</label>
+          <textarea id="scratch" maxlength="280" placeholder="This note dies when the isolate drops."></textarea>
+          <div class="scratch-actions">
+            <button class="btn btn-ghost" id="unlock" type="button" disabled>Unlock AI</button>
+            <button class="btn" id="evict" type="button">Simulate evict</button>
+          </div>
+          <p id="unlock-note" class="hint"></p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <section class="gates" aria-labelledby="gates-title">
+    <h2 id="gates-title">What the race is showing</h2>
+    <article>
+      <h3>Input gate</h3>
+      <p>This actor is one JavaScript thread. While it waits on SQLite, Cloudflare does not start the next request. When it waits on Workers AI, that hold lifts, and another update can read the same counter before this one writes.</p>
+    </article>
+    <article>
+      <h3>Output gate</h3>
+      <p>The response stays here until the SQLite write is confirmed. If the actor is evicted first, the write rolls back and the caller gets an error instead of a success that never landed.</p>
+    </article>
+    <article>
+      <h3>Mailbox and blockConcurrencyWhile</h3>
+      <p>Serialized mode is the durable-actors default: handlers take a number and run one at a time, even during the model wait. Interleaved mode is their @Interleave opt-out. blockConcurrencyWhile keeps the input gate shut for a whole wait. This actor uses it only while loading SQLite. Holding it across Workers AI would stall every other event for as long as the model takes, so the mailbox does that job instead.</p>
+    </article>
+  </section>
+
+  <footer class="foot">
+    <p>Inspired by <a href="https://github.com/TerseAI/durable-actors" rel="noopener noreferrer">TerseAI/durable-actors</a> (MIT). <a href="https://x.com/karatzas_thomas/status/2107872102829502622" rel="noopener noreferrer">The note that pointed here</a>.</p>
+    <p><a href="https://theserverless.dev/contact" rel="noopener noreferrer">Contact</a> · <a href="https://tech-demos.theserverless.dev/">All demos</a></p>
+  </footer>
+  <noscript><p class="status">This lab needs JavaScript to fire the race and open a socket.</p></noscript>
+  <script src="./assets/app.js" type="module"></script>
+</body>
+</html>

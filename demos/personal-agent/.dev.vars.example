@@ -1,0 +1,7 @@
+# Local secrets for wrangler dev. Copy to .dev.vars (gitignored).
+# Cloudflare's always-pass Turnstile test keys. Production rejects this token.
+# https://developers.cloudflare.com/turnstile/troubleshooting/testing/
+
+TURNSTILE_SECRET=1x0000000000000000000000000000000AA
+TURNSTILE_SITE_KEY=1x00000000000000000000AA
+ENVIRONMENT=local

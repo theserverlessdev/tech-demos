@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark light" />
+  <meta name="theme-color" content="#0e0e11" />
+  <title>Clef Gate · Tech Demos · theserverless.dev</title>
+  <meta name="description" content="Every sandboxed tool call stops at Clef or Clef-flash. The decision model returns allow, deny, or ask-human with probabilities, and a low-confidence call waits until you approve it." />
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Hanken+Grotesk:wght@400..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script src="./assets/theme.js"></script>
+  <link rel="stylesheet" href="./assets/app.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="https://tech-demos.theserverless.dev/" aria-label="Tech Demos gallery">
+      <svg class="brand__mark" width="26" height="26" viewBox="0 -3 128 128" aria-hidden="true">
+        <g stroke="currentColor" stroke-width="6" stroke-linecap="round" opacity="0.45"><line x1="4" y1="58" x2="20" y2="58"/><line x1="1" y1="72" x2="19" y2="72"/><line x1="6" y1="86" x2="22" y2="86"/></g>
+        <path d="M44 92 C31 92 20 82 20 69 C20 57 29 47 41 46 C45 33 57 24 70 24 C85 24 98 35 100 51 C110 53 118 62 118 72 C118 83 109 92 97 92 Z" fill="none" stroke="currentColor" stroke-width="7.5" stroke-linejoin="round"/>
+        <path d="M69 36 L50 71 L63 71 L57 102 L88 60 L72 60 L80 36 Z" fill="currentColor"/>
+      </svg>
+      <span>Tech Demos</span>
+    </a>
+    <div class="topbar__title">
+      <h1>Clef Gate</h1>
+      <p>Tool calls pause for a Clef decision</p>
+    </div>
+    <div class="topbar__actions">
+      <a class="btn btn-ghost" href="https://theserverless.dev/contact" rel="noopener">Contact</a>
+      <button class="btn btn-ghost btn-icon" id="theme" type="button" aria-label="Switch colour theme">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9Z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <p class="strip" id="strip" role="status">Five sandboxed tools. None of them send mail, fetch the network, or touch a database.</p>
+
+  <div class="pending" id="pending" hidden>
+    <div class="pending__copy">
+      <p class="eyebrow">Waiting in the agent</p>
+      <p id="pending-text">A tool call is paused until you approve or deny it.</p>
+    </div>
+    <div class="pending__actions">
+      <button class="btn" id="deny" type="button">Deny</button>
+      <button class="btn btn-primary" id="approve" type="button">Approve</button>
+    </div>
+  </div>
+
+  <main class="layout">
+    <section class="chat" aria-label="Desk">
+      <ol class="transcript" id="transcript"></ol>
+      <form class="composer" id="composer">
+        <div class="chips" role="group" aria-label="Example prompts">
+          <button class="chip" type="button" data-chip="read">Read the refund policy</button>
+          <button class="chip" type="button" data-chip="fetch">Fetch the Clef docs</button>
+          <button class="chip" type="button" data-chip="email">Email the customer</button>
+          <button class="chip" type="button" data-chip="delete">Delete record acct_1842</button>
+          <button class="chip" type="button" data-chip="sql">Run DROP TABLE tickets</button>
+        </div>
+        <label class="sr-only" for="text">Message</label>
+        <textarea id="text" rows="3" maxlength="500" placeholder="Ask the desk to read, fetch, email, delete, or run SQL…" required></textarea>
+        <div class="composer__row">
+          <div id="turnstile" class="turnstile"></div>
+          <button class="btn btn-primary" id="send" type="submit" disabled>Send</button>
+        </div>
+      </form>
+    </section>
+
+    <aside class="gate" aria-label="Gate">
+      <div class="panel">
+        <p class="eyebrow">Decision model</p>
+        <div class="toggle" role="group" aria-label="Clef model">
+          <button class="toggle__btn is-on" type="button" data-model="clef" aria-pressed="true">Clef</button>
+          <button class="toggle__btn" type="button" data-model="clef-flash" aria-pressed="false">Clef-flash</button>
+        </div>
+        <p class="hint" id="model-hint">27B. One choice question per tool call.</p>
+      </div>
+      <article class="card" id="gate-card">
+        <p class="eyebrow">Latest decision</p>
+        <h2 id="gate-decision">No call yet</h2>
+        <p class="card__reason" id="gate-reason">Send a message. The gate shows allow, deny, and ask-human before any tool runs.</p>
+        <ul class="bars" id="bars" hidden>
+          <li><span>allow</span><span class="bar"><span class="bar__fill bar__fill--allow" id="bar-allow"></span></span><span class="bar__n" id="n-allow">0%</span></li>
+          <li><span>deny</span><span class="bar"><span class="bar__fill bar__fill--deny" id="bar-deny"></span></span><span class="bar__n" id="n-deny">0%</span></li>
+          <li><span>ask-human</span><span class="bar"><span class="bar__fill bar__fill--ask" id="bar-ask-human"></span></span><span class="bar__n" id="n-ask-human">0%</span></li>
+        </ul>
+        <p class="meta" id="gate-meta"></p>
+      </article>
+      <section class="panel audit" aria-label="Audit log">
+        <div class="audit__head">
+          <h2>Audit log</h2>
+          <button class="btn btn-ghost" id="forget" type="button">New session</button>
+        </div>
+        <ol id="audit"></ol>
+        <p class="hint" id="audit-empty">Decisions land in D1 for this session, then expire.</p>
+      </section>
+    </aside>
+  </main>
+
+  <footer class="foot">
+    <p>
+      Inspired by <a href="https://github.com/yologdev/yoagent/tree/main/integrations/yoagent-workers/examples/clef-worker" rel="noopener">yologdev/yoagent clef-worker</a> (MIT).
+      <a href="https://x.com/michellechen/status/2106894709696422189" rel="noopener">Note</a>.
+      <a href="https://theserverless.dev/contact" rel="noopener">Contact</a>.
+    </p>
+    <p class="hint" id="test-note" hidden>This page is using Cloudflare’s always-pass Turnstile test widget. Production replaces the site key and TURNSTILE_SECRET.</p>
+  </footer>
+
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" defer></script>
+  <script type="module" src="./assets/app.js"></script>
+</body>
+</html>

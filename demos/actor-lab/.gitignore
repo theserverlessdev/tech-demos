@@ -1,0 +1,5 @@
+public/assets/*.js
+public/assets/*.js.map
+worker-configuration.d.ts
+.dev.vars
+.wrangler/

@@ -81,7 +81,7 @@ export function renderGallery(demos: DemoEntry[]): string {
 <html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="color-scheme" content="dark light" />
   <meta name="theme-color" content="#0e0e11" />
   <title>Tech Demos · theserverless.dev</title>
@@ -256,7 +256,7 @@ export function renderGallery(demos: DemoEntry[]): string {
       position: fixed;
       top: 0; left: 0; right: 0;
       z-index: 100;
-      padding: var(--space-3) 0;
+      padding: calc(var(--space-3) + env(safe-area-inset-top)) 0 var(--space-3);
       background-color: rgba(var(--color-background-rgb), 0.72);
       backdrop-filter: blur(10px);
       -webkit-backdrop-filter: blur(10px);
@@ -321,6 +321,22 @@ export function renderGallery(demos: DemoEntry[]): string {
     }
 
     .nav { display: none; }
+    .nav-toggle {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      min-height: 44px;
+      min-width: 44px;
+      padding: 0 0.85rem;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--color-border);
+      background: transparent;
+      color: var(--color-text-light);
+      font-family: var(--font-body);
+      font-weight: 600;
+      font-size: var(--text-sm);
+      cursor: pointer;
+    }
     @media (min-width: 900px) {
       .nav { display: flex; align-items: center; gap: var(--space-5); height: 100%; }
       .nav ul { display: flex; align-items: center; gap: var(--space-5); height: 100%; }
@@ -490,7 +506,7 @@ export function renderGallery(demos: DemoEntry[]): string {
     .grid {
       display: grid;
       gap: var(--space-4);
-      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
     }
 
     .demo-card {
@@ -664,11 +680,34 @@ export function renderGallery(demos: DemoEntry[]): string {
       color: var(--color-text-muted);
     }
 
+    @media (max-width: 899px) {
+      .nav-toggle { display: inline-flex; }
+      .header-content { height: auto; min-height: 50px; flex-wrap: wrap; gap: var(--space-2); }
+      .nav {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        padding: var(--space-3) var(--space-4) calc(var(--space-3) + env(safe-area-inset-bottom));
+        background: rgba(var(--color-background-rgb), 0.96);
+        border-bottom: 1px solid var(--color-border);
+      }
+      .nav.is-open {
+        display: block;
+        background: rgb(var(--color-background-rgb));
+        box-shadow: 0 16px 32px rgba(0, 0, 0, 0.12);
+      }
+      .nav ul { display: flex; flex-direction: column; align-items: stretch; gap: 0; }
+      .nav a { min-height: 44px; padding: 0.65rem 0; }
+      .button { min-height: 44px; }
+      .theme-toggle { width: 44px; height: 44px; }
+      main { padding-top: calc(var(--space-8) + env(safe-area-inset-top)); }
+    }
+
     @media (max-width: 600px) {
       .header-content { gap: var(--space-2); }
       .logo-word { font-size: 1rem; }
       .button { padding: var(--space-2) var(--space-3); }
-      .theme-toggle { width: 34px; height: 34px; }
 
       .facts { grid-template-columns: 1fr; }
       .fact { padding: var(--space-3) 0; }
@@ -703,11 +742,12 @@ export function renderGallery(demos: DemoEntry[]): string {
           <span class="logo-scope">demos</span>
         </a>
 
-        <nav class="nav" aria-label="Primary">
+        <nav class="nav" id="primary-nav" aria-label="Primary">
           <ul>${nav}</ul>
         </nav>
 
         <div class="header-actions">
+          <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="primary-nav">Menu</button>
           <button class="theme-toggle" type="button" aria-label="Toggle dark and light mode">
             <svg class="icon icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
             <svg class="icon icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>
@@ -821,12 +861,21 @@ ${cards || empty}
     // Theme toggle. CSS drives icon visibility from [data-theme].
     (function () {
       var toggle = document.querySelector(".theme-toggle");
-      if (!toggle) return;
-      toggle.addEventListener("click", function () {
-        var next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
-        document.documentElement.setAttribute("data-theme", next);
-        try { localStorage.setItem("theme", next); } catch (e) {}
-      });
+      if (toggle) {
+        toggle.addEventListener("click", function () {
+          var next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+          document.documentElement.setAttribute("data-theme", next);
+          try { localStorage.setItem("theme", next); } catch (e) {}
+        });
+      }
+      var menu = document.querySelector(".nav-toggle");
+      var nav = document.querySelector(".nav");
+      if (menu && nav) {
+        menu.addEventListener("click", function () {
+          var open = nav.classList.toggle("is-open");
+          menu.setAttribute("aria-expanded", open ? "true" : "false");
+        });
+      }
     })();
   </script>
 </body>

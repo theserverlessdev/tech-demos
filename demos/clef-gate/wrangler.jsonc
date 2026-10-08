@@ -1,0 +1,50 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tech-demos-clef-gate",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none"
+  },
+  "ai": { "binding": "AI" },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "tech-demos-clef-gate",
+      "database_id": "3f215e72-2edb-451b-98e4-ef81a8feef39",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "GATE", "class_name": "GateAgent" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["GateAgent"] }],
+  "ratelimits": [
+    // 7371 is goodvibes CREATE_LIMIT (PR #8). 7341–7344 are feedlog and others.
+    { "name": "CHAT_LIMIT", "namespace_id": "7372", "simple": { "limit": 12, "period": 60 } },
+    { "name": "SESSION_LIMIT", "namespace_id": "7373", "simple": { "limit": 6, "period": 60 } }
+  ],
+  "triggers": { "crons": ["17 * * * *"] },
+  "vars": {
+    "CHAT_MODEL": "@cf/zai-org/glm-5.3-flash",
+    "CLEF_MODEL": "@cf/cloudflare/clef",
+    "CLEF_FLASH_MODEL": "@cf/cloudflare/clef-flash",
+    "CONFIDENCE_FLOOR": "0.62",
+    "SESSION_TTL_SECONDS": "21600",
+    "PENDING_TTL_SECONDS": "600",
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFRgqlaAuJ8-Lnuc"
+  },
+  "secrets": {
+    "required": ["TURNSTILE_SECRET"]
+  },
+  "routes": [
+    { "pattern": "tech-demos.theserverless.dev/demos/clef-gate*", "zone_name": "theserverless.dev" },
+    { "pattern": "clef-gate.tech-demos.theserverless.dev/*", "zone_name": "theserverless.dev" }
+  ],
+  "workers_dev": true,
+  "observability": { "enabled": true }
+}

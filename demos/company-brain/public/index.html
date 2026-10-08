@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="theme-color" content="#0e0e11" />
+  <title>Company Brain · Tech Demos · theserverless.dev</title>
+  <meta name="description" content="A sandbox company brain on Workers. One Durable Object per visitor stores facts and decisions, and Workers AI answers only from that memory." />
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,560..760&family=Hanken+Grotesk:wght@420..680&family=JetBrains+Mono:wght@440;560&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./assets/brain.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="https://tech-demos.theserverless.dev/" aria-label="Tech Demos gallery">
+      <svg class="brand__mark" width="26" height="26" viewBox="0 -3 128 128" aria-hidden="true">
+        <g stroke="currentColor" stroke-width="6" stroke-linecap="round" opacity="0.45"><line x1="4" y1="58" x2="20" y2="58"/><line x1="1" y1="72" x2="19" y2="72"/><line x1="6" y1="86" x2="22" y2="86"/></g>
+        <path d="M44 92 C31 92 20 82 20 69 C20 57 29 47 41 46 C45 33 57 24 70 24 C85 24 98 35 100 51 C110 53 118 62 118 72 C118 83 109 92 97 92 Z" fill="none" stroke="currentColor" stroke-width="7.5" stroke-linejoin="round"/>
+        <path d="M69 36 L50 71 L63 71 L57 102 L88 60 L72 60 L80 36 Z" fill="currentColor"/>
+      </svg>
+      <span>Tech Demos</span>
+    </a>
+    <div class="topbar__title">
+      <h1>Company Brain</h1>
+      <p>Facts and decisions for one sandbox org</p>
+    </div>
+    <div class="topbar__actions">
+      <a class="btn" href="https://theserverless.dev/contact" rel="noopener">Contact</a>
+      <a class="btn btn-ghost" href="https://github.com/supermemoryai/company-brain" rel="noopener" target="_blank">Upstream</a>
+    </div>
+  </header>
+
+  <div class="strip" id="strip" role="status">
+    <span class="strip__dot"></span>
+    <span id="strip-text">Each visitor gets a private org. It expires, and a Durable Object alarm wipes it.</span>
+  </div>
+
+  <main>
+    <section class="gate" id="gate">
+      <p class="eyebrow">Sandbox</p>
+      <h2>Ask only what this org remembers.</h2>
+      <p class="lede">Create a private org. It is seeded with a few Northline facts and decisions. Chat answers cite those rows, or say they don't know. Nothing here is shared with another visitor.</p>
+      <div id="gate-turnstile" class="turnstile"></div>
+      <button class="btn btn-primary" id="create" type="button" disabled>Create sandbox org</button>
+      <p class="hint" id="gate-error" role="status"></p>
+    </section>
+
+    <div class="workspace" id="workspace" hidden>
+      <section class="chat" aria-label="Chat">
+        <header class="pane__head">
+          <h2>Chat</h2>
+          <p>Grounded in this org only.</p>
+        </header>
+        <div class="suggestions" role="group" aria-label="Example questions">
+          <button class="chip" type="button" data-ask="When does the warehouse ship?">When does the warehouse ship?</button>
+          <button class="chip" type="button" data-ask="What is the refund approval rule?">Refund rule</button>
+          <button class="chip" type="button" data-ask="What is the office wifi password?">Wifi password</button>
+        </div>
+        <ol class="log" id="log" aria-live="polite"></ol>
+        <form class="composer" id="composer">
+          <label class="sr-only" for="question">Question</label>
+          <textarea id="question" rows="3" maxlength="500" placeholder="Ask about Northline…" required></textarea>
+          <div class="composer__row">
+            <div id="chat-turnstile" class="turnstile"></div>
+            <button class="btn btn-primary" id="send" type="submit" disabled>Ask</button>
+          </div>
+          <p class="hint" id="chat-error" role="status"></p>
+        </form>
+      </section>
+
+      <aside class="memory" aria-label="Memory">
+        <header class="pane__head">
+          <h2>Memory</h2>
+          <p id="counts">Facts and decisions</p>
+        </header>
+        <div class="token" id="token" hidden>
+          <p class="token__title">Ingest token</p>
+          <p>Shown once. The server stores only a hash. Webhooks send it as <span class="mono">X-Ingest-Token</span>.</p>
+          <input id="token-value" type="password" readonly autocomplete="off" spellcheck="false" />
+          <div class="token__row">
+            <button class="btn" id="token-copy" type="button">Copy token</button>
+            <button class="btn btn-ghost" id="token-dismiss" type="button">Dismiss</button>
+          </div>
+        </div>
+        <section>
+          <h3>Facts</h3>
+          <ul class="cards" id="facts"></ul>
+        </section>
+        <section>
+          <h3>Decisions</h3>
+          <ul class="cards" id="decisions"></ul>
+        </section>
+        <form class="add" id="add">
+          <h3>Add to memory</h3>
+          <label>Kind
+            <select id="add-kind">
+              <option value="fact">Fact</option>
+              <option value="decision">Decision</option>
+            </select>
+          </label>
+          <label>Text
+            <textarea id="add-text" rows="3" maxlength="800" required placeholder="What should this org remember?"></textarea>
+          </label>
+          <div class="add__row">
+            <label>Author
+              <input id="add-author" maxlength="80" placeholder="You" />
+            </label>
+            <label>Source
+              <input id="add-source" maxlength="120" placeholder="manual" />
+            </label>
+          </div>
+          <button class="btn" id="add-btn" type="submit">Save</button>
+          <p class="hint" id="add-error" role="status"></p>
+        </form>
+      </aside>
+    </div>
+  </main>
+
+  <footer class="foot">
+    <p>
+      Inspired by <a href="https://github.com/supermemoryai/company-brain" rel="noopener" target="_blank">supermemoryai/company-brain</a>
+      (Apache-2.0). No Slack, Linear, or GitHub connectors.
+      <a href="https://theserverless.dev/contact" rel="noopener">Contact</a>
+    </p>
+  </footer>
+
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
+  <script type="module" src="./assets/app.js"></script>
+</body>
+</html>

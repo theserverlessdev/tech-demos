@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark light" />
+  <meta name="theme-color" content="#0e0e11" />
+  <title>Tanbase · Tech Demos · theserverless.dev</title>
+  <meta name="description" content="An anonymous kanban on Cloudflare Workers: D1 cards, a hibernating Board Durable Object, R2 attachments, and a Workflow that splits a task with Workers AI." />
+  <meta property="og:title" content="Tanbase slice" />
+  <meta property="og:description" content="Kanban on Workers with D1, a Board Durable Object, R2, and a Workers AI split workflow." />
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Hanken+Grotesk:wght@400..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script src="./assets/theme.js"></script>
+  <link rel="stylesheet" href="./assets/board.css" />
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="https://tech-demos.theserverless.dev/" aria-label="Tech Demos gallery">
+      <svg class="brand__mark" width="26" height="26" viewBox="0 -3 128 128" aria-hidden="true">
+        <g stroke="currentColor" stroke-width="6" stroke-linecap="round" opacity="0.45"><line x1="4" y1="58" x2="20" y2="58"/><line x1="1" y1="72" x2="19" y2="72"/><line x1="6" y1="86" x2="22" y2="86"/></g>
+        <path d="M44 92 C31 92 20 82 20 69 C20 57 29 47 41 46 C45 33 57 24 70 24 C85 24 98 35 100 51 C110 53 118 62 118 72 C118 83 109 92 97 92 Z" fill="none" stroke="currentColor" stroke-width="7.5" stroke-linejoin="round"/>
+        <path d="M69 36 L50 71 L63 71 L57 102 L88 60 L72 60 L80 36 Z" fill="currentColor"/>
+      </svg>
+      <span>Tech Demos</span>
+    </a>
+    <div class="topbar__title">
+      <h1>Tanbase</h1>
+      <p>Kanban on D1, a Board Durable Object, R2, and Workflows</p>
+    </div>
+    <div class="topbar__actions">
+      <a class="btn" href="https://theserverless.dev/contact" rel="noopener">Contact</a>
+      <a class="btn btn-ghost" href="https://github.com/tanfust/tanbase-core" rel="noopener" target="_blank">Upstream</a>
+      <button class="btn btn-ghost btn-icon" id="theme" type="button" aria-label="Switch colour theme">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9Z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="strip" role="status">
+    <span class="strip__dot" id="strip-dot"></span>
+    <span id="strip-text">Loading the board…</span>
+  </div>
+
+  <main id="app"></main>
+
+  <footer class="foot">
+    <p>
+      A slice of <a href="https://github.com/tanfust/tanbase-core" rel="noopener" target="_blank">tanfust/tanbase-core</a>
+      (MIT). The idea started in
+      <a href="https://x.com/wassimbenr/status/2104630626758652327" rel="noopener" target="_blank">this post</a>.
+      <a href="https://github.com/theserverlessdev/tech-demos/tree/main/demos/tanbase" rel="noopener" target="_blank">Source</a>
+    </p>
+  </footer>
+
+  <script type="module" src="./assets/app.js"></script>
+</body>
+</html>
