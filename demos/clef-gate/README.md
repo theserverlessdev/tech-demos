@@ -34,10 +34,9 @@ browser ── Turnstile + chat ──► Worker (rate limit, cookie)
 browser ── Approve / Deny ──► same DO resumes the call
 ```
 
-Routes, once deployed:
+Live at [https://tech-demos.theserverless.dev/demos/clef-gate/](https://tech-demos.theserverless.dev/demos/clef-gate/). The subdomain [https://clef-gate.tech-demos.theserverless.dev/](https://clef-gate.tech-demos.theserverless.dev/) serves the same Worker.
 
-- `https://tech-demos.theserverless.dev/demos/clef-gate/`
-- `https://clef-gate.tech-demos.theserverless.dev/`
+D1 `tech-demos-clef-gate` (`3f215e72-2edb-451b-98e4-ef81a8feef39`) is bound, and migration `0001` is applied remotely. `TURNSTILE_SITE_KEY` is the production widget. `TURNSTILE_SECRET` is a Worker secret and is not in git.
 
 The hub registry keeps a fallback Dynamic Worker that redirects to the subdomain if the zone route is missing. Asset URLs are relative, so the same build works at the prefix and at the subdomain root.
 
@@ -56,41 +55,23 @@ Then, in another shell:
 bun run scripts/smoke.ts http://127.0.0.1:8787
 ```
 
-`scripts/capture.ts` records a Playwright pass of the prefix URL into `artifacts/` (needs Chrome and `ffmpeg`). Smoke and capture on this machine used the local heuristic, because `wrangler whoami` was not logged in and Workers AI did not answer.
+`scripts/capture.ts` records a Playwright pass of the prefix URL into `artifacts/` (needs Chrome and `ffmpeg`).
 
-`wrangler.jsonc` ships Cloudflare’s published always-pass Turnstile site key (`1x00000000000000000000AA`). `.dev.vars.example` has the matching test secret. The Worker also uses that test secret when `TURNSTILE_SECRET` is empty **and** the host is localhost. A public host with a missing secret, or with the test secret, returns `503 turnstile_unconfigured` and does not call the model.
+`.dev.vars.example` has Cloudflare’s published always-pass Turnstile test secret. The Worker uses that test secret when `TURNSTILE_SECRET` is empty **and** the host is localhost. A public host with a missing secret, or with the test secret, returns `503 turnstile_unconfigured` and does not call the model.
 
 On localhost, if Workers AI cannot be reached, the gate uses a labeled local heuristic (`source: "local-heuristic"`) so the desk still runs. Production does not. A failed Clef call there is `source: "unavailable"` and the tool does not run.
 
-Smoke sends `x-planner: local` and `x-clef-source: heuristic`. Those headers are ignored when the host is not localhost.
+Smoke sends `x-planner: local` and `x-clef-source: heuristic`. Those headers are ignored when the host is not localhost. Against a remote URL the real Turnstile secret rejects the dummy token, and the session checks are skipped instead of throwing.
 
 ## Deploy
 
-Needs a D1 database, a Durable Object migration, Workers AI, the two rate-limit namespaces, and a real Turnstile widget. From this folder, with the owner account (unset any other API token):
+The Worker is already deployed. D1 and the Turnstile site key in `wrangler.jsonc` match that deploy. `TURNSTILE_SECRET` is already on the Worker.
+
+Chat and session rate limits use namespaces `7372` and `7373`. `7371` belongs to the goodvibes demo, and `7341`–`7344` are shared by feedlog and other open branches. Those two ids take effect the next time this config is deployed. Do not recreate the database.
 
 ```bash
 cd demos/clef-gate
-bunx wrangler whoami
-bunx wrangler d1 create tech-demos-clef-gate
-# Put the database_id into wrangler.jsonc (the committed id is a local placeholder).
-
-# Create a Turnstile widget for both hostnames, then:
-#   set TURNSTILE_SITE_KEY in wrangler.jsonc to the real site key
-bunx wrangler secret put TURNSTILE_SECRET
-
 env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bunx wrangler deploy
-bunx wrangler d1 migrations apply DB --remote
 ```
 
-Redeploy the hub (`apps/hub`) after this Worker so the gallery card is live. The fallback redirect only matters when the zone route is missing.
-
 Sessions last 6 hours (`SESSION_TTL_SECONDS`). An hourly cron and the Durable Object alarm delete the session row and its audit rows. Args summaries are capped; email bodies are not written to D1.
-
-## Owner steps if this environment could not deploy
-
-1. `bunx wrangler login` (or export a token), then `bunx wrangler whoami` and confirm account `3f847e2fadeef3e583701e8fa25657b5`.
-2. `bunx wrangler d1 create tech-demos-clef-gate` and replace `database_id` in `wrangler.jsonc`.
-3. Create a Turnstile widget for `tech-demos.theserverless.dev` and `clef-gate.tech-demos.theserverless.dev`. Put the site key in `TURNSTILE_SITE_KEY`. `bunx wrangler secret put TURNSTILE_SECRET`.
-4. Deploy with the command above, then `bunx wrangler d1 migrations apply DB --remote`.
-5. Redeploy `apps/hub`.
-6. Open `https://clef-gate.tech-demos.theserverless.dev/` and run one prompt without the heuristic headers so the audit row’s `source` is `clef` or `clef-flash`.

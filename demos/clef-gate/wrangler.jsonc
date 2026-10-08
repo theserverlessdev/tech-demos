@@ -15,9 +15,7 @@
     {
       "binding": "DB",
       "database_name": "tech-demos-clef-gate",
-      // Placeholder so `wrangler dev` can apply migrations locally.
-      // Replace with the id from `wrangler d1 create tech-demos-clef-gate` before deploy.
-      "database_id": "00000000-0000-4000-8000-000000000734",
+      "database_id": "3f215e72-2edb-451b-98e4-ef81a8feef39",
       "migrations_dir": "migrations"
     }
   ],
@@ -26,8 +24,9 @@
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["GateAgent"] }],
   "ratelimits": [
-    { "name": "CHAT_LIMIT", "namespace_id": "7341", "simple": { "limit": 12, "period": 60 } },
-    { "name": "SESSION_LIMIT", "namespace_id": "7342", "simple": { "limit": 6, "period": 60 } }
+    // 7371 is goodvibes CREATE_LIMIT (PR #8). 7341–7344 are feedlog and others.
+    { "name": "CHAT_LIMIT", "namespace_id": "7372", "simple": { "limit": 12, "period": 60 } },
+    { "name": "SESSION_LIMIT", "namespace_id": "7373", "simple": { "limit": 6, "period": 60 } }
   ],
   "triggers": { "crons": ["17 * * * *"] },
   "vars": {
@@ -37,7 +36,10 @@
     "CONFIDENCE_FLOOR": "0.62",
     "SESSION_TTL_SECONDS": "21600",
     "PENDING_TTL_SECONDS": "600",
-    "TURNSTILE_SITE_KEY": "1x00000000000000000000AA"
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFRgqlaAuJ8-Lnuc"
+  },
+  "secrets": {
+    "required": ["TURNSTILE_SECRET"]
   },
   "routes": [
     { "pattern": "tech-demos.theserverless.dev/demos/clef-gate*", "zone_name": "theserverless.dev" },

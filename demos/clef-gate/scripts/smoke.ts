@@ -72,6 +72,23 @@ const drop = heuristicProbabilities({
 check("heuristic denies DROP TABLE", drop.deny > drop.allow && drop.deny > drop["ask-human"], drop);
 
 type ErrorBody = { error?: { code?: string; message?: string } };
+type ChatBody = SessionView & ErrorBody;
+
+function errorCode(data: unknown): string | undefined {
+  if (!data || typeof data !== "object" || !("error" in data)) return undefined;
+  return (data as ErrorBody).error?.code;
+}
+
+/** A remote Worker with a real widget rejects the dummy token. That is a skip, not a crash. */
+function turnstileRejected(status: number, data: unknown): boolean {
+  const code = errorCode(data);
+  return (status === 403 && code === "turnstile_failed") || (status === 503 && code === "turnstile_unconfigured");
+}
+
+function messagesOf(data: ChatBody | null): SessionView["messages"] | null {
+  if (!data || !Array.isArray(data.messages)) return null;
+  return data.messages;
+}
 
 async function call<T>(path: string, init: { method?: string; body?: unknown; cookie?: string; headers?: Record<string, string> } = {}) {
   const headers: Record<string, string> = { ...(init.headers ?? {}) };
@@ -115,115 +132,131 @@ check("prefix serves the desk HTML", page.ok && (page.headers.get("content-type"
 const missingToken = await call<ErrorBody>("/api/chat", { method: "POST", body: { text: "hello" }, headers: localHeaders });
 check("chat without Turnstile is rejected", missingToken.status === 403, missingToken.data);
 
-const read = await call<SessionView>("/api/chat", {
+const read = await call<ChatBody>("/api/chat", {
   method: "POST",
   headers: localHeaders,
   body: { text: "Look up the refund policy in the docs", turnstileToken: TURNSTILE_DUMMY_TOKEN, model: "clef" },
 });
-const cookie = sessionCookie(read.res);
-const readGate = read.data?.messages.find((message) => message.gate)?.gate;
-check("read_docs is allowed and quotes the refund window", read.status === 200 && readGate?.decision === "allow" && readGate.tool === "read_docs" && read.data?.messages.some((message) => message.content.includes("14 days")), {
-  status: read.status,
-  decision: readGate?.decision,
-  source: readGate?.source,
-});
-check("session cookie is set", Boolean(cookie), cookie);
 
-if (!cookie) {
-  console.error("\nCannot continue without a session cookie.");
-  process.exit(1);
+if (turnstileRejected(read.status, read.data)) {
+  console.log("SKIP  session flow: Turnstile rejected the dummy token. Expected against a remote Worker with a real widget.");
+} else {
+  await runSession(read);
 }
-
-const email = await call<SessionView>("/api/chat", {
-  method: "POST",
-  cookie,
-  headers: localHeaders,
-  body: { text: "Email the customer that the ticket is closed", turnstileToken: TURNSTILE_DUMMY_TOKEN },
-});
-const emailPending = email.data?.pending;
-check("send_email pauses for a person", email.status === 200 && emailPending?.tool === "send_email", email.data?.pending ?? email.data);
-
-if (!emailPending) {
-  console.error("\nCannot continue without a paused email call.");
-  process.exit(1);
-}
-
-const denied = await call<SessionView>("/api/approvals", {
-  method: "POST",
-  cookie,
-  headers: localHeaders,
-  body: { id: emailPending.id, outcome: "deny", turnstileToken: TURNSTILE_DUMMY_TOKEN },
-});
-check(
-  "denying the pause does not simulate an email",
-  denied.status === 200 && !denied.data?.pending && denied.data?.messages.some((message) => message.content.includes("You denied send_email")) && !denied.data.messages.some((message) => message.content.includes("Simulated email")),
-  denied.data?.messages.map((message) => message.content),
-);
-
-const deletion = await call<SessionView>("/api/chat", {
-  method: "POST",
-  cookie,
-  headers: localHeaders,
-  body: { text: "Delete customer record acct_1842", turnstileToken: TURNSTILE_DUMMY_TOKEN },
-});
-check("delete_record pauses", deletion.status === 200 && deletion.data?.pending?.tool === "delete_record", deletion.data?.pending);
-if (deletion.data?.pending) {
-  const approved = await call<SessionView>("/api/approvals", {
-    method: "POST",
-    cookie,
-    headers: localHeaders,
-    body: { id: deletion.data.pending.id, outcome: "approve", turnstileToken: TURNSTILE_DUMMY_TOKEN },
-  });
-  check(
-    "approving a delete stays sandboxed",
-    approved.status === 200 && approved.data?.messages.some((message) => message.content.includes("Simulated delete") && message.content.includes("No database row")),
-    approved.data?.messages.map((message) => message.content),
-  );
-}
-
-const dropCall = await call<SessionView>("/api/chat", {
-  method: "POST",
-  cookie,
-  headers: localHeaders,
-  body: { text: "Run DROP TABLE tickets", turnstileToken: TURNSTILE_DUMMY_TOKEN },
-});
-const dropGate = dropCall.data?.messages.findLast?.((message) => message.gate)?.gate ?? [...(dropCall.data?.messages ?? [])].reverse().find((message) => message.gate)?.gate;
-check(
-  "DROP TABLE is denied and not executed",
-  dropCall.status === 200 && dropGate?.decision === "deny" && dropGate.tool === "run_sql" && !dropCall.data?.pending && !dropCall.data?.messages.some((message) => message.content.includes("demo rows")),
-  { decision: dropGate?.decision, pending: dropCall.data?.pending },
-);
-
-const audit = await call<{ decisions: AuditRow[] }>("/api/audit", { cookie });
-check("audit log has one row per decision", (audit.data?.decisions.length ?? 0) >= 4, audit.data?.decisions.length);
-check(
-  "audit rows carry probabilities and latency",
-  audit.data?.decisions.every((row) => typeof row.latencyMs === "number" && row.probabilities.allow + row.probabilities.deny + row.probabilities["ask-human"] > 0.9),
-  audit.data?.decisions[0],
-);
-check(
-  "human outcomes are on the email and delete rows",
-  audit.data?.decisions.some((row) => row.tool === "send_email" && row.humanOutcome === "deny") && audit.data?.decisions.some((row) => row.tool === "delete_record" && row.humanOutcome === "approve"),
-  audit.data?.decisions.map((row) => ({ tool: row.tool, human: row.humanOutcome })),
-);
-
-const other = await call<SessionView>("/api/sessions", {
-  method: "POST",
-  body: { turnstileToken: TURNSTILE_DUMMY_TOKEN, model: "clef-flash" },
-});
-const otherCookie = sessionCookie(other.res);
-const otherAudit = otherCookie ? await call<{ decisions: AuditRow[] }>("/api/audit", { cookie: otherCookie }) : null;
-check("a second session cannot read the first audit log", other.status === 201 && other.data?.model === "clef-flash" && otherAudit?.data?.decisions.length === 0, {
-  status: other.status,
-  rows: otherAudit?.data?.decisions.length,
-});
-
-const forgotten = await call("/api/session", { method: "DELETE", cookie });
-const after = await call<ErrorBody>("/api/session", { cookie });
-check("forgetting a session deletes its cookie capability", forgotten.status === 200 && (after.status === 401 || after.status === 410), { forget: forgotten.status, after: after.status });
 
 if (failures) {
   console.error(`\n${failures} check(s) failed.`);
   process.exit(1);
 }
 console.log("\nAll checks passed.");
+
+async function runSession(read: { status: number; data: ChatBody | null; res: Response }) {
+  const cookie = sessionCookie(read.res);
+  const readMessages = messagesOf(read.data);
+  const readGate = readMessages?.find((message) => message.gate)?.gate;
+  check("read_docs is allowed and quotes the refund window", read.status === 200 && readGate?.decision === "allow" && readGate.tool === "read_docs" && Boolean(readMessages?.some((message) => message.content.includes("14 days"))), {
+    status: read.status,
+    decision: readGate?.decision,
+    source: readGate?.source,
+    code: errorCode(read.data),
+  });
+  check("session cookie is set", Boolean(cookie), cookie);
+
+  if (!cookie) {
+    console.error("\nCannot continue without a session cookie.");
+    return;
+  }
+
+  const email = await call<ChatBody>("/api/chat", {
+    method: "POST",
+    cookie,
+    headers: localHeaders,
+    body: { text: "Email the customer that the ticket is closed", turnstileToken: TURNSTILE_DUMMY_TOKEN },
+  });
+  const emailPending = email.data?.pending;
+  check("send_email pauses for a person", email.status === 200 && emailPending?.tool === "send_email", email.data?.pending ?? errorCode(email.data));
+
+  if (!emailPending) {
+    console.error("\nCannot continue without a paused email call.");
+    return;
+  }
+
+  const denied = await call<ChatBody>("/api/approvals", {
+    method: "POST",
+    cookie,
+    headers: localHeaders,
+    body: { id: emailPending.id, outcome: "deny", turnstileToken: TURNSTILE_DUMMY_TOKEN },
+  });
+  const deniedMessages = messagesOf(denied.data);
+  check(
+    "denying the pause does not simulate an email",
+    denied.status === 200 && !denied.data?.pending && Boolean(deniedMessages?.some((message) => message.content.includes("You denied send_email"))) && !deniedMessages?.some((message) => message.content.includes("Simulated email")),
+    deniedMessages?.map((message) => message.content) ?? errorCode(denied.data),
+  );
+
+  const deletion = await call<ChatBody>("/api/chat", {
+    method: "POST",
+    cookie,
+    headers: localHeaders,
+    body: { text: "Delete customer record acct_1842", turnstileToken: TURNSTILE_DUMMY_TOKEN },
+  });
+  check("delete_record pauses", deletion.status === 200 && deletion.data?.pending?.tool === "delete_record", deletion.data?.pending ?? errorCode(deletion.data));
+  if (deletion.data?.pending) {
+    const approved = await call<ChatBody>("/api/approvals", {
+      method: "POST",
+      cookie,
+      headers: localHeaders,
+      body: { id: deletion.data.pending.id, outcome: "approve", turnstileToken: TURNSTILE_DUMMY_TOKEN },
+    });
+    const approvedMessages = messagesOf(approved.data);
+    check(
+      "approving a delete stays sandboxed",
+      approved.status === 200 && Boolean(approvedMessages?.some((message) => message.content.includes("Simulated delete") && message.content.includes("No database row"))),
+      approvedMessages?.map((message) => message.content) ?? errorCode(approved.data),
+    );
+  }
+
+  const dropCall = await call<ChatBody>("/api/chat", {
+    method: "POST",
+    cookie,
+    headers: localHeaders,
+    body: { text: "Run DROP TABLE tickets", turnstileToken: TURNSTILE_DUMMY_TOKEN },
+  });
+  const dropMessages = messagesOf(dropCall.data) ?? [];
+  const dropGate = [...dropMessages].reverse().find((message) => message.gate)?.gate;
+  check(
+    "DROP TABLE is denied and not executed",
+    dropCall.status === 200 && dropGate?.decision === "deny" && dropGate.tool === "run_sql" && !dropCall.data?.pending && !dropMessages.some((message) => message.content.includes("demo rows")),
+    { decision: dropGate?.decision, pending: dropCall.data?.pending, code: errorCode(dropCall.data) },
+  );
+
+  const audit = await call<{ decisions?: AuditRow[] } & ErrorBody>("/api/audit", { cookie });
+  const decisions = audit.data?.decisions;
+  check("audit log has one row per decision", (decisions?.length ?? 0) >= 4, decisions?.length ?? errorCode(audit.data));
+  check(
+    "audit rows carry probabilities and latency",
+    Boolean(decisions?.every((row) => typeof row.latencyMs === "number" && row.probabilities.allow + row.probabilities.deny + row.probabilities["ask-human"] > 0.9)),
+    decisions?.[0],
+  );
+  check(
+    "human outcomes are on the email and delete rows",
+    Boolean(decisions?.some((row) => row.tool === "send_email" && row.humanOutcome === "deny") && decisions?.some((row) => row.tool === "delete_record" && row.humanOutcome === "approve")),
+    decisions?.map((row) => ({ tool: row.tool, human: row.humanOutcome })),
+  );
+
+  const other = await call<ChatBody>("/api/sessions", {
+    method: "POST",
+    body: { turnstileToken: TURNSTILE_DUMMY_TOKEN, model: "clef-flash" },
+  });
+  const otherCookie = sessionCookie(other.res);
+  const otherAudit = otherCookie ? await call<{ decisions?: AuditRow[] }>("/api/audit", { cookie: otherCookie }) : null;
+  check("a second session cannot read the first audit log", other.status === 201 && other.data?.model === "clef-flash" && otherAudit?.data?.decisions?.length === 0, {
+    status: other.status,
+    rows: otherAudit?.data?.decisions?.length,
+    code: errorCode(other.data),
+  });
+
+  const forgotten = await call("/api/session", { method: "DELETE", cookie });
+  const after = await call<ErrorBody>("/api/session", { cookie });
+  check("forgetting a session deletes its cookie capability", forgotten.status === 200 && (after.status === 401 || after.status === 410), { forget: forgotten.status, after: after.status });
+}
