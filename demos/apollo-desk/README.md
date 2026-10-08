@@ -11,6 +11,30 @@ Agents SDK `Agent` with its own SQLite database.
 
 The demo runs on Workers Paid. It does not use Workers for Platforms, Containers, or Vectorize.
 
+## What this demonstrates
+
+**Pattern.** One Agents SDK Durable Object per desk runs the voice turn — speech to text, a tool loop, then speech — and stores SQLite memory with vector recall, schedules, and a confirmation gate. The desk is an MCP server the brain calls on the same WebSocket.
+
+**What you can do**
+
+- Hold to talk, type, or tap a suggested turn.
+- Save a fact, a list item, or a timer, then refresh and see them return from the Durable Object.
+- Ask it to change the volume. The brain calls the MCP server in the desk.
+- Ask it to forget everything and confirm or cancel within 30 seconds.
+- Open the console for the SQLite transcript, vector scores, schedules, and the turn trace.
+
+**What you could build**
+
+- A voice appliance whose tools live on the device and whose memory lives in one Durable Object.
+- A personal list and timer that survive a refresh.
+- An agent that asks before it runs an unsafe tool.
+
+**Limits**
+
+- The browser is a stand-in for the ESP32 desk. There is no physical device.
+- Workers AI spend is metered by a shared daily budget.
+- Vector recall is cosine similarity over embeddings stored in the Durable Object, not Vectorize.
+
 ![The desk after a turn](./artifacts/01-desk-turn.png)
 
 ## What a visitor sees

@@ -11,6 +11,29 @@ A shared ink board on Cloudflare Workers. This is a **small demo** inspired by [
 
 Walkthrough stills and a short video: [artifacts/](./artifacts/).
 
+## What this demonstrates
+
+**Pattern.** PartyServer routes each ink room to one hibernating `BoardRoom` Durable Object. Yjs strokes persist in Durable Object storage. Cursors stay on the awareness channel and are not stored. An alarm wipes the room two hours after it is created.
+
+**What you can do**
+
+- Open a room after the Turnstile check and send the link.
+- Draw and watch the stroke sync to another tab.
+- See live cursors that disappear when the socket closes.
+- Hit the caps: 8 connections, 240 strokes, and a 256 KB snapshot.
+
+**What you could build**
+
+- A collaborative whiteboard that deletes itself.
+- Live annotation on a shared page.
+- A classroom sketch room with a hard cap on size and time.
+
+**Limits**
+
+- Display names ride awareness only. They are not written to Durable Object storage.
+- Creating a room needs Turnstile and `CREATE_LIMIT`. Opening a socket needs `CONNECT_LIMIT`.
+- This is a small board inspired by PartyKit, not a fork of that monorepo.
+
 ## What it proves
 
 | Piece | What the demo does with it |

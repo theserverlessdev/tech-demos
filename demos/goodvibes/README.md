@@ -9,6 +9,29 @@ A **75-second multiplayer orb hunt** on Cloudflare Workers. Inspired by [benallf
 
 Walkthrough stills and a short video: [artifacts/](./artifacts/).
 
+## What this demonstrates
+
+**Pattern.** One `VibeRoom` Durable Object per room is the coordinator. Hibernating WebSockets carry poses and scores. An alarm runs the countdown and the 75-second round. The room owns the orbs and the clock, so a second tab is another player.
+
+**What you can do**
+
+- Join or create a named room and open it in a second tab.
+- Start a round and move with the keyboard, a click, or the on-screen pad.
+- Collect ember orbs (+1) and gold orbs (+3). Highest score wins. Play again without leaving.
+- Play the same round on a 2D floor when WebGL cannot start.
+
+**What you could build**
+
+- A realtime game where the server owns positions, pickups, and the round clock.
+- A classroom activity with a shared timer and a scoreboard.
+- Any room that should hibernate when the last player leaves.
+
+**Limits**
+
+- 2–8 players. Room create is rate-limited (8 creates / 60s / IP).
+- This is an original game inspired by goodvibes, not a copy of that kit.
+- There are no accounts. The Durable Object is the only authority for scores.
+
 ## How to play
 
 1. Join (or create) a named room. Open a second tab.

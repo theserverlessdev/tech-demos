@@ -17,6 +17,30 @@ Disposable inboxes. Two ways to run it:
 
 The button clones `demos/temp-email`. Set `MAIL_DOMAIN`, `PUBLIC_ORIGIN`, `HOSTED_MODE=false`, Turnstile keys, and `AGENT_API_KEY` (admin only). Create an **R2 bucket** for attachments (`wrangler r2 bucket create …` and set `r2_buckets[0].bucket_name`). Then attach Email Routing — details in SETUP. If the button cannot apply this monorepo subdirectory cleanly, copy the folder and run `bun run deploy:selfhost` with [wrangler.selfhost.jsonc](./wrangler.selfhost.jsonc).
 
+## What this demonstrates
+
+**Pattern.** An Email Worker receives catch-all mail, parses the MIME message, and stores metadata in D1 and attachment bytes in R2. A cron deletes expired inboxes. An agent mints its own Turnstile-gated key and can long-poll for the next message. The hosted demo is not a shared public API key.
+
+**What you can do**
+
+- Mint a short-lived address and copy it.
+- Send the sample message and read the extracted code or link.
+- Open HTML mail in a sandboxed frame. Remote images stay blocked until you allow them.
+- Mint a Turnstile-gated agent key, shown once, for the long-poll API.
+- Deploy the same Worker onto your own zone.
+
+**What you could build**
+
+- Throwaway inboxes for signup and one-time-code tests.
+- An agent that waits on the next message instead of sharing one API secret.
+- A self-hosted mail zone with the same Email Worker, D1, and R2 layout.
+
+**Limits**
+
+- Demo, no SLA. Mail may drop. Inboxes expire. Testing only.
+- No fraud, spam, phishing, or bulk ToS-laundering.
+- The hosted addresses live on `email.lomvic.com`, not on the hub host.
+
 ## How it works
 
 ```text

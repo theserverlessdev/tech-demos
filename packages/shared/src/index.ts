@@ -1,7 +1,14 @@
 export type DemoMeta = {
   slug: string;
   title: string;
+  /** One-line tagline under the title. */
   description: string;
+  /** The platform pattern this demo proves, in one or two sentences. */
+  demonstrates: string;
+  /** What a visitor can actually try in this demo. */
+  capabilities: string[];
+  /** Products you could build with the same pattern. */
+  useCases: string[];
   tags: string[];
 };
 

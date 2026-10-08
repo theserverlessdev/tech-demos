@@ -9,6 +9,29 @@ Upstream is **GPL-3.0**. This folder is original code under the same license as 
 - **Plan:** [PLAN.md](./PLAN.md)
 - **What changed vs the idea:** [CHANGELOG.md](./CHANGELOG.md)
 
+## What this demonstrates
+
+**Pattern.** One `ChatRoom` Durable Object per room name fans out hibernating WebSockets. D1 keeps the transcript across refresh, KV stores the display name, and R2 holds an attachment the message can link to.
+
+**What you can do**
+
+- Join the same room in two tabs and watch a message arrive in both.
+- Refresh and still see the D1 transcript.
+- Set a display name stored in KV.
+- Attach a file. The message links to the R2 object, and images preview.
+
+**What you could build**
+
+- An incident channel whose transcript survives a refresh.
+- In-product comments with file drops.
+- A support room that hibernates when nobody is connected.
+
+**Limits**
+
+- Presence is a connection-count stub, not a full member directory.
+- This is original code inspired by Edgechat, not a fork of that GPL app.
+- There is no account system. The display name is a KV session cookie.
+
 ## What it proves
 
 | Binding | What the demo does with it |

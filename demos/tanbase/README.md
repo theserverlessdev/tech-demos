@@ -11,6 +11,29 @@ An anonymous kanban on Cloudflare Workers. This is a **small demo** inspired by 
 
 Walkthrough stills and a short video: [artifacts/](./artifacts/).
 
+## What this demonstrates
+
+**Pattern.** D1 is the board of record. One hibernating `BoardRoom` Durable Object per board fans creates, moves, edits, and deletes to every open tab. A Workflow splits a card with Workers AI, or writes four fallback subtasks if the model output is unusable. There are no accounts. Boards expire after 7 days.
+
+**What you can do**
+
+- Create a board and add, edit, move, and delete cards.
+- Open the same board in another tab and watch the Durable Object sync it.
+- Attach a small file to a card (256 KB; PNG, JPEG, WEBP, GIF, PDF, or plain text).
+- Split a card and watch the workflow steps, including the fallback subtasks.
+
+**What you could build**
+
+- A small shared board that does not need accounts.
+- Live card updates across every open tab.
+- A "split this task" action backed by a Workflow.
+
+**Limits**
+
+- A browser cookie scopes the boards: 3 boards, 40 cards, then a 7-day TTL.
+- The hourly cron marks overdue cards in a log. It does not send email.
+- Turnstile is required to create a board, upload, and split. A missing secret fails closed.
+
 ## What it proves
 
 | Binding | What the demo does with it |

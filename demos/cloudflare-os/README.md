@@ -3,6 +3,30 @@
 This demo is a small, faithful slice of [cloudflare/cloudflare-os](https://github.com/cloudflare/cloudflare-os). It runs on
 Workers Paid. It does not use Workers for Platforms or Containers.
 
+## What this demonstrates
+
+**Pattern.** Gadgets run as Durable Object facets inside Dynamic Workers, each with private SQLite. The sandboxed UI calls the facet over Cap'n Web. A gatekeeper holds an outside read until a person approves it.
+
+**What you can do**
+
+- Open one workspace link in two tabs.
+- Spawn Slides, Tic-tac-toe, Pixel Board, or Headlines, or ask the agent to draw.
+- Use the gadget inside a sandboxed frame.
+- Approve or deny the Headlines gadget's fetch of hn.algolia.com.
+- Inspect RPC timings and that facet's SQLite tables.
+
+**What you could build**
+
+- An internal workspace where each tool is a sandboxed worker with its own database.
+- An agent that can edit a gadget but cannot fetch until someone approves.
+- A host for small multiplayer apps that share one workspace link.
+
+**Limits**
+
+- Not the full Cloudflare OS product: no git history, OT editing, OAuth, export, or login.
+- Eight gadgets per workspace. Dynamic Worker creates and AI spend are capped per day.
+- Gadgets start with `globalOutbound` null. Headlines cannot fetch until the approval queue says yes.
+
 - **Live:** <https://tech-demos.theserverless.dev/demos/cloudflare-os/>
 - **Subdomain:** <https://cloudflare-os.tech-demos.theserverless.dev/>
 - **Plan:** [PLAN.md](./PLAN.md) compares the slice with the full upstream product.

@@ -319,3 +319,24 @@ select {
   .page { width: min(1120px, calc(100% - 16px)); }
 }
 
+
+.shows {
+  margin: 0 0 0.85rem;
+  font-size: 0.875rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.shows--bar {
+  margin: 0;
+  padding: 0.7rem 1rem;
+  background: rgba(194, 65, 12, 0.08);
+  border-bottom: 1px solid rgba(194, 65, 12, 0.28);
+}
+.shows__k {
+  margin-right: 0.45rem;
+  font-family: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #c2410c;
+}

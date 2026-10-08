@@ -9,6 +9,29 @@ A public feedback board on Cloudflare Workers. This is a **small demo** inspired
 
 Walkthrough stills and a short video: [artifacts/](./artifacts/).
 
+## What this demonstrates
+
+**Pattern.** D1 holds posts, one vote per visitor cookie, and changelog rows. Workers AI embeds the title and body into Vectorize so the compose box can list similar posts. If the index is unavailable, the page falls back to word overlap and labels that path `lexical`.
+
+**What you can do**
+
+- Read the seeded ideas, vote once from this browser, and open the roadmap and changelog.
+- Write a post and watch similar posts appear as you type.
+- Attach a JPEG, PNG, GIF, or WebP under 1.5 MB.
+- See the lexical label when Vectorize is not available.
+
+**What you could build**
+
+- A public roadmap with one vote per browser.
+- A changelog next to the requests that prompted it.
+- A request form that warns when a near-duplicate already exists.
+
+**Limits**
+
+- Visitor posts expire after 14 days. An hourly cron deletes the post, its votes, its R2 object, and its vector.
+- There is no account. The voter id is an HttpOnly cookie. Display names that contain `@` are rejected.
+- Similarity in local dev is word overlap, because this Wrangler does not simulate Vectorize.
+
 ## What it proves
 
 | Binding | What the demo does with it |

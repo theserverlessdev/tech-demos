@@ -59,10 +59,13 @@ export default {
 
     if (url.pathname === "/api/demos") {
       return Response.json(
-        demos.map(({ slug, title, description, tags }) => ({
+        demos.map(({ slug, title, description, demonstrates, capabilities, useCases, tags }) => ({
           slug,
           title,
           description,
+          demonstrates,
+          capabilities,
+          useCases,
           tags,
           href: demoPath(slug),
           url: demoUrl(slug),
