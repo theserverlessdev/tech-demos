@@ -1,0 +1,59 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tech-demos-tanbase",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none"
+  },
+  "ai": { "binding": "AI" },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "tech-demos-tanbase",
+      "database_id": "00000000-0000-4000-8000-0000000000a1",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "FILES",
+      "bucket_name": "tech-demos-tanbase"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "BOARD", "class_name": "BoardRoom" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["BoardRoom"] }],
+  "workflows": [
+    {
+      "name": "tech-demos-tanbase-split",
+      "binding": "SPLIT_TASK",
+      "class_name": "SplitTaskWorkflow"
+    }
+  ],
+  "ratelimits": [
+    { "name": "WRITE_LIMIT", "namespace_id": "7351", "simple": { "limit": 40, "period": 60 } },
+    { "name": "UPLOAD_LIMIT", "namespace_id": "7352", "simple": { "limit": 8, "period": 60 } },
+    { "name": "AI_LIMIT", "namespace_id": "7353", "simple": { "limit": 4, "period": 60 } }
+  ],
+  "triggers": { "crons": ["15 * * * *"] },
+  "vars": {
+    "AI_MODEL": "@cf/zai-org/glm-5.3-flash",
+    "TURNSTILE_SITE_KEY": "1x00000000000000000000AA",
+    // Empty until `wrangler secret put TURNSTILE_SECRET`. High-cost routes fail closed.
+    "TURNSTILE_SECRET": "",
+    // Local smoke only. `.dev.vars` sets this to 1. Production stays empty.
+    "ALLOW_LOCAL_HOOKS": ""
+  },
+  "routes": [
+    { "pattern": "tech-demos.theserverless.dev/demos/tanbase*", "zone_name": "theserverless.dev" },
+    { "pattern": "tanbase.tech-demos.theserverless.dev/*", "zone_name": "theserverless.dev" }
+  ],
+  "workers_dev": true,
+  "observability": { "enabled": true }
+}

@@ -1,0 +1,5 @@
+# Public Cloudflare Turnstile always-pass test secret. Local `wrangler dev` only.
+# Production must use `wrangler secret put TURNSTILE_SECRET` with the real widget secret.
+TURNSTILE_SECRET=1x0000000000000000000000000000000AA
+# Lets smoke set a short board TTL and call POST /api/sweep. Do not set this in production.
+ALLOW_LOCAL_HOOKS=1

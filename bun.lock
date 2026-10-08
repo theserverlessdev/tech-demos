@@ -53,6 +53,13 @@
         "wrangler": "^4.40.0",
       },
     },
+    "demos/tanbase": {
+      "name": "@tech-demos/tanbase",
+      "devDependencies": {
+        "typescript": "^5.9.2",
+        "wrangler": "^4.40.0",
+      },
+    },
     "demos/temp-email": {
       "name": "@tech-demos/temp-email",
       "dependencies": {
@@ -323,6 +330,8 @@
     "@tech-demos/resolve-hq": ["@tech-demos/resolve-hq@workspace:demos/resolve-hq"],
 
     "@tech-demos/shared": ["@tech-demos/shared@workspace:packages/shared"],
+
+    "@tech-demos/tanbase": ["@tech-demos/tanbase@workspace:demos/tanbase"],
 
     "@tech-demos/temp-email": ["@tech-demos/temp-email@workspace:demos/temp-email"],
 
