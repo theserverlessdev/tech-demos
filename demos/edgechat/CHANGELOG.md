@@ -40,3 +40,5 @@ Hub Graphite & Ember. Ember accent `#c2410c`, background `#0e0e11`. Real LogoMar
 ## 2026-10-09
 
 Phone layout: 16px fields, 44px buttons, a stacked top bar (name, save, and theme on one row; the Inspired by link stays in the footer), a sticky composer, and safe-area padding.
+
+`WRITE_LIMIT` moved from namespace `7351` to `7421` so it no longer shares Actor lab's `RACE_LIMIT`. Actor lab keeps `7351`–`7353`. The limit is still 40 requests per 60 seconds.

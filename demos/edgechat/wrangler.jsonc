@@ -35,7 +35,7 @@
     }
   ],
   "ratelimits": [
-    { "name": "WRITE_LIMIT", "namespace_id": "7351", "simple": { "limit": 40, "period": 60 } }
+    { "name": "WRITE_LIMIT", "namespace_id": "7421", "simple": { "limit": 40, "period": 60 } }
   ],
   "routes": [
     { "pattern": "tech-demos.theserverless.dev/demos/edgechat*", "zone_name": "theserverless.dev" },
