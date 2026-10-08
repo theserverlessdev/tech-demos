@@ -6,6 +6,31 @@ One [Agents SDK](https://developers.cloudflare.com/agents/) agent and one [Cloud
 
 Inspired by [choyiny/gitorange](https://github.com/choyiny/gitorange) (Apache-2.0, by choyiny). The note that pointed at Artifacts: [x.com/haipingfu/status/2107011097039605909](https://x.com/haipingfu/status/2107011097039605909).
 
+## What this demonstrates
+
+**Pattern.** One Agents SDK agent and one Cloudflare Artifacts git repository per task. The agent commits a small file edit through Git smart HTTP. The Artifacts binding creates the repo, reads the tree, and mints a ten-minute read-only clone token. If the model returns the same file, nothing is committed.
+
+**What you can do**
+
+- Create a task after Turnstile and get a fresh Artifacts repo.
+- Run the agent and, when the model changes a file, see the commit.
+- Read the commit log and the unified diff.
+- Mint a ten-minute read-only `git clone` token.
+- Watch an unchanged model response commit nothing.
+
+**What you could build**
+
+- A coding agent with one repo per ticket.
+- A review page that shows the diff before anyone clones.
+- A scratch repo that a cron deletes with its log rows.
+
+**Limits**
+
+- The Artifacts binding does not write file bytes. The commit goes through Git smart HTTP (`git-receive-pack`).
+- A browser cookie can hold 3 live repos. D1 stores the task and the activity rows.
+- Workers AI authors the commit. A failed or unchanged model response is not committed.
+- Turnstile is required on create and run. Production fails closed when the secret is missing.
+
 ## What is real
 
 - Artifacts namespace `tech-demos` on the Workers Paid account. Creating a repo, pushing a commit, and reading it back was verified before this demo was written.

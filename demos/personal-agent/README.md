@@ -7,6 +7,30 @@ An anonymous personal assistant on Cloudflare Workers. This is a **small demo** 
 - **Plan:** [PLAN.md](./PLAN.md)
 - **What changed vs upstream:** [CHANGELOG.md](./CHANGELOG.md)
 
+## What this demonstrates
+
+**Pattern.** One Agents SDK Durable Object per anonymous visitor holds the thread and embedding vectors. Markdown notes live in R2 under that visitor's prefix. Research fetches 2–4 allowlisted https pages. An alarm deletes that visitor's rows and objects 24 hours after the last write.
+
+**What you can do**
+
+- Chat with the assistant bound to this browser's visitor id.
+- Create, open, and delete markdown notes in R2.
+- See the note title and score under a reply that used memory.
+- Run research over 2–4 allowlisted pages and read the citations.
+- Start a new visitor, which is a different Durable Object.
+
+**What you could build**
+
+- A notes-backed assistant for one person, with no account.
+- A research sidebar that only fetches an allowlist.
+- A demo tenant that deletes its own storage on a timer.
+
+**Limits**
+
+- No third-party model key. If Workers AI fails, keyword overlap still recalls notes and the reply falls back to an excerpt.
+- Research will not fetch private addresses or IP literals, and it caps size and time.
+- Turnstile is required on chat, research, and note writes. A missing secret fails closed.
+
 ## What it proves
 
 | Binding | What the demo does with it |

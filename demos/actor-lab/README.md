@@ -9,6 +9,29 @@ A Durable Object actor with auto-persisted fields and a one-at-a-time mailbox. T
 
 Walkthrough stills and a short video: [artifacts/](./artifacts/).
 
+## What this demonstrates
+
+**Pattern.** A SQLite-backed actor persists fields through a state proxy, and mailbox handlers run one at a time. An await on Workers AI opens the input gate, so interleaved updates lose increments. The chat actor hibernates. A simulated eviction drops isolate memory and reloads the transcript from SQLite.
+
+**What you can do**
+
+- Arm a race after Turnstile and fire Interleaved. The counter ends below the number of updates.
+- Fire Serialized mailbox. The counter reaches the number of updates.
+- Chat in a room over a hibernating WebSocket.
+- Simulate evict. The scratch note disappears and the SQLite transcript remains. A refresh alone does not drop it.
+
+**What you could build**
+
+- A counter or balance that must not lose increments across an await.
+- A chat whose history survives hibernation and a dropped isolate.
+- A bench for teaching the Durable Object input gate.
+
+**Limits**
+
+- `blockConcurrencyWhile` runs only while the actor loads SQLite. The mailbox, not that call, serializes the race.
+- Local `bun run dev` omits the Workers AI binding and waits on a labeled 300 ms pause. The interleaving still happens. `bun run dev:ai` uses the model.
+- Actor rows are deleted after 6 hours idle. Turnstile is required to arm a race and to unlock chat AI.
+
 ## What it proves
 
 | Binding | What the demo does with it |

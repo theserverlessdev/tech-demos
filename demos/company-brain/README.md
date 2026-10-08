@@ -9,6 +9,29 @@ A sandbox org memory on Cloudflare Workers. This is a **small demo** inspired by
 
 The hub URL is the deployed demo.
 
+## What this demonstrates
+
+**Pattern.** One Agents SDK Durable Object per sandbox org stores facts and decisions in SQLite. Workers AI answers only from retrieved rows and cites them, or says it does not know. Orgs are not shared. An alarm wipes the sandbox.
+
+**What you can do**
+
+- Create a private org seeded with a few Northline facts and decisions.
+- Ask a question and see cited fact or decision ids, or a refusal when nothing matches.
+- Add a fact or decision in the memory pane.
+- Ingest a row with the token shown once at creation. The token is stored as a SHA-256 hash.
+
+**What you could build**
+
+- An onboarding bot that only quotes the rows you loaded.
+- A decision log whose answers cite the source row.
+- A sandbox for the "I don't know" path before you add connectors.
+
+**Limits**
+
+- Org A's session cannot read or write org B.
+- Turnstile is required on org creation and chat. Rate limits cap create, chat, writes, and reads.
+- If Workers AI is unavailable, a question that needs the model returns 503 instead of guessing.
+
 ## What it proves
 
 | Piece | What the demo does with it |

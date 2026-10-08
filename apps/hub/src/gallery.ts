@@ -41,24 +41,38 @@ const ARROW =
 const EXTERNAL =
   '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7"/><path d="M8 7h9v9"/></svg>';
 
+function renderItems(items: string[]): string {
+  return items.map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+}
+
 function renderCard(demo: DemoEntry, index: number): string {
   const path = demoPath(demo.slug);
   const tags = (demo.tags || [])
     .map((t) => `<li class="chip">${escapeHtml(t)}</li>`)
     .join("");
+  const badge = demo.slug === "hello-dynamic" ? "Dynamic Worker" : "Worker";
 
-  return `<article class="demo-card">
+  return `<article class="demo-card" id="${escapeHtml(demo.slug)}">
         <div class="demo-card__head">
           <span class="demo-card__index">${String(index + 1).padStart(2, "0")}</span>
-          <span class="demo-card__badge">Dynamic Worker</span>
+          <span class="demo-card__badge">${badge}</span>
         </div>
         <h2 class="demo-card__title">
           <a class="demo-card__link" href="${escapeHtml(path)}">${escapeHtml(demo.title)}</a>
         </h2>
         <p class="demo-card__desc">${escapeHtml(demo.description)}</p>
+        <p class="demo-card__shows"><span class="demo-card__shows-label">Shows</span> ${escapeHtml(demo.demonstrates)}</p>
         <ul class="demo-card__tags">${tags}</ul>
+        <details class="demo-card__more">
+          <summary>What you can do</summary>
+          <div class="demo-card__panel">
+            <ul class="demo-card__caps">${renderItems(demo.capabilities)}</ul>
+            <p class="demo-card__uses-label">Build with this</p>
+            <ul class="demo-card__uses">${renderItems(demo.useCases)}</ul>
+          </div>
+        </details>
         <div class="demo-card__foot">
-          <span class="demo-card__cta">Open demo ${ARROW}</span>
+          <a class="demo-card__cta" href="${escapeHtml(path)}">Open demo ${ARROW}</a>
           <a class="demo-card__alt" href="${escapeHtml(demoSubdomain(demo.slug))}" rel="noopener" title="${escapeHtml(demoSubdomain(demo.slug))}">subdomain ${EXTERNAL}</a>
         </div>
       </article>`;
@@ -85,11 +99,11 @@ export function renderGallery(demos: DemoEntry[]): string {
   <meta name="color-scheme" content="dark light" />
   <meta name="theme-color" content="#0e0e11" />
   <title>Tech Demos · theserverless.dev</title>
-  <meta name="description" content="One new library or pattern at a time. Each demo runs as an isolated Dynamic Worker on Cloudflare Workers." />
+  <meta name="description" content="Each demo names the pattern it proves, what you can try, and what you could build with it." />
   <link rel="canonical" href="https://${HUB_HOST}/" />
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <meta property="og:title" content="Tech Demos · theserverless.dev" />
-  <meta property="og:description" content="One new library or pattern at a time, each in its own Dynamic Worker." />
+  <meta property="og:description" content="Each demo names the pattern it proves, what you can try, and what you could build with it." />
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://${HUB_HOST}/" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -563,21 +577,75 @@ export function renderGallery(demos: DemoEntry[]): string {
       background: var(--color-primary-start);
       color: #fff;
     }
-    .demo-card__title { font-size: var(--text-xl); letter-spacing: -0.02em; }
-    .demo-card__link { color: var(--color-text-light); }
-    .demo-card__link::after {
-      content: "";
-      position: absolute;
-      inset: 0;
-      z-index: 1;
+    .demo-card__title { font-size: var(--text-xl); letter-spacing: -0.02em; overflow-wrap: anywhere; }
+    .demo-card__link {
+      display: inline-flex;
+      align-items: center;
+      min-height: 44px;
+      color: var(--color-text-light);
     }
-    .demo-card:hover .demo-card__link { color: var(--color-text-light); }
+    .demo-card__link:hover { color: var(--color-accent-text); }
     .demo-card__desc {
       font-size: var(--text-sm);
       color: var(--color-text-muted);
-      flex: 1;
+    }
+    .demo-card__shows {
+      font-size: var(--text-sm);
+      color: var(--color-text);
+      overflow-wrap: anywhere;
+    }
+    .demo-card__shows-label {
+      display: inline-block;
+      margin-right: 0.35rem;
+      font-family: var(--font-mono);
+      font-size: 0.68rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--color-accent-text);
     }
     .demo-card__tags { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+    .demo-card__more { position: relative; z-index: 2; }
+    .demo-card__more summary {
+      min-height: 44px;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: var(--text-sm);
+      color: var(--color-text-light);
+      list-style: none;
+    }
+    .demo-card__more summary::-webkit-details-marker { display: none; }
+    .demo-card__more summary::before {
+      content: "+";
+      font-family: var(--font-mono);
+      color: var(--color-accent-text);
+    }
+    .demo-card__more[open] summary::before { content: "–"; }
+    .demo-card__panel {
+      display: grid;
+      gap: 0.65rem;
+      padding: 0 0 0.35rem;
+    }
+    .demo-card__caps,
+    .demo-card__uses {
+      margin: 0;
+      padding-left: 1.15rem;
+      display: grid;
+      gap: 0.4rem;
+      list-style: disc;
+      font-size: var(--text-sm);
+      color: var(--color-text);
+      overflow-wrap: anywhere;
+    }
+    .demo-card__uses-label {
+      font-family: var(--font-mono);
+      font-size: 0.68rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--color-accent-text);
+    }
     .chip {
       font-family: var(--font-mono);
       font-size: var(--text-xs);
@@ -599,9 +667,11 @@ export function renderGallery(demos: DemoEntry[]): string {
       display: inline-flex;
       align-items: center;
       gap: 0.4em;
+      min-height: 44px;
       font-weight: 600;
       font-size: var(--text-sm);
       color: var(--color-text-light);
+      text-decoration: none;
       transition: color var(--transition-fast);
     }
     .demo-card__cta .icon { transition: transform var(--transition-fast); }
@@ -613,9 +683,11 @@ export function renderGallery(demos: DemoEntry[]): string {
       display: inline-flex;
       align-items: center;
       gap: 0.35em;
+      min-height: 44px;
       font-family: var(--font-mono);
       font-size: var(--text-xs);
       color: var(--color-text-muted);
+      text-decoration: none;
     }
     .demo-card__alt:hover { color: var(--color-accent-text); }
 
@@ -764,8 +836,7 @@ export function renderGallery(demos: DemoEntry[]): string {
         <p class="eyebrow">Weekday playground</p>
         <h1>Tech <span class="accent">Demos</span></h1>
         <p class="lede">
-          One new library or pattern at a time. Each demo runs as an isolated
-          Dynamic Worker on Cloudflare Workers, loaded by this hub at request time.
+          One pattern at a time. Each card says what the demo proves, what you can try, and what you could build with it.
         </p>
         <div class="hero-actions">
           <a class="button" href="#demos">Browse demos ${ARROW}</a>
@@ -793,7 +864,7 @@ export function renderGallery(demos: DemoEntry[]): string {
       <div class="container">
         <div class="section__head">
           <h2 class="section__title">The gallery</h2>
-          <p class="section__note">Each card opens an isolated worker</p>
+          <p class="section__note">Shows the pattern, then the stack</p>
         </div>
         <div class="grid">
 ${cards || empty}

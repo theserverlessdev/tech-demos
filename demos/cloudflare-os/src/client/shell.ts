@@ -794,7 +794,8 @@ function renderEmpty() {
     h(
       "p",
       { class: "empty__lede" },
-      "Each gadget is a Durable Object class that runs in its own Dynamic Worker, as a facet with a private SQLite database. Its UI runs in a sandboxed frame and talks to the server over Cap'n Web. Start a blueprint, or ask the agent.",
+      h("span", { class: "shows__k" }, "What this shows"),
+      " Each gadget is a Durable Object facet in its own Dynamic Worker, with private SQLite. The UI runs in a sandboxed frame and talks to that facet over Cap'n Web. An outside read waits until you approve it. Start a blueprint, or ask the agent.",
     ),
     h(
       "div",

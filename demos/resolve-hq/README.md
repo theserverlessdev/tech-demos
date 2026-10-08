@@ -7,6 +7,29 @@ A shared support inbox on Cloudflare Workers. This is a **small demo** inspired 
 - **Plan:** [PLAN.md](./PLAN.md)
 - **What changed vs upstream:** [CHANGELOG.md](./CHANGELOG.md)
 
+## What this demonstrates
+
+**Pattern.** A Worker coordinates D1 tickets, R2 attachments, and a Queue consumer that turns a simulated inbound email into a ticket or a thread reply. Workers AI fills a draft and falls back to a stub if the model fails. There is no live mail exchanger and no tenancy.
+
+**What you can do**
+
+- Open a seeded ticket and read the thread.
+- Attach a file and download it.
+- Simulate inbound mail and watch the consumer create or append a ticket.
+- Ask for a draft reply, including the stub used when Workers AI fails.
+
+**What you could build**
+
+- A small shared inbox before you attach a live mail route.
+- Queue-backed intake that becomes tickets.
+- A reply desk that still fills a draft when the model is down.
+
+**Limits**
+
+- Email Routing is not wired. Inbound is `DEV_MAIL_MODE=queue`.
+- No OpenAI or Resend secret. Drafts use the Workers AI binding only.
+- Five seeded conversations. This is a slice, not the upstream product.
+
 Walkthrough stills and a short video: [artifacts/](./artifacts/).
 
 ## What it proves

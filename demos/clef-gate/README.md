@@ -9,6 +9,30 @@ This is a small slice inspired by [yologdev/yoagent `clef-worker`](https://githu
 
 The five tools are fake. `read_docs` quotes demo copy. `fetch_url` describes a URL and does not request it. `send_email`, `delete_record`, and `run_sql` report what they would have done. Nothing is sent, deleted, or executed.
 
+## What this demonstrates
+
+**Pattern.** Every tool call is a choice from Clef or Clef-flash: allow, deny, or ask-human, with probabilities. Ask-human and any answer under the confidence floor wait in the session Durable Object until you approve or deny. Each verdict is written to D1.
+
+**What you can do**
+
+- Ask the desk to use one of the five sandboxed tools.
+- Read the verdict and the probabilities.
+- Approve or deny a paused call. It resumes in the same Durable Object.
+- Open the audit list for the tool, the decision, and the model.
+- See that send, delete, and SQL tools only describe what they would have done.
+
+**What you could build**
+
+- A tool-using agent with a human approval queue.
+- An audit log of model verdicts before a real side effect exists.
+- A gate you can later put in front of mail, SQL, or deletes.
+
+**Limits**
+
+- Nothing is sent, fetched, deleted, or executed. `fetch_url` does not request the URL.
+- On localhost, if Workers AI cannot be reached, the gate uses a labeled local heuristic. Production does not. A failed Clef call there does not run the tool.
+- Sessions last 6 hours. Args summaries are capped. Email bodies are not written to D1.
+
 ## What it proves
 
 | Binding | What the demo does with it |
