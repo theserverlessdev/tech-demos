@@ -1,0 +1,32 @@
+// Local dev without the Workers AI binding, so Wrangler does not wait on a login.
+// Questions that need the model return 503. Deploy with wrangler.jsonc.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tech-demos-company-brain",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-09-10",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none"
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "ORG", "class_name": "Org" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Org"] }],
+  "ratelimits": [
+    { "name": "CREATE_LIMIT", "namespace_id": "7341", "simple": { "limit": 8, "period": 60 } },
+    { "name": "CHAT_LIMIT", "namespace_id": "7342", "simple": { "limit": 10, "period": 60 } },
+    { "name": "WRITE_LIMIT", "namespace_id": "7343", "simple": { "limit": 30, "period": 60 } },
+    { "name": "READ_LIMIT", "namespace_id": "7344", "simple": { "limit": 60, "period": 60 } }
+  ],
+  "vars": {
+    "AI_MODEL": "@cf/zai-org/glm-5.3-flash",
+    "ORG_TTL_HOURS": "24",
+    "TURNSTILE_SITE_KEY": "1x00000000000000000000AA"
+  },
+  "workers_dev": true,
+  "observability": { "enabled": true }
+}

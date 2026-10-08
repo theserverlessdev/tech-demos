@@ -83,6 +83,17 @@ const resolveHqFallbackSource = `export default {
 };
 `;
 
+// company-brain is a standalone Worker (Agents SDK Durable Object, Workers AI). Same pattern as resolve-hq:
+// the zone route wins, and this source only redirects if that route is missing.
+const companyBrainFallbackSource = `export default {
+  fetch(request) {
+    const url = new URL(request.url);
+    const rest = url.pathname.replace(/^\\/demos\\/company-brain/, "") || "/";
+    return Response.redirect("https://company-brain.tech-demos.theserverless.dev" + rest + url.search, 302);
+  },
+};
+`;
+
 export const demos: DemoEntry[] = [
   {
     slug: "resolve-hq",
@@ -122,6 +133,14 @@ export const demos: DemoEntry[] = [
     description: "Minimal HTML demo loaded via the hub Worker Loader.",
     tags: ["dynamic-workers", "starter"],
     source: helloDynamicSource,
+  },
+  {
+    slug: "company-brain",
+    title: "Company Brain",
+    description:
+      "A sandbox company brain. One Agents SDK Durable Object per visitor stores facts and decisions, and Workers AI answers only from that memory.",
+    tags: ["agents-sdk", "durable-objects", "workers-ai", "turnstile"],
+    source: companyBrainFallbackSource,
   },
 ];
 

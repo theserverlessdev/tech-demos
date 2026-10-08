@@ -43,6 +43,18 @@
         "wrangler": "^4.40.0",
       },
     },
+    "demos/company-brain": {
+      "name": "@tech-demos/company-brain",
+      "dependencies": {
+        "agents": "0.22.0",
+        "zod": "4.5.4",
+      },
+      "devDependencies": {
+        "@cloudflare/workers-types": "^4.20250906.0",
+        "typescript": "^5.9.2",
+        "wrangler": "^4.40.0",
+      },
+    },
     "demos/hello-dynamic": {
       "name": "@tech-demos/hello-dynamic",
     },
@@ -313,6 +325,8 @@
     "@tech-demos/apollo-desk": ["@tech-demos/apollo-desk@workspace:demos/apollo-desk"],
 
     "@tech-demos/cloudflare-os": ["@tech-demos/cloudflare-os@workspace:demos/cloudflare-os"],
+
+    "@tech-demos/company-brain": ["@tech-demos/company-brain@workspace:demos/company-brain"],
 
     "@tech-demos/demo-template": ["@tech-demos/demo-template@workspace:demos/_template"],
 
