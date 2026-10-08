@@ -197,6 +197,10 @@ textarea {
 }
 .composer__row { display: flex; justify-content: space-between; align-items: flex-end; gap: 0.6rem; }
 .turnstile { min-height: 65px; }
+@media (max-width: 720px) {
+  .composer__row { flex-direction: column; align-items: stretch; }
+  .composer__row .btn { align-self: flex-end; }
+}
 
 .panel, .card {
   border: 1px solid var(--border);

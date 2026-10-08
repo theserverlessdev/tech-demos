@@ -43,4 +43,4 @@ Hub Graphite & Ember. Ember accent `#c2410c`, background `#0e0e11`. LogoMark SVG
 
 ## 2026-10-09
 
-Phone layout: 16px fields, 44px ink controls, and safe-area padding. Drawing uses pointer events with touch-action none so a finger does not scroll the page.
+Phone layout: 16px fields, 44px ink controls, and safe-area padding. Drawing uses pointer events with touch-action none so a finger does not scroll the page. The header keeps the Partyboard title on a second row instead of hiding it.
