@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark light" />
+  <meta name="theme-color" content="#0e0e11" />
+  <title>Feedlog · Tech Demos · theserverless.dev</title>
+  <meta name="description" content="A public feedback board on Cloudflare Workers: D1 posts and votes, a roadmap, a changelog, and duplicate spotting with Workers AI and Vectorize." />
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Hanken+Grotesk:wght@400..700&display=swap" rel="stylesheet" />
+  <script src="./assets/theme.js"></script>
+  <script src="./assets/turnstile-onload.js"></script>
+  <link rel="stylesheet" href="./assets/feedlog.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="https://tech-demos.theserverless.dev/" aria-label="Tech Demos gallery">
+      <svg class="brand__mark" width="26" height="26" viewBox="0 -3 128 128" aria-hidden="true">
+        <g stroke="currentColor" stroke-width="6" stroke-linecap="round" opacity="0.45"><line x1="4" y1="58" x2="20" y2="58"/><line x1="1" y1="72" x2="19" y2="72"/><line x1="6" y1="86" x2="22" y2="86"/></g>
+        <path d="M44 92 C31 92 20 82 20 69 C20 57 29 47 41 46 C45 33 57 24 70 24 C85 24 98 35 100 51 C110 53 118 62 118 72 C118 83 109 92 97 92 Z" fill="none" stroke="currentColor" stroke-width="7.5" stroke-linejoin="round"/>
+        <path d="M69 36 L50 71 L63 71 L57 102 L88 60 L72 60 L80 36 Z" fill="currentColor"/>
+      </svg>
+      <span>Tech Demos</span>
+    </a>
+    <div class="topbar__title">
+      <h1>Feedlog</h1>
+      <p>Public feedback, roadmap, and changelog</p>
+    </div>
+    <div class="topbar__actions">
+      <a class="btn btn-primary" href="https://theserverless.dev/contact" rel="noopener">Contact</a>
+      <a class="btn btn-ghost" href="https://github.com/linkcraftstudio/feedlog" rel="noopener" target="_blank">Upstream</a>
+      <button class="btn btn-ghost btn-icon" id="theme" type="button" aria-label="Switch colour theme">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9Z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <nav class="tabs" aria-label="Sections">
+    <a href="#/board" id="tab-board" data-tab="board">Board</a>
+    <a href="#/roadmap" id="tab-roadmap" data-tab="roadmap">Roadmap</a>
+    <a href="#/changelog" id="tab-changelog" data-tab="changelog">Changelog</a>
+  </nav>
+
+  <p class="strip" id="strip">One vote per browser. Visitor posts expire after 14 days. Duplicate check runs as you type.</p>
+
+  <main class="page">
+    <section id="view-board" data-view="board">
+      <div class="board">
+        <div class="compose-col">
+          <form class="compose" id="compose">
+            <p class="eyebrow">New post</p>
+            <h2>Ask for something</h2>
+            <label class="field">
+              <span>Title</span>
+              <input id="title" name="title" data-testid="compose-title" maxlength="120" required placeholder="Dark mode on the public roadmap" />
+            </label>
+            <label class="field">
+              <span>Details</span>
+              <textarea id="body" name="body" maxlength="4000" rows="5" required placeholder="What should change, and who feels it?"></textarea>
+            </label>
+            <label class="field">
+              <span>Name <em>optional, not an email</em></span>
+              <input id="display-name" name="displayName" maxlength="40" placeholder="Visitor" />
+            </label>
+            <label class="field">
+              <span>Image <em>JPEG, PNG, GIF, or WebP, up to 1.5 MB</em></span>
+              <input id="image" name="image" type="file" accept="image/jpeg,image/png,image/gif,image/webp" />
+            </label>
+            <div id="turnstile" class="turnstile"></div>
+            <p class="hint" id="form-hint" role="status"></p>
+            <button class="btn btn-primary" id="submit" type="submit" disabled>Post</button>
+            <div class="similar" id="similar" data-testid="similar" aria-live="polite">
+              <p class="eyebrow">Similar posts</p>
+              <p class="hint" id="similar-hint">Type a title. If someone already asked, it shows up here.</p>
+              <ul id="similar-list"></ul>
+            </div>
+          </form>
+          <details class="admin" id="admin">
+            <summary>Admin</summary>
+            <p class="hint">Status changes and changelog entries need the admin token. It stays in this tab only.</p>
+            <label class="field">
+              <span class="sr-only">Admin token</span>
+              <input id="admin-token" type="password" autocomplete="off" spellcheck="false" placeholder="Admin token" />
+            </label>
+            <div class="row">
+              <button class="btn" id="admin-save" type="button">Use token</button>
+              <button class="btn btn-ghost" id="admin-clear" type="button">Clear</button>
+            </div>
+            <p class="hint" id="admin-hint"></p>
+          </details>
+        </div>
+        <section class="list-col" aria-label="Posts">
+          <div class="list-head">
+            <h2>Board</h2>
+            <span class="count" id="count">0</span>
+            <div class="filters" role="tablist" aria-label="Status filter">
+              <button class="filter is-on" type="button" data-filter="all">All</button>
+              <button class="filter" type="button" data-filter="open">Open</button>
+              <button class="filter" type="button" data-filter="planned">Planned</button>
+              <button class="filter" type="button" data-filter="in_progress">In progress</button>
+              <button class="filter" type="button" data-filter="done">Done</button>
+              <button class="filter" type="button" data-filter="closed">Closed</button>
+            </div>
+            <div class="sorts">
+              <button class="filter is-on" type="button" data-sort="top">Top</button>
+              <button class="filter" type="button" data-sort="new">New</button>
+            </div>
+          </div>
+          <div id="posts" data-testid="post-list">
+            <p class="hint">Loading the board…</p>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <section id="view-roadmap" data-view="roadmap" hidden>
+      <header class="section-head">
+        <p class="eyebrow">Roadmap</p>
+        <h2>What is planned, in progress, and done</h2>
+      </header>
+      <div class="roadmap" id="roadmap" data-testid="roadmap"></div>
+    </section>
+
+    <section id="view-changelog" data-view="changelog" hidden>
+      <header class="section-head">
+        <p class="eyebrow">Changelog</p>
+        <h2>What shipped</h2>
+      </header>
+      <form class="compose changelog-form" id="changelog-form" hidden>
+        <p class="eyebrow">Admin</p>
+        <h2>Publish an entry</h2>
+        <label class="field">
+          <span>Title</span>
+          <input id="changelog-title" maxlength="120" required />
+        </label>
+        <label class="field">
+          <span>Notes</span>
+          <textarea id="changelog-body" maxlength="4000" rows="4" required></textarea>
+        </label>
+        <button class="btn btn-primary" type="submit">Publish</button>
+        <p class="hint" id="changelog-hint" role="status"></p>
+      </form>
+      <ol class="changelog" id="changelog-list"></ol>
+    </section>
+
+    <section id="view-post" data-view="post" hidden>
+      <a class="back" href="#/board">← Board</a>
+      <article id="post-detail"></article>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <p>
+      A slice of <a href="https://github.com/linkcraftstudio/feedlog" rel="noopener" target="_blank">linkcraftstudio/feedlog</a>
+      (MIT). Posts live in D1, images in R2, duplicates in Workers AI and Vectorize.
+      <a href="https://theserverless.dev/contact" rel="noopener">Contact</a>
+      ·
+      <a href="https://github.com/theserverlessdev/tech-demos/tree/main/demos/feedlog" rel="noopener" target="_blank">Source</a>
+    </p>
+  </footer>
+
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit&onload=onFeedlogTurnstileLoad" defer></script>
+  <script type="module" src="./assets/app.js"></script>
+  <noscript><p class="noscript">Feedlog needs JavaScript to load the board.</p></noscript>
+</body>
+</html>

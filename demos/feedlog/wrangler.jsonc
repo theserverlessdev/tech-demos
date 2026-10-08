@@ -1,0 +1,60 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tech-demos-feedlog",
+  "main": "src/worker/index.ts",
+  // Newest compatibility date the Wrangler 4.129 workerd in this repo accepts.
+  "compatibility_date": "2026-09-10",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none"
+  },
+  "ai": { "binding": "AI" },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "tech-demos-feedlog",
+      "database_id": "755a07de-470e-48b4-9d0f-20d86b69ff10",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "IMAGES",
+      "bucket_name": "tech-demos-feedlog"
+    }
+  ],
+  // 384 dimensions, cosine. Must match @cf/baai/bge-small-en-v1.5. The metric cannot be changed later.
+  "vectorize": [
+    {
+      "binding": "VECTORS",
+      "index_name": "tech-demos-feedlog"
+    }
+  ],
+  // Feedlog keeps 7341–7344. Other demos are moving off this range.
+  "ratelimits": [
+    { "name": "POST_LIMIT", "namespace_id": "7341", "simple": { "limit": 20, "period": 60 } },
+    { "name": "VOTE_LIMIT", "namespace_id": "7342", "simple": { "limit": 40, "period": 60 } },
+    { "name": "AI_LIMIT", "namespace_id": "7343", "simple": { "limit": 20, "period": 60 } },
+    { "name": "ADMIN_LIMIT", "namespace_id": "7344", "simple": { "limit": 30, "period": 60 } }
+  ],
+  "triggers": { "crons": ["17 * * * *"] },
+  "vars": {
+    "EMBED_MODEL": "@cf/baai/bge-small-en-v1.5",
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFRgq04SvYB_gEMr"
+  },
+  // Secrets, never commit: TURNSTILE_SECRET, ADMIN_TOKEN (set on the Worker; the owner holds ADMIN_TOKEN).
+  // Local `bun run dev` writes .dev.vars with Cloudflare's always-pass test pair, which overrides these
+  // vars on your machine. wrangler dev presents the zone route host, so a loopback check on the URL is not enough.
+  "routes": [
+    { "pattern": "tech-demos.theserverless.dev/demos/feedlog*", "zone_name": "theserverless.dev" },
+    { "pattern": "feedlog.tech-demos.theserverless.dev/*", "zone_name": "theserverless.dev" }
+  ],
+  "workers_dev": true,
+  "observability": {
+    "enabled": true,
+    "traces": { "enabled": true }
+  }
+}
