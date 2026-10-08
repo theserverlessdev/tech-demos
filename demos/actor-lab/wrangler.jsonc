@@ -18,16 +18,16 @@
     ]
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RaceActor", "ChatActor"] }],
-  // namespace_id values must stay unique in the Cloudflare account.
+  // Actor-lab keeps namespace ids 7351–7353. tanbase is moving off this range.
   "ratelimits": [
     { "name": "RACE_LIMIT", "namespace_id": "7351", "simple": { "limit": 30, "period": 60 } },
-    { "name": "CHAT_LIMIT", "namespace_id": "7352", "simple": { "limit": 30, "period": 60 } }
+    { "name": "CHAT_LIMIT", "namespace_id": "7352", "simple": { "limit": 30, "period": 60 } },
+    { "name": "AI_LIMIT", "namespace_id": "7353", "simple": { "limit": 30, "period": 60 } }
   ],
   "vars": {
     "AI_MODEL": "@cf/meta/llama-3.2-1b-instruct",
-    // Public always-pass test site key so local wrangler dev can render a widget.
-    // Production AI stays off until this is a real site key AND TURNSTILE_SECRET is set.
-    "TURNSTILE_SITE_KEY": "1x00000000000000000000AA"
+    // Public production widget site key. Local `wrangler dev` uses the test key in wrangler.dev.jsonc.
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFRgqW3QGH0PGoRv"
   },
   "routes": [
     { "pattern": "tech-demos.theserverless.dev/demos/actor-lab*", "zone_name": "theserverless.dev" },

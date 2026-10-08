@@ -20,9 +20,11 @@
     ]
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RaceActor", "ChatActor"] }],
+  // Same namespace ids as wrangler.jsonc. Actor-lab keeps 7351–7353.
   "ratelimits": [
     { "name": "RACE_LIMIT", "namespace_id": "7351", "simple": { "limit": 30, "period": 60 } },
-    { "name": "CHAT_LIMIT", "namespace_id": "7352", "simple": { "limit": 30, "period": 60 } }
+    { "name": "CHAT_LIMIT", "namespace_id": "7352", "simple": { "limit": 30, "period": 60 } },
+    { "name": "AI_LIMIT", "namespace_id": "7353", "simple": { "limit": 30, "period": 60 } }
   ],
   "vars": {
     "AI_MODEL": "@cf/meta/llama-3.2-1b-instruct",

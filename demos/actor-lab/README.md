@@ -16,8 +16,8 @@ Walkthrough stills and a short video: [artifacts/](./artifacts/).
 | **Durable Objects (SQLite)** | One race actor per visitor cookie, one chat actor per room code. A `state` proxy writes fields to SQLite. Handlers on the mailbox run one at a time. |
 | **Workers AI** | Each race update awaits the model between the read and the write, which opens the input gate. The room actor can answer after a Turnstile unlock. |
 | **Hibernatable WebSockets** | The room stays connected across hibernation. A raw `ping` is answered without waking the actor. |
-| **Rate limiting** | `RACE_LIMIT` and `CHAT_LIMIT`, 30 requests a minute per IP. |
-| **Turnstile** | Required to arm a race and to unlock chat AI. AI routes fail closed in production until a real secret is set. |
+| **Rate limiting** | Race uses `RACE_LIMIT` (7351) and chat uses `CHAT_LIMIT` (7352), 30 requests a minute per IP. `AI_LIMIT` (7353) stays on this worker. Actor-lab keeps 7351–7353; tanbase is moving off that range. |
+| **Turnstile** | Required to arm a race and to unlock chat AI. The live worker's health check reports AI ready. |
 | **Alarms** | Actor rows are deleted after 6 hours idle. |
 
 Fire **Interleaved** and the counter ends below the number of updates: several racers read the same value while the model is in flight. Fire **Serialized mailbox** and the counter reaches N. The chat scratch note is only in isolate memory. **Simulate evict** drops it and reloads the transcript from SQLite. Refresh alone does not.
@@ -47,7 +47,7 @@ bun install
 bun run dev
 ```
 
-`.dev.vars` holds Cloudflare's published always-pass Turnstile test secret (`1x0000000000000000000000000000000AA`). The site key in `wrangler.jsonc` is the matching test key (`1x00000000000000000000AA`). Smoke posts the dummy token `XXXX.DUMMY.TOKEN.XXXX`.
+`.dev.vars` holds Cloudflare's published always-pass Turnstile test secret (`1x0000000000000000000000000000000AA`). `wrangler.dev.jsonc` uses the matching test site key (`1x00000000000000000000AA`). The production site key lives in `wrangler.jsonc`. Smoke posts the dummy token `XXXX.DUMMY.TOKEN.XXXX`.
 
 Then, with the dev server up:
 
@@ -61,17 +61,10 @@ bun run scripts/smoke.ts http://127.0.0.1:8787
 
 | Name | Where | What |
 | --- | --- | --- |
-| `TURNSTILE_SITE_KEY` | `wrangler.jsonc` `vars` (public) | Widget site key. The committed value is the always-pass **test** key. |
-| `TURNSTILE_SECRET` | `wrangler secret put` / `.dev.vars` | Widget secret. Never commit a real one. |
+| `TURNSTILE_SITE_KEY` | `wrangler.jsonc` `vars` (public) | Production widget site key. Local dev uses the test key in `wrangler.dev.jsonc`. |
+| `TURNSTILE_SECRET` | Worker secret / `.dev.vars` | Widget secret. The live worker has a real secret. Never commit it. `.dev.vars` keeps the test secret for localhost. |
 
-On any host that is not localhost, AI routes stay **off** when the secret is missing or when either value is still a test key. Human chat keeps working.
-
-Create a Turnstile widget for `tech-demos.theserverless.dev` and `actor-lab.tech-demos.theserverless.dev`, put its site key in `wrangler.jsonc`, then:
-
-```bash
-cd demos/actor-lab
-bunx wrangler secret put TURNSTILE_SECRET
-```
+On any host that is not localhost, AI routes stay **off** when the secret is missing or when either value is still a test key. Human chat keeps working. The deployed worker is past that gate: <https://tech-demos.theserverless.dev/demos/actor-lab/> health reports AI ready.
 
 ## Deploy
 
@@ -83,7 +76,7 @@ bunx wrangler whoami
 env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bunx wrangler deploy
 ```
 
-The first deploy creates the SQLite Durable Object classes from the `v1` migration. Rate limit namespace ids are `7351` (race) and `7352` (chat); they must stay unique in the account.
+The worker is live. The `v1` migration created the SQLite Durable Object classes. Rate limit namespace ids stay `7351` (race), `7352` (chat), and `7353` (AI). Actor-lab keeps that range; tanbase is moving off it. Do not renumber them.
 
 Routes:
 
@@ -99,11 +92,4 @@ env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3
 
 The hub registry keeps a fallback Dynamic Worker that redirects to the subdomain if the zone route is missing.
 
-## Owner steps if this environment could not deploy
-
-1. `bunx wrangler whoami` with the owner account.
-2. Replace `TURNSTILE_SITE_KEY` with a real widget site key.
-3. `bunx wrangler secret put TURNSTILE_SECRET`.
-4. Deploy this worker with the command above.
-5. Redeploy `apps/hub`.
-6. Open <https://tech-demos.theserverless.dev/demos/actor-lab/>, fire both race modes, send a chat line, write a scratch note, and press **Simulate evict**.
+Live: <https://tech-demos.theserverless.dev/demos/actor-lab/>. `GET /api/health` reports AI ready.
