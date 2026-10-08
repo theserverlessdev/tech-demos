@@ -1,6 +1,8 @@
 # Setup — tanbase
 
-Production fails closed until `TURNSTILE_SECRET` is set. The site key shipped in `wrangler.jsonc` is Cloudflare's **always-pass test key**. Replace it before the public demo should reject bots.
+Live at <https://tech-demos.theserverless.dev/demos/tanbase/>.
+
+The D1 database `tech-demos-tanbase` (`67b63062-595d-48dc-a13c-2585dbeb5612`), the R2 bucket `tech-demos-tanbase`, and the Workflow `tech-demos-tanbase-split` are created. `TURNSTILE_SITE_KEY` in `wrangler.jsonc` is the live widget key. `TURNSTILE_SECRET` is a Worker secret (`wrangler secret put`), not a var — a var with that name would collide with the secret and fail Workers Builds. Rate-limit namespaces are `7391` (writes), `7392` (uploads), and `7393` (AI). `7394` is reserved and unused.
 
 ## Local
 
@@ -11,51 +13,16 @@ bun install
 bun run dev
 ```
 
-`.dev.vars.example` contains the published always-pass test secret:
+`.dev.vars.example` contains the published always-pass test secret and the matching test site key:
 
 ```text
 TURNSTILE_SECRET=1x0000000000000000000000000000000AA
+TURNSTILE_SITE_KEY=1x00000000000000000000AA
 ```
 
-Site key (already in `wrangler.jsonc` vars): `1x00000000000000000000AA`.
+Those override the live site key for `wrangler dev` only. They are dummy credentials from Cloudflare's Turnstile testing docs.
 
-These two values are dummy credentials from Cloudflare's Turnstile testing docs. They are not a production widget.
-
-## Owner steps to deploy
-
-From `demos/tanbase`, with the owner account. Unset any other token first:
-
-```bash
-cd demos/tanbase
-env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bunx wrangler whoami
-
-env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bunx wrangler d1 create tech-demos-tanbase
-env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bunx wrangler r2 bucket create tech-demos-tanbase
-```
-
-Put the real D1 `database_id` into `wrangler.jsonc` (the file currently has a placeholder, `00000000-0000-4000-8000-0000000000a1`).
-
-Create a Turnstile widget for `tech-demos.theserverless.dev` and `tanbase.tech-demos.theserverless.dev`. Then:
-
-```bash
-# Replace the test site key in wrangler.jsonc vars:
-#   "TURNSTILE_SITE_KEY": "<widget site key>"
-
-env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bunx wrangler secret put TURNSTILE_SECRET
-# paste the widget secret. Do not commit it.
-
-env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bunx wrangler deploy
-```
-
-`bun run deploy` also applies D1 migrations remotely. The first remote migrate needs the real database id.
-
-Workers AI, Workflows, Durable Objects, and the rate-limit namespaces (`7351`, `7352`, `7353`) are created by the deploy. No extra token beyond the owner login.
-
-After the Worker is on the zone routes, redeploy the hub so the gallery card is present:
-
-```bash
-bun run --filter @tech-demos/hub deploy
-```
+`bun run typecheck` runs `wrangler types` before `tsc`, so a clean clone does not need a committed `worker-configuration.d.ts`.
 
 ## Routes
 

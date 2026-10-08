@@ -20,6 +20,11 @@ const COOKIE = "tb_vid";
 const VISITOR_RE = /^v_[a-f0-9]{24}$/;
 const ID_RE = /^[a-z]_[a-f0-9]{16}$/;
 
+// Production var is "". `.dev.vars` sets "1". The generated type is the literal "".
+function localHooksEnabled(flag: string): boolean {
+  return flag === "1";
+}
+
 const ALLOWED_TYPES: Record<string, (bytes: Uint8Array) => boolean> = {
   "image/png": (bytes) => bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47,
   "image/jpeg": (bytes) => bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff,
@@ -102,7 +107,7 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
   }
 
   if (path === "/api/sweep" && method === "POST") {
-    if (env.ALLOW_LOCAL_HOOKS !== "1") throw new HttpError(404, "not_found", "Unknown API route.");
+    if (!localHooksEnabled(env.ALLOW_LOCAL_HOOKS)) throw new HttpError(404, "not_found", "Unknown API route.");
     return json(await sweep(env));
   }
 
@@ -121,7 +126,7 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
     await verifyTurnstile(env, request, body.turnstileToken, "create-board");
     const title = parseTitle(body.title, true);
     if (!title) throw new HttpError(400, "invalid", "Title is required.");
-    const board = await createBoard(env, who.id, title, parseTtlMs(env.ALLOW_LOCAL_HOOKS === "1", body.ttlSeconds));
+    const board = await createBoard(env, who.id, title, parseTtlMs(localHooksEnabled(env.ALLOW_LOCAL_HOOKS), body.ttlSeconds));
     return finish({ board }, 201);
   }
 

@@ -2,11 +2,12 @@
 
 An anonymous kanban on Cloudflare Workers. This is a **small demo** inspired by [tanfust/tanbase-core](https://github.com/tanfust/tanbase-core) (MIT, by tanfust), not a fork of that app. The shape of the idea is in [this post](https://x.com/wassimbenr/status/2104630626758652327).
 
-- **Route, once deployed:** <https://tech-demos.theserverless.dev/demos/tanbase/>
+- **Live:** <https://tech-demos.theserverless.dev/demos/tanbase/>
 - **Subdomain:** <https://tanbase.tech-demos.theserverless.dev/>
+- **Created with the Worker:** R2 bucket `tech-demos-tanbase`, Workflow `tech-demos-tanbase-split`
 - **Plan:** [PLAN.md](./PLAN.md)
 - **What changed vs upstream:** [CHANGELOG.md](./CHANGELOG.md)
-- **Secrets and first deploy:** [SETUP.md](./SETUP.md)
+- **Setup:** [SETUP.md](./SETUP.md)
 
 Walkthrough stills and a short video: [artifacts/](./artifacts/).
 
@@ -45,7 +46,7 @@ bun install
 bun run dev
 ```
 
-`.dev.vars` holds Cloudflare's published always-pass Turnstile **test** secret. The site key in `wrangler.jsonc` is the matching always-pass test key `1x00000000000000000000AA`. Then:
+`.dev.vars` holds Cloudflare's published always-pass Turnstile **test** secret so smoke can send the dummy token, and it overrides `TURNSTILE_SITE_KEY` with the matching test key `1x00000000000000000000AA`. `wrangler.jsonc` keeps the live site key. Production leaves `ALLOW_LOCAL_HOOKS` empty and stores `TURNSTILE_SECRET` with `wrangler secret put`, not as a var. Then:
 
 ```bash
 bun run scripts/smoke.ts http://127.0.0.1:8787

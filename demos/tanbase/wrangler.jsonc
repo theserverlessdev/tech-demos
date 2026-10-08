@@ -15,7 +15,7 @@
     {
       "binding": "DB",
       "database_name": "tech-demos-tanbase",
-      "database_id": "00000000-0000-4000-8000-0000000000a1",
+      "database_id": "67b63062-595d-48dc-a13c-2585dbeb5612",
       "migrations_dir": "migrations"
     }
   ],
@@ -37,16 +37,17 @@
     }
   ],
   "ratelimits": [
-    { "name": "WRITE_LIMIT", "namespace_id": "7351", "simple": { "limit": 40, "period": 60 } },
-    { "name": "UPLOAD_LIMIT", "namespace_id": "7352", "simple": { "limit": 8, "period": 60 } },
-    { "name": "AI_LIMIT", "namespace_id": "7353", "simple": { "limit": 4, "period": 60 } }
+    { "name": "WRITE_LIMIT", "namespace_id": "7391", "simple": { "limit": 40, "period": 60 } },
+    { "name": "UPLOAD_LIMIT", "namespace_id": "7392", "simple": { "limit": 8, "period": 60 } },
+    { "name": "AI_LIMIT", "namespace_id": "7393", "simple": { "limit": 4, "period": 60 } }
   ],
   "triggers": { "crons": ["15 * * * *"] },
+  "secrets": {
+    "required": ["TURNSTILE_SECRET"]
+  },
   "vars": {
     "AI_MODEL": "@cf/zai-org/glm-5.3-flash",
-    "TURNSTILE_SITE_KEY": "1x00000000000000000000AA",
-    // Empty until `wrangler secret put TURNSTILE_SECRET`. High-cost routes fail closed.
-    "TURNSTILE_SECRET": "",
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFRgrMPI-nCzvR3-",
     // Local smoke only. `.dev.vars` sets this to 1. Production stays empty.
     "ALLOW_LOCAL_HOOKS": ""
   },
