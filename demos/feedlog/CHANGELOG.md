@@ -47,3 +47,7 @@ Hub Graphite & Ember. Ember accent `#c2410c`, background `#0e0e11`. The hub mark
 ## Local similarity
 
 Vectorize has no local simulation, and Workers AI needs an account. When either call throws, `/api/similar` answers with `source: "lexical"` (word overlap against D1) and the page says so. Production uses `source: "vectorize"` when the bindings respond.
+
+## 2026-10-09
+
+Phone layout: 16px fields, 44px filters and buttons, wrapping tabs, a stacked top bar, and safe-area padding. The board and roadmap already stack on a narrow screen.

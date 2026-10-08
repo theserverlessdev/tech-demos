@@ -41,3 +41,7 @@ The upstream post: <https://x.com/wassimbenr/status/2104630626758652327>.
 ## Branding
 
 Hub Graphite & Ember. Ember accent `#c2410c`, background `#0e0e11`. Bricolage Grotesque and Hanken Grotesk. Contact links to theserverless.dev. No purple-to-cyan gradient.
+
+## 2026-10-09
+
+Phone layout: 16px fields, 44px controls, columns stacked, and safe-area padding. Touch drag moves a card between columns; a tap still opens it.

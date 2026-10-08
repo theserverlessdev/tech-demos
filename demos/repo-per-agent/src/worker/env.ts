@@ -44,6 +44,9 @@ export type ArtifactsBinding = {
 };
 
 /** Bindings from `wrangler types`. The Artifacts aliases below are the subset this worker calls. */
-export interface DemoEnv extends Env {}
+export interface DemoEnv extends Env {
+  /** Production secret. Not a wrangler var, so generated Env omits it. Missing means Turnstile fails closed. */
+  TURNSTILE_SECRET?: string;
+}
 
 export type { ActivityRow, CommitSummary, TaskSummary };

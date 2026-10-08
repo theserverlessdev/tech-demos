@@ -14,3 +14,7 @@ This demo is an inspired-by slice of [choyiny/gitorange](https://github.com/choy
 ## Same idea
 
 Repositories are Artifacts repos. Git clients clone them with a repo-scoped token. The worker pushes commits as Git packs over smart HTTP, which is the Artifacts data plane.
+
+## 2026-10-09
+
+Phone layout: 16px fields, 44px buttons, a stacked split, and safe-area padding.

@@ -1,7 +1,10 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "types": ["@cloudflare/workers-types"]
+    "types": ["@cloudflare/workers-types"],
+    "paths": {
+      "@tech-demos/shared": ["../../packages/shared/src/index.ts"]
+    }
   },
   "include": ["src/**/*.ts", "worker-configuration.d.ts"]
 }

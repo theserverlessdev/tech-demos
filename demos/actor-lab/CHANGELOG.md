@@ -38,3 +38,7 @@ This demo is an inspired-by slice of [TerseAI/durable-actors](https://github.com
 ## Branding
 
 Hub Graphite & Ember. Ember accent `#c2410c`, background `#0e0e11`, Bricolage Grotesque and Hanken Grotesk. Contact links to theserverless.dev. No purple-to-cyan gradient.
+
+## 2026-10-09
+
+Phone layout: 16px fields, 44px race buttons, a wrapping composer, and safe-area padding. The trace table scrolls inside its own box.

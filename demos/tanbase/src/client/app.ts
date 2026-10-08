@@ -302,12 +302,67 @@ function cardNode(task: Task): HTMLElement {
     button.classList.remove("is-dragging");
     dragId = null;
   });
+  // Phones do not fire HTML5 drag. A touch pointer that moves becomes a drop on the column underneath.
+  let touch: { pointerId: number; x: number; y: number; moved: boolean } | null = null;
+  let swallowClick = false;
+  button.addEventListener("pointerdown", (event) => {
+    if (event.pointerType === "mouse") return;
+    touch = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, moved: false };
+    button.setPointerCapture(event.pointerId);
+  });
+  button.addEventListener("pointermove", (event) => {
+    if (!touch || touch.pointerId !== event.pointerId) return;
+    if (Math.hypot(event.clientX - touch.x, event.clientY - touch.y) < 10) return;
+    touch.moved = true;
+    dragId = task.id;
+    button.classList.add("is-dragging");
+    document.querySelectorAll(".column.is-over").forEach((node) => node.classList.remove("is-over"));
+    document.elementFromPoint(event.clientX, event.clientY)?.closest("[data-column]")?.classList.add("is-over");
+  });
+  button.addEventListener("pointerup", (event) => {
+    if (!touch || touch.pointerId !== event.pointerId) return;
+    const moved = touch.moved;
+    touch = null;
+    button.classList.remove("is-dragging");
+    document.querySelectorAll(".column.is-over").forEach((node) => node.classList.remove("is-over"));
+    if (!moved || !board) {
+      dragId = null;
+      return;
+    }
+    swallowClick = true;
+    dragId = null;
+    const section = document.elementFromPoint(event.clientX, event.clientY)?.closest("[data-column]");
+    const column = section?.getAttribute("data-column");
+    if (!(section instanceof HTMLElement) || !column || !COLUMNS.includes(column as ColumnId)) return;
+    const cards = [...section.querySelectorAll(".card")].filter((card) => card !== button);
+    let index = cards.length;
+    for (let i = 0; i < cards.length; i++) {
+      const box = cards[i]?.getBoundingClientRect();
+      if (box && event.clientY < box.top + box.height / 2) {
+        index = i;
+        break;
+      }
+    }
+    void moveTask(task.id, column as ColumnId, index);
+  });
+  button.addEventListener("pointercancel", () => {
+    touch = null;
+    dragId = null;
+    button.classList.remove("is-dragging");
+  });
   const open = () => {
     selectedId = task.id;
     editing = false;
     renderWorkspace(true);
   };
-  button.addEventListener("click", open);
+  button.addEventListener("click", (event) => {
+    if (swallowClick) {
+      swallowClick = false;
+      event.preventDefault();
+      return;
+    }
+    open();
+  });
   button.addEventListener("keydown", (event) => {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();

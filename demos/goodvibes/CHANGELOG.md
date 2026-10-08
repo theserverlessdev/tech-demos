@@ -32,3 +32,7 @@ We did not copy the upstream `src/game`, `src/ui`, `src/controls`, or `vibescale
 ## Branding
 
 Hub Graphite & Ember. Ember `#c2410c`, background `#0e0e11`. LogoMark SVG. No purple-to-cyan logo.
+
+## 2026-10-09
+
+Phone layout: 16px fields, 44px buttons, and safe-area padding. Ember Rush has an on-screen pad, and a tap on the floor still walks there.

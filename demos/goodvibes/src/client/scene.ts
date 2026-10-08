@@ -151,6 +151,7 @@ export class ArenaScene {
       this.ctx2d = canvas.getContext("2d");
     }
     this.resize();
+    canvas.style.touchAction = "none";
     window.addEventListener("resize", this.resize);
     canvas.addEventListener("pointerdown", this.onPointer);
     window.addEventListener("keydown", this.onKeyDown);
@@ -365,7 +366,17 @@ export class ArenaScene {
     return { x: clampPos((px - originX) / scale), z: clampPos((py - originY) / scale) };
   }
 
+  hold(key: string, on: boolean): void {
+    if (on) {
+      this.keys.add(key);
+      this.walkTarget = null;
+    } else {
+      this.keys.delete(key);
+    }
+  }
+
   private readonly onPointer = (ev: PointerEvent): void => {
+    if (ev.pointerType !== "mouse") ev.preventDefault();
     const hit = this.worldFromEvent(ev);
     if (!hit) return;
     this.walkTarget = hit;

@@ -36,3 +36,7 @@ This demo is **inspired by** [aozorae/Edgechat](https://github.com/aozorae/Edgec
 ## Branding
 
 Hub Graphite & Ember. Ember accent `#c2410c`, background `#0e0e11`. Real LogoMark SVG (cloud + lightning + streaks). No purple-to-cyan logo.
+
+## 2026-10-09
+
+Phone layout: 16px fields, 44px buttons, a stacked top bar (name, save, and theme on one row; the Inspired by link stays in the footer), a sticky composer, and safe-area padding.

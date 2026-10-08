@@ -319,6 +319,7 @@ async function joinRoom(id: string): Promise<void> {
       showBoardHint("This board is full.", "error");
       return;
     }
+    event.preventDefault();
     canvas.setPointerCapture(event.pointerId);
     const [x, y] = pointOf(event);
     if (tool === "erase") {

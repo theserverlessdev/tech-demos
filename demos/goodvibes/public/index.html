@@ -54,7 +54,7 @@
           <button class="btn" id="join" type="submit">Join arena</button>
           <button class="btn btn-ghost" id="create" type="button">Create room</button>
         </div>
-        <p class="hint">WASD or click to move. The Worker rate-limits create; the room Durable Object hibernates between rounds.</p>
+        <p class="hint">WASD, tap the floor, or use the pad. The Worker rate-limits create; the room Durable Object hibernates between rounds.</p>
       </form>
     </section>
 
@@ -76,6 +76,14 @@
         <p class="hint">Your ember ring is you. Orbs respawn when grabbed.</p>
         <button class="btn btn-ghost" id="leave" type="button">Leave</button>
       </aside>
+      <div class="pad" id="pad" aria-label="Move">
+        <button type="button" data-key="arrowup" aria-label="Move up">↑</button>
+        <div class="pad__mid">
+          <button type="button" data-key="arrowleft" aria-label="Move left">←</button>
+          <button type="button" data-key="arrowdown" aria-label="Move down">↓</button>
+          <button type="button" data-key="arrowright" aria-label="Move right">→</button>
+        </div>
+      </div>
     </section>
   </main>
   <script type="module" src="./assets/app.js"></script>

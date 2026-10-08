@@ -28,3 +28,7 @@ What this slice changes relative to [yologdev/yoagent `clef-worker`](https://git
 - DeepSeek as the planner. This desk uses Workers AI `@cf/zai-org/glm-5.3-flash`, with local rules if that call fails.
 - Bearer-token auth. This is a public demo with an anonymous session cookie.
 - `?gate=jev`.
+
+## 2026-10-09
+
+Phone layout: 16px composer, 44px chips and buttons, and safe-area padding. The pending card and layout stack on a narrow screen.

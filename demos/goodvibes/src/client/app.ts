@@ -384,6 +384,18 @@ function boot(): void {
     ev.preventDefault();
     joinRoom();
   });
+  for (const button of document.querySelectorAll<HTMLButtonElement>("#pad button")) {
+    const key = button.dataset.key || "";
+    const down = (ev: Event) => {
+      ev.preventDefault();
+      state.scene?.hold(key, true);
+    };
+    const up = () => state.scene?.hold(key, false);
+    button.addEventListener("pointerdown", down);
+    button.addEventListener("pointerup", up);
+    button.addEventListener("pointercancel", up);
+    button.addEventListener("lostpointercapture", up);
+  }
   window.addEventListener("keydown", (ev) => {
     if (ev.key !== "Enter" && ev.key !== " ") return;
     const tag = (ev.target as HTMLElement | null)?.tagName;

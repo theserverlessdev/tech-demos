@@ -36,3 +36,7 @@ Announcement: https://x.com/DhravyaShah/status/2103668051468300701
 ## Branding
 
 Hub Graphite & Ember. Background `#0e0e11`, ember `#c2410c`, Bricolage Grotesque and Hanken Grotesk. Contact links to https://theserverless.dev/contact.
+
+## 2026-10-09
+
+Phone layout: 16px fields, 44px chips and buttons, and safe-area padding. The workspace stacks to one column.

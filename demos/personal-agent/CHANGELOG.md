@@ -39,3 +39,7 @@ The X post that pointed at the upstream repo: <https://x.com/tonycasavan/status/
 ## Branding
 
 Hub Graphite & Ember. Ember accent `#c2410c`, background `#0e0e11`. Contact links to <https://theserverless.dev/contact>. The mark links back to the hub.
+
+## 2026-10-09
+
+Phone layout: 16px fields, 44px controls, sticky composer, and safe-area padding. Graphite and Ember colours are unchanged.

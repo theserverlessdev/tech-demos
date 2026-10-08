@@ -40,3 +40,7 @@ Hub Graphite & Ember. Ember accent `#c2410c`, background `#0e0e11`. LogoMark SVG
 ## Known library behaviour
 
 `y-partyserver` debounces `onSave` with `setTimeout`. A Durable Object cannot hibernate while that timer is pending. After the debounce settles (at most `debounceMaxWait`, 800 ms here) and the sockets are idle, hibernation can proceed. Local `wrangler dev` does not hibernate; the `hibernate: true` flag is what production uses.
+
+## 2026-10-09
+
+Phone layout: 16px fields, 44px ink controls, and safe-area padding. Drawing uses pointer events with touch-action none so a finger does not scroll the page.

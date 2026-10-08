@@ -113,3 +113,60 @@ textarea { width: 100%; min-height: 4.5rem; resize: vertical; }
   .topbar__title { order: 3; flex-basis: 100%; }
   .gates { display: flex; }
 }
+
+/* Phone layout. Graphite and Ember stay; controls grow to a finger and fields stay at 16px so iOS does not zoom. */
+input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="hidden"]),
+textarea,
+select {
+  font-size: 16px;
+}
+.turnstile { max-width: 100%; overflow: auto; }
+@media (max-width: 900px) {
+  .btn,
+  a.btn,
+  .btn-primary,
+  .btn-ghost,
+  .filter,
+  button.chip,
+  .size,
+  .swatch,
+  .n,
+  .toggle__btn,
+  .room-btn,
+  .tabs a,
+  .note {
+    min-height: 44px;
+  }
+  .btn-icon,
+  .swatch,
+  .filter,
+  .n,
+  .size {
+    min-width: 44px;
+  }
+  .btn-icon,
+  .swatch {
+    width: 44px;
+    height: 44px;
+  }
+  .topbar {
+    padding-top: max(10px, env(safe-area-inset-top));
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+  }
+  .topbar__actions { flex-wrap: wrap; justify-content: flex-end; max-width: 100%; }
+  .composer { padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+  .title-input, .composer input, .join input { min-width: 0; max-width: 100%; }
+}
+@media (max-width: 900px) and (max-height: 520px) {
+  .canvas-wrap { min-height: 42dvh; }
+  .chat { min-height: 0; }
+  .lobby { min-height: 0; padding-top: 0.5rem; padding-bottom: 0.5rem; }
+}
+
+@media (max-width: 900px) {
+  body { min-height: 100dvh; padding-bottom: calc(1.5rem + env(safe-area-inset-bottom)); }
+  .composer input { min-width: 0; flex-basis: 12rem; }
+  .table-wrap { max-width: 100%; }
+}
+
