@@ -1,0 +1,7 @@
+# Copy to .dev.vars. Never commit .dev.vars.
+# openssl rand -hex 32
+WEBHOOK_KEY=replace-with-openssl-rand-hex-32
+
+# Local panel only. The Worker accepts this identity when the host is localhost.
+# Set it to the same value as ADMIN_EMAIL when you want the bootstrap admin.
+DEV_PANEL_EMAIL=hello@anks.in

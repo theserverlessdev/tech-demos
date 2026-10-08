@@ -1,0 +1,38 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "agent-mail",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  // Placeholder IDs. Replace them during the first deploy. See DEPLOY.md.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "agent-mail",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "MAIL_BUCKET",
+      "bucket_name": "agent-mail"
+    }
+  ],
+  // Unrestricted binding. The Worker only sends from an inbox on MAIL_DOMAIN.
+  // Restricting senders here would block new inboxes until a redeploy.
+  "send_email": [{ "name": "EMAIL" }],
+  "vars": {
+    "MAIL_DOMAIN": "agents.theserverless.dev",
+    "PUBLIC_ORIGIN": "https://agents.theserverless.dev",
+    "TEAM_DOMAIN": "https://theserverlessdev.cloudflareaccess.com",
+    "POLICY_AUD": "replace-with-access-aud-tag",
+    // First admin. Change this var to bootstrap a different email. The Worker reads the var.
+    "ADMIN_EMAIL": "hello@anks.in"
+  },
+  "triggers": { "crons": ["17 * * * *"] },
+  // Custom domain for HTTP only. It does not change MX records. See DEPLOY.md.
+  "routes": [{ "pattern": "agents.theserverless.dev", "custom_domain": true }],
+  "workers_dev": false,
+  "observability": { "enabled": true }
+}

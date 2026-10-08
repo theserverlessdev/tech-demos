@@ -1,0 +1,25 @@
+{
+  "name": "agent-mail",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler d1 migrations apply DB --remote && wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "cf-typegen": "wrangler types",
+    "smoke": "bun run scripts/smoke.ts"
+  },
+  "dependencies": {
+    "hono": "^4.9.8",
+    "jose": "^6.1.0",
+    "postal-mime": "3.0.0"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.10.7",
+    "@cloudflare/workers-types": "^4.20250927.0",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4",
+    "wrangler": "^4.40.0"
+  }
+}
