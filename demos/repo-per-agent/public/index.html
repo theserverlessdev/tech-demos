@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark light" />
+  <meta name="theme-color" content="#0e0e11" />
+  <title>Repo per agent · Tech Demos</title>
+  <meta name="description" content="One Agents SDK agent and one Cloudflare Artifacts git repo per task. Workers AI writes the commits." />
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,560..800&family=Hanken+Grotesk:wght@400..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./assets/app.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="https://tech-demos.theserverless.dev/" aria-label="Tech Demos gallery">
+      <svg class="brand__mark" width="26" height="26" viewBox="0 -3 128 128" aria-hidden="true">
+        <g stroke="currentColor" stroke-width="6" stroke-linecap="round" opacity="0.45"><line x1="4" y1="58" x2="20" y2="58"/><line x1="1" y1="72" x2="19" y2="72"/><line x1="6" y1="86" x2="22" y2="86"/></g>
+        <path d="M44 92 C31 92 20 82 20 69 C20 57 29 47 41 46 C45 33 57 24 70 24 C85 24 98 35 100 51 C110 53 118 62 118 72 C118 83 109 92 97 92 Z" fill="none" stroke="currentColor" stroke-width="7.5" stroke-linejoin="round"/>
+        <path d="M69 36 L50 71 L63 71 L57 102 L88 60 L72 60 L80 36 Z" fill="currentColor"/>
+      </svg>
+      <span>Tech Demos</span>
+    </a>
+    <div class="topbar__title">
+      <h1>Repo per agent</h1>
+      <p>One Artifacts repo and one agent per task</p>
+    </div>
+    <div class="topbar__actions">
+      <a class="btn btn-primary" href="https://tech-demos.theserverless.dev/">Contact</a>
+      <button class="btn btn-ghost btn-icon" id="theme" type="button" aria-label="Switch colour theme">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9Z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="strip" role="status">
+    <span class="strip__dot"></span>
+    <span id="strip-text">Each task gets its own git repo. Repos and their log rows expire after a few hours.</span>
+  </div>
+
+  <main class="layout">
+    <section class="pane pane-tasks" aria-label="Tasks">
+      <header class="pane__head">
+        <h2>Tasks</h2>
+        <span class="count" id="task-count">0</span>
+      </header>
+      <form class="create" id="create-form">
+        <label class="field">
+          <span>Title</span>
+          <input id="title" name="title" maxlength="80" required placeholder="Reverse a greeting" autocomplete="off" />
+        </label>
+        <div id="create-turnstile" class="turnstile"></div>
+        <button class="btn btn-primary" id="create-btn" type="submit">Create repo</button>
+        <p class="hint" id="create-hint" role="status"></p>
+      </form>
+      <ol class="tasks" id="tasks"></ol>
+      <p class="empty" id="tasks-empty">No live repos in this browser yet.</p>
+    </section>
+
+    <section class="pane pane-detail" id="detail" aria-label="Repository" hidden>
+      <header class="detail__head">
+        <div>
+          <p class="kicker" id="detail-id"></p>
+          <h2 id="detail-title"></h2>
+        </div>
+        <p class="muted" id="detail-expires"></p>
+      </header>
+      <p class="remote" id="detail-remote"></p>
+
+      <div class="split">
+        <div>
+          <h3>Commits</h3>
+          <ol class="commits" id="commits"></ol>
+        </div>
+        <div>
+          <h3>Diff</h3>
+          <p class="muted" id="diff-meta">Select a commit.</p>
+          <pre class="diff" id="diff"><code id="diff-code"></code></pre>
+        </div>
+      </div>
+
+      <form class="run" id="run-form">
+        <label class="field">
+          <span>Ask the agent</span>
+          <textarea id="instruction" name="instruction" maxlength="500" required rows="3" placeholder="Add a reverse function to src/task.ts and mention it in NOTES.md"></textarea>
+        </label>
+        <div id="run-turnstile" class="turnstile"></div>
+        <div class="row">
+          <button class="btn btn-primary" id="run-btn" type="submit">Run agent</button>
+          <button class="btn" id="token-btn" type="button">Mint read-only clone token</button>
+        </div>
+        <p class="hint" id="run-hint" role="status"></p>
+      </form>
+
+      <div class="token" id="token-box" hidden>
+        <p>Read-only for 10 minutes. The token stays masked.</p>
+        <label class="field">
+          <span>git clone</span>
+          <input id="token-command" type="password" readonly />
+        </label>
+        <button class="btn btn-ghost" id="token-reveal" type="button">Show token</button>
+      </div>
+    </section>
+
+    <section class="pane pane-hero" id="hero">
+      <h2>A repo for the task, not a git host.</h2>
+      <p>Create a task. The worker opens an Artifacts repository, seeds three files, and pins an Agents SDK Durable Object to that id. When you run the agent, Workers AI rewrites one file and the worker pushes a real commit.</p>
+      <ol class="steps">
+        <li>Turnstile and a per-address rate limit gate create and run.</li>
+        <li>This browser can hold three live repos. A cron deletes the repo and the D1 rows when they expire.</li>
+        <li>The clone token is read-only and lasts ten minutes.</li>
+      </ol>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <p>
+      Inspired by <a href="https://github.com/choyiny/gitorange" rel="noopener">choyiny/gitorange</a>
+      (Apache-2.0). Artifacts is the git store. This slice is the agent-per-repo path only.
+      <a href="https://x.com/haipingfu/status/2107011097039605909" rel="noopener">Note</a>
+    </p>
+  </footer>
+
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
+  <script type="module" src="./assets/app.js"></script>
+</body>
+</html>

@@ -160,6 +160,17 @@ const actorLabFallbackSource = `export default {
 };
 `;
 
+// repo-per-agent is a standalone Worker (Artifacts, Agents SDK, D1). Same pattern as resolve-hq:
+// the zone route wins, and this source only redirects if that route is missing.
+const repoPerAgentFallbackSource = `export default {
+  fetch(request) {
+    const url = new URL(request.url);
+    const rest = url.pathname.replace(/^\\/demos\\/repo-per-agent/, "") || "/";
+    return Response.redirect("https://repo-per-agent.tech-demos.theserverless.dev" + rest + url.search, 302);
+  },
+};
+`;
+
 export const demos: DemoEntry[] = [
   {
     slug: "resolve-hq",
@@ -255,6 +266,14 @@ export const demos: DemoEntry[] = [
       "A Durable Object actor with auto-persisted fields and a one-at-a-time mailbox. Race a counter across a Workers AI wait, then chat on a hibernating WebSocket that keeps SQLite across a simulated eviction.",
     tags: ["durable-objects", "workers-ai", "websockets", "turnstile"],
     source: actorLabFallbackSource,
+  },
+  {
+    slug: "repo-per-agent",
+    title: "Repo per agent",
+    description:
+      "One Agents SDK agent and one Artifacts git repo per task. Workers AI commits a small file edit. The page shows the log, the diff, and a short-lived read-only clone token.",
+    tags: ["artifacts", "agents-sdk", "workers-ai", "d1", "turnstile"],
+    source: repoPerAgentFallbackSource,
   },
 ];
 
