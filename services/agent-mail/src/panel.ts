@@ -284,11 +284,11 @@ export function agentPage(
         <button style="margin-top:0.6rem">Create inbox</button>
       </form>
     </div>
-    ${inboxForms(inboxes, domain, workerName, csrf)}`,
+    ${inboxForms(inboxes, domain, csrf)}`,
   });
 }
 
-function inboxForms(inboxes: InboxRow[], domain: string, workerName: string, csrf: string): string {
+function inboxForms(inboxes: InboxRow[], domain: string, csrf: string): string {
   return inboxes
     .map((inbox) => {
       const allow = parseJson<string[]>(inbox.allowlist, []).join("\n");
@@ -305,7 +305,6 @@ function inboxForms(inboxes: InboxRow[], domain: string, workerName: string, csr
         <label>Status</label><select name="status"><option ${inbox.status === "active" ? "selected" : ""}>active</option><option ${inbox.status === "disabled" ? "selected" : ""}>disabled</option></select>
         <button style="margin-top:0.6rem">Save inbox</button>
       </form>
-      ${inbox.status === "active" && !inbox.routing_rule_id ? `<p class="notice">routing rule missing: add it in Cloudflare. ${esc(`${inbox.local_part}@${domain} -> worker ${workerName}`)}</p>` : ""}
       <form method="post" action="/admin/inboxes/${esc(inbox.id)}/delete" style="margin-top:0.6rem">
         <input type="hidden" name="csrf" value="${esc(csrf)}">
         <button class="danger">Delete inbox</button>
