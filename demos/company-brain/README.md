@@ -7,6 +7,8 @@ A sandbox org memory on Cloudflare Workers. This is a **small demo** inspired by
 - **Plan:** [PLAN.md](./PLAN.md)
 - **What changed vs upstream:** [CHANGELOG.md](./CHANGELOG.md)
 
+The hub URL is the deployed demo.
+
 ## What it proves
 
 | Piece | What the demo does with it |
@@ -47,7 +49,7 @@ Put Cloudflare's published always-pass test secret in `.dev.vars` (gitignored):
 TURNSTILE_SECRET=1x0000000000000000000000000000000AA
 ```
 
-The matching site key is already in `wrangler.jsonc`: `1x00000000000000000000AA`. These are [Cloudflare's test keys](https://developers.cloudflare.com/turnstile/troubleshooting/testing/), not a production credential. The Worker accepts the dummy token `XXXX.DUMMY.TOKEN.XXXX` only when the secret is that test secret **and** the host is localhost. A public hostname with the test secret fails closed. A missing `TURNSTILE_SECRET` also fails closed.
+`wrangler.jsonc` holds the live widget site key. Local `wrangler.offline.jsonc` keeps Cloudflare's always-pass test site key `1x00000000000000000000AA`. These test keys are [published by Cloudflare](https://developers.cloudflare.com/turnstile/troubleshooting/testing/), not a production credential. The Worker accepts the dummy token `XXXX.DUMMY.TOKEN.XXXX` only when the secret is that test secret **and** the host is localhost. A public hostname with the test secret fails closed. A missing `TURNSTILE_SECRET` also fails closed. Use `bun run dev:offline` for the dummy-token smoke path.
 
 ```bash
 bun run dev
@@ -62,20 +64,20 @@ From this folder, with the owner account (unset any other API token):
 
 ```bash
 bunx wrangler whoami
-# Replace TURNSTILE_SITE_KEY in wrangler.jsonc with the real widget key first.
+# TURNSTILE_SITE_KEY in wrangler.jsonc is the live widget key.
 # Widget hostnames: tech-demos.theserverless.dev, company-brain.tech-demos.theserverless.dev
 env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bunx wrangler deploy
 env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bunx wrangler secret put TURNSTILE_SECRET
 ```
 
-No D1 database or R2 bucket. The Durable Object class is created by the migration in `wrangler.jsonc`.
+No D1 database or R2 bucket. The Durable Object class is created by the migration in `wrangler.jsonc`. Rate-limit namespace ids are `7361` (create), `7362` (chat), `7363` (write), and `7364` (read).
 
 Routes:
 
 - `tech-demos.theserverless.dev/demos/company-brain*`
 - `company-brain.tech-demos.theserverless.dev/*`
 
-After this Worker is deployed, redeploy `apps/hub` so the gallery card is in front of the fallback redirect.
+The Worker is live at https://tech-demos.theserverless.dev/demos/company-brain/. Redeploy `apps/hub` when the gallery card should sit in front of the fallback redirect.
 
 The hub registry keeps a fallback Dynamic Worker that redirects to the subdomain if the zone route is missing.
 

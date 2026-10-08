@@ -16,18 +16,17 @@
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Org"] }],
   "ratelimits": [
-    { "name": "CREATE_LIMIT", "namespace_id": "7341", "simple": { "limit": 8, "period": 60 } },
-    { "name": "CHAT_LIMIT", "namespace_id": "7342", "simple": { "limit": 10, "period": 60 } },
-    { "name": "WRITE_LIMIT", "namespace_id": "7343", "simple": { "limit": 30, "period": 60 } },
-    { "name": "READ_LIMIT", "namespace_id": "7344", "simple": { "limit": 60, "period": 60 } }
+    { "name": "CREATE_LIMIT", "namespace_id": "7361", "simple": { "limit": 8, "period": 60 } },
+    { "name": "CHAT_LIMIT", "namespace_id": "7362", "simple": { "limit": 10, "period": 60 } },
+    { "name": "WRITE_LIMIT", "namespace_id": "7363", "simple": { "limit": 30, "period": 60 } },
+    { "name": "READ_LIMIT", "namespace_id": "7364", "simple": { "limit": 60, "period": 60 } }
   ],
   "vars": {
     "AI_MODEL": "@cf/zai-org/glm-5.3-flash",
     "ORG_TTL_HOURS": "24",
-    // Cloudflare's published always-pass test site key. Replace before a public deploy
-    // and set TURNSTILE_SECRET with `wrangler secret put`. The test secret is rejected
-    // off localhost, so shipping this site key alone does not open production.
-    "TURNSTILE_SITE_KEY": "1x00000000000000000000AA"
+    // Public widget key for the live hostnames. TURNSTILE_SECRET is a Worker secret,
+    // not a var. The always-pass test site key stays in wrangler.offline.jsonc.
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFRgqMzH6CzLSrXW"
   },
   "routes": [
     { "pattern": "tech-demos.theserverless.dev/demos/company-brain*", "zone_name": "theserverless.dev" },

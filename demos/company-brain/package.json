@@ -7,8 +7,8 @@
     "dev": "bun run build && wrangler dev",
     "dev:offline": "bun run build && wrangler dev -c wrangler.offline.jsonc",
     "deploy": "bun run build && wrangler deploy",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
-    "cf-typegen": "wrangler types",
+    "typecheck": "wrangler types --env-file /dev/null && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
+    "cf-typegen": "wrangler types --env-file /dev/null",
     "smoke": "bun run scripts/smoke.ts"
   },
   "dependencies": {
