@@ -83,6 +83,17 @@ const resolveHqFallbackSource = `export default {
 };
 `;
 
+// partyserver is a standalone Worker (hibernating PartyServer Durable Object + Yjs). Same pattern as resolve-hq:
+// the zone route wins, and this source only redirects if that route is missing.
+const partyserverFallbackSource = `export default {
+  fetch(request) {
+    const url = new URL(request.url);
+    const rest = url.pathname.replace(/^\\/demos\\/partyserver/, "") || "/";
+    return Response.redirect("https://partyserver.tech-demos.theserverless.dev" + rest + url.search, 302);
+  },
+};
+`;
+
 export const demos: DemoEntry[] = [
   {
     slug: "resolve-hq",
@@ -122,6 +133,14 @@ export const demos: DemoEntry[] = [
     description: "Minimal HTML demo loaded via the hub Worker Loader.",
     tags: ["dynamic-workers", "starter"],
     source: helloDynamicSource,
+  },
+  {
+    slug: "partyserver",
+    title: "Partyboard",
+    description:
+      "A shared ink board on a hibernating PartyServer Durable Object. Yjs strokes and live cursors sync in the room, state sits in DO storage, and an alarm wipes anonymous rooms.",
+    tags: ["partyserver", "yjs", "durable-objects", "websockets"],
+    source: partyserverFallbackSource,
   },
 ];
 

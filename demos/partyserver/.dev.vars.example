@@ -1,0 +1,7 @@
+# Cloudflare's published always-pass Turnstile test credentials.
+# They only open room creation on localhost. Production must use a real widget key
+# (wrangler var TURNSTILE_SITE_KEY) and `wrangler secret put TURNSTILE_SECRET`.
+TURNSTILE_SECRET=1x0000000000000000000000000000000AA
+TURNSTILE_SITE_KEY=1x00000000000000000000AA
+# Local wrangler rewrites Host to the production route, so this flag (not the hostname) allows the test pair. Leave it "0" in production.
+TURNSTILE_LOCAL=1
