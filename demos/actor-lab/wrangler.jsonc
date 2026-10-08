@@ -1,0 +1,38 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tech-demos-actor-lab",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none"
+  },
+  "ai": { "binding": "AI" },
+  "durable_objects": {
+    "bindings": [
+      { "name": "RACE", "class_name": "RaceActor" },
+      { "name": "CHAT", "class_name": "ChatActor" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RaceActor", "ChatActor"] }],
+  // Actor-lab keeps namespace ids 7351–7353. tanbase is moving off this range.
+  "ratelimits": [
+    { "name": "RACE_LIMIT", "namespace_id": "7351", "simple": { "limit": 30, "period": 60 } },
+    { "name": "CHAT_LIMIT", "namespace_id": "7352", "simple": { "limit": 30, "period": 60 } },
+    { "name": "AI_LIMIT", "namespace_id": "7353", "simple": { "limit": 30, "period": 60 } }
+  ],
+  "vars": {
+    "AI_MODEL": "@cf/meta/llama-3.2-1b-instruct",
+    // Public production widget site key. Local `wrangler dev` uses the test key in wrangler.dev.jsonc.
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFRgqW3QGH0PGoRv"
+  },
+  "routes": [
+    { "pattern": "tech-demos.theserverless.dev/demos/actor-lab*", "zone_name": "theserverless.dev" },
+    { "pattern": "actor-lab.tech-demos.theserverless.dev/*", "zone_name": "theserverless.dev" }
+  ],
+  "workers_dev": true,
+  "observability": { "enabled": true }
+}
