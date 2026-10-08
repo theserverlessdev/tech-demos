@@ -5,7 +5,7 @@ A shared ink board on Cloudflare Workers. This is a **small demo** inspired by [
 - **Upstream:** [cloudflare/partykit](https://github.com/cloudflare/partykit) — Sunil Pai (threepointone) and Cloudflare contributors. License: **ISC**.
 - **Prompt:** [@_thebluebutter](https://x.com/_thebluebutter/status/2105331683000234478)
 - **Live:** <https://tech-demos.theserverless.dev/demos/partyserver/>
-- **Subdomain:** <https://partyserver.tech-demos.theserverless.dev/>
+- **Subdomain:** <https://partyserver.tech-demos.theserverless.dev/> (same Worker)
 - **Plan:** [PLAN.md](./PLAN.md)
 - **What changed vs upstream:** [CHANGELOG.md](./CHANGELOG.md)
 
@@ -55,13 +55,14 @@ bun run scripts/smoke.ts http://127.0.0.1:8787
 
 ## Deploy
 
-Needs the owner account (unset any other `CF_API_TOKEN`). No D1 or R2. The Durable Object class and the rate-limit bindings are declared in `wrangler.jsonc`.
+Live at <https://tech-demos.theserverless.dev/demos/partyserver/>.
+
+`vars.TURNSTILE_SITE_KEY` is the production widget key. `TURNSTILE_SECRET` is listed under `secrets.required` so types include it; the value stays a Worker secret. Rate-limit namespace ids stay `7411` (create) and `7412` (connect). No D1 or R2. The Durable Object class and those bindings are declared in `wrangler.jsonc`.
+
+Redeploy from the owner account (unset any other `CF_API_TOKEN`):
 
 ```bash
 cd demos/partyserver
-# Real widget site key. Do not leave the always-pass test key here.
-# Edit wrangler.jsonc vars.TURNSTILE_SITE_KEY, then:
-env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bunx wrangler secret put TURNSTILE_SECRET
 env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bunx wrangler deploy
 ```
 
@@ -78,15 +79,12 @@ Routes:
 - `tech-demos.theserverless.dev/demos/partyserver*`
 - `partyserver.tech-demos.theserverless.dev/*`
 
-After the Worker is deployed, redeploy `apps/hub` so the gallery card is on the hub. The registry fallback redirects to the subdomain if the zone route is missing.
+Redeploy `apps/hub` if the gallery card is missing. The registry fallback redirects to the subdomain if the zone route is missing.
 
-## Owner steps if this environment has no Cloudflare credentials
+## Owner steps
 
-1. `cd demos/partyserver && bun install && bun run typecheck`
-2. `cp .dev.vars.example .dev.vars && bun run dev`
-3. `bun run scripts/smoke.ts http://127.0.0.1:8787`
-4. Create a Turnstile widget for `theserverless.dev` (and `partyserver.tech-demos.theserverless.dev` if the widget is hostname-locked).
-5. Put that site key in `wrangler.jsonc` → `vars.TURNSTILE_SITE_KEY`.
-6. `env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bunx wrangler secret put TURNSTILE_SECRET`
-7. `env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bunx wrangler deploy` from `demos/partyserver`.
-8. Redeploy the hub (`apps/hub`) so the gallery card shows.
+The Worker is already deployed. The site key is in `wrangler.jsonc`. `TURNSTILE_SECRET` was set with `wrangler secret put` and is not in git.
+
+`bun run typecheck` runs `wrangler types` before `tsc`, so a clean clone does not need a committed `worker-configuration.d.ts`.
+
+After a later Worker deploy, redeploy `apps/hub` so the gallery card stays on the hub.

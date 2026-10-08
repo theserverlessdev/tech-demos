@@ -19,9 +19,12 @@
     { "name": "CONNECT_LIMIT", "namespace_id": "7412", "simple": { "limit": 40, "period": 60 } }
   ],
   "vars": {
-    "TURNSTILE_SITE_KEY": "",
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFRgpxXI2NOgPsDG",
     "ROOM_TTL_MS": "7200000",
     "TURNSTILE_LOCAL": "0"
+  },
+  "secrets": {
+    "required": ["TURNSTILE_SECRET"]
   },
   "routes": [
     { "pattern": "tech-demos.theserverless.dev/demos/partyserver*", "zone_name": "theserverless.dev" },
