@@ -42,7 +42,7 @@ bun install
 bun run dev
 ```
 
-`.dev.vars` holds Cloudflare's [always-pass Turnstile test keys](https://developers.cloudflare.com/turnstile/troubleshooting/testing/). The widget token for those keys is `XXXX.DUMMY.TOKEN.XXXX`.
+`.dev.vars` holds Cloudflare's [always-pass Turnstile test keys](https://developers.cloudflare.com/turnstile/troubleshooting/testing/) and `ENVIRONMENT=local`. The widget token for those keys is `XXXX.DUMMY.TOKEN.XXXX`. `wrangler dev` rewrites the Host header to the first production route, so the test secret is accepted only when `ENVIRONMENT` is `local` or the host really is localhost. Production `wrangler.jsonc` leaves `ENVIRONMENT` empty, and the Worker rejects the test secret there.
 
 Typecheck needs generated bindings (`worker-configuration.d.ts` is gitignored):
 

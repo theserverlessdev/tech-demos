@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "bun build src/client/app.ts --outdir public/assets --target browser --minify",
-    "dev": "bun run build && wrangler dev",
+    "dev": "bun run build && wrangler dev --local",
     "deploy": "bun run build && wrangler deploy",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
     "cf-typegen": "wrangler types",

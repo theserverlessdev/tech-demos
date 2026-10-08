@@ -71,7 +71,7 @@ const saved = await call<{ note: NoteSummary; duplicate: boolean }>("/api/notes"
   },
 });
 check("note is stored", saved.status === 200 && saved.data?.note.title === "Color palette", saved.data);
-const noteId = saved.data?.note.id;
+const noteId = saved.data?.note?.id;
 
 const listed = await call<{ notes: NoteSummary[] }>(`/api/notes?visitorId=${id}`);
 check("note list contains the saved title", listed.status === 200 && listed.data?.notes.some((note) => note.id === noteId), listed.data);

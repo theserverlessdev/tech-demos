@@ -47,8 +47,10 @@
 
   <main class="layout">
     <section class="chat" aria-label="Conversation">
-      <ol class="messages" id="messages"></ol>
-      <p class="empty" id="empty">Save a note, then ask about it. Recalled titles and scores show under the reply.</p>
+      <div class="thread">
+        <ol class="messages" id="messages"></ol>
+        <p class="empty" id="empty">Save a note, then ask about it. Recalled titles and scores show under the reply.</p>
+      </div>
       <form class="composer" id="composer">
         <div id="turnstile"></div>
         <label class="sr-only" for="message">Message</label>

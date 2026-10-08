@@ -134,8 +134,9 @@ button { cursor: pointer; background: none; border: none; }
   padding: 16px 20px 12px;
   gap: 12px;
 }
-.messages { list-style: none; display: flex; flex-direction: column; gap: 12px; overflow: auto; flex: 1; }
-.empty { color: var(--muted); font-size: 14px; max-width: 42ch; }
+.thread { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
+.messages { list-style: none; display: flex; flex-direction: column; gap: 12px; }
+.empty { margin: auto; color: var(--muted); font-size: 14px; max-width: 42ch; text-align: center; }
 .message {
   max-width: 68ch;
   padding: 12px 14px;

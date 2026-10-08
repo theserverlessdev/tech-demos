@@ -37,9 +37,13 @@ export async function verifyTurnstile(env: Env, request: Request, token: string)
       message: "Turnstile is not configured, so chat and research are closed.",
     };
   }
-  const requestHost = new URL(request.url).hostname;
+  const headerHost = (request.headers.get("host") ?? "").split(":")[0]?.toLowerCase() ?? "";
+  const urlHost = new URL(request.url).hostname;
+  // `wrangler dev` rewrites Host to the first route, so local dev sets ENVIRONMENT=local in .dev.vars only.
+  const localDev = env.ENVIRONMENT === "local";
+  const requestHost = localHost(headerHost) ? headerHost : urlHost;
   // The always-pass test secret would disable the check on a public hostname.
-  if (TEST_SECRETS.has(secret) && !localHost(requestHost)) {
+  if (TEST_SECRETS.has(secret) && !localHost(requestHost) && !localDev) {
     return {
       ok: false,
       status: 503,
