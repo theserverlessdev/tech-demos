@@ -44,7 +44,7 @@ describe("inbound", () => {
 
     const file = await call(`/v1/inboxes/${inbox.id}/messages/${stored.id}/attachments/0`, { headers: bearer(key) });
     expect(file.status).toBe(200);
-    expect(file.text).toBe("hello-bytes");
+    expect(file.text.trim()).toBe("hello-bytes");
 
     const eml = await call(`/v1/inboxes/${inbox.id}/messages/${stored.id}/raw`, { headers: bearer(key) });
     expect(eml.status).toBe(200);

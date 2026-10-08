@@ -70,7 +70,7 @@ describe("send policy", () => {
     const follow = await call(`/v1/inboxes/${inbox.id}/threads/${threadId}/reply`, {
       method: "POST",
       headers: bearer(key),
-      body: JSON.stringify({ text: "Again" }),
+      body: JSON.stringify({ to: ["ada@example.com"], text: "Again" }),
     });
     expect(follow.status).toBe(202);
     expect((follow.body as { reason: string }).reason).toBe("reply_only");

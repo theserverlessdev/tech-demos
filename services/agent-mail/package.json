@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
+    "dev": "wrangler dev --env dev",
     "deploy": "wrangler d1 migrations apply DB --remote && wrangler deploy",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -16,10 +16,10 @@
     "postal-mime": "3.0.0"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.10.7",
+    "@cloudflare/vitest-pool-workers": "0.22.0",
     "@cloudflare/workers-types": "^4.20250927.0",
     "typescript": "^5.9.2",
-    "vitest": "^3.2.4",
+    "vitest": "4.1.11",
     "wrangler": "^4.40.0"
   }
 }

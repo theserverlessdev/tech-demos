@@ -34,7 +34,7 @@ bun run typecheck
 bun run test
 ```
 
-Copy `.dev.vars.example` to `.dev.vars` before `bun run dev`. Set `WEBHOOK_KEY`. Set `DEV_PANEL_EMAIL` to the same value as `ADMIN_EMAIL` when you want the local panel to sign in as the bootstrap admin. `DEV_PANEL_EMAIL` works only when the host is localhost.
+Copy `.dev.vars.example` to `.dev.vars` before `bun run dev`. Set `WEBHOOK_KEY`. Set `DEV_PANEL_EMAIL` to the same value as `ADMIN_EMAIL` when you want the local panel to sign in as the bootstrap admin. `bun run dev` uses the `dev` environment so the host stays `127.0.0.1`. `DEV_PANEL_EMAIL` works only on that host. Do not set `DEV_PANEL_EMAIL` in production.
 
 ## Deploy
 

@@ -168,6 +168,8 @@ bun run deploy
 bun run smoke
 ```
 
+`bun run deploy` uses the top-level Worker config. It does not use the `dev` environment. The `dev` environment is only for `bun run dev` on your machine.
+
 `bun run deploy` applies D1 migrations on the remote database, then deploys the Worker.
 
 Optional: `SMOKE_API_KEY` calls `GET /v1/me` after you mint a key in the panel. `SMOKE_ORIGIN` defaults to `https://agents.theserverless.dev`.

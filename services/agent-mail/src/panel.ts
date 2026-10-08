@@ -269,7 +269,7 @@ export function agentPage(
     <div class="card"><table><thead><tr><th>Address</th><th>Policy</th><th>Cap</th><th>Status</th></tr></thead><tbody>${inboxRows || `<tr><td colspan="4" class="muted">No inboxes.</td></tr>`}</tbody></table>
       <form method="post" action="/admin/agents/${esc(agent.id)}/inboxes" style="margin-top:0.8rem">
         <input type="hidden" name="csrf" value="${esc(csrf)}">
-        <div class="row"><div><label>Local part</label><input name="localPart" required placeholder="rescue"></div><div><label>Display name</label><input name="displayName"></div></div>
+        <div class="row"><div><label>Local part</label><input name="localPart" required placeholder="audit"></div><div><label>Display name</label><input name="displayName"></div></div>
         <div class="row"><div><label>Policy override</label><select name="policy"><option value="">inherit</option><option>auto</option><option>draft</option><option>reply_only_auto</option></select></div>
         <div><label>Daily cap (empty = no extra cap)</label><input name="dailySendCap"></div></div>
         <button style="margin-top:0.6rem">Create inbox</button>

@@ -44,12 +44,12 @@ describe("cleanup and webhook signature", () => {
     const keepRow = await env.DB.prepare("SELECT id FROM messages WHERE id = ?").bind(keep.id).first();
     expect(spamRow).toBeNull();
     expect(keepRow).not.toBeNull();
-    expect(await env.MAIL_BUCKET.get(spam.raw_r2_key!)).toBeNull();
-    expect(await env.MAIL_BUCKET.get("keep-raw")).not.toBeNull();
+    expect(await readBucket(spam.raw_r2_key!)).toBeNull();
+    expect(await readBucket("keep-raw")).toBe("keep-raw");
     const quarantine = await env.DB.prepare("SELECT local_part FROM quarantine ORDER BY local_part").all<{ local_part: string }>();
     expect(quarantine.results.map((row) => row.local_part)).toEqual(["stay"]);
-    expect(await env.MAIL_BUCKET.get("quarantine/spam.eml")).toBeNull();
-    expect(await env.MAIL_BUCKET.get("quarantine/real.eml")).not.toBeNull();
+    expect(await readBucket("quarantine/spam.eml")).toBeNull();
+    expect(await readBucket("quarantine/real.eml")).toBe("q");
   });
 
   it("signs the webhook body with HMAC-SHA256", async () => {
@@ -62,6 +62,12 @@ describe("cleanup and webhook signature", () => {
     expect(other).not.toBe(signature);
   });
 });
+
+async function readBucket(key: string): Promise<string | null> {
+  const object = await env.MAIL_BUCKET.get(key);
+  if (!object) return null;
+  return object.text();
+}
 
 function message(threadId: string, inboxId: string, receivedAt: number, spam: number, text: string) {
   const id = newId();

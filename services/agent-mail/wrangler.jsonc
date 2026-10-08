@@ -2,7 +2,8 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "agent-mail",
   "main": "src/index.ts",
-  "compatibility_date": "2026-10-01",
+  // Newest date the pinned local Workers runtime accepts. Raise it with the runtime.
+  "compatibility_date": "2026-08-22",
   "compatibility_flags": ["nodejs_compat"],
   // Placeholder IDs. Replace them during the first deploy. See DEPLOY.md.
   "d1_databases": [
@@ -34,5 +35,30 @@
   // Custom domain for HTTP only. It does not change MX records. See DEPLOY.md.
   "routes": [{ "pattern": "agents.theserverless.dev", "custom_domain": true }],
   "workers_dev": false,
+  // `wrangler dev --env dev` does not inherit bindings. It also drops the custom domain
+  // so the request host stays 127.0.0.1. DEV_PANEL_EMAIL is honored only on that host.
+  "env": {
+    "dev": {
+      "workers_dev": true,
+      "routes": [],
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "agent-mail",
+          "database_id": "00000000-0000-0000-0000-000000000000",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "r2_buckets": [{ "binding": "MAIL_BUCKET", "bucket_name": "agent-mail" }],
+      "send_email": [{ "name": "EMAIL" }],
+      "vars": {
+        "MAIL_DOMAIN": "agents.theserverless.dev",
+        "PUBLIC_ORIGIN": "https://agents.theserverless.dev",
+        "TEAM_DOMAIN": "https://theserverlessdev.cloudflareaccess.com",
+        "POLICY_AUD": "replace-with-access-aud-tag",
+        "ADMIN_EMAIL": "hello@anks.in"
+      }
+    }
+  },
   "observability": { "enabled": true }
 }
