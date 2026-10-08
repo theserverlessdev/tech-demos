@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark light" />
+  <meta name="theme-color" content="#0e0e11" />
+  <title>Personal agent · Tech Demos · theserverless.dev</title>
+  <meta name="description" content="A personal assistant on Workers: one Durable Object per visitor, markdown notes in R2, and recall scores beside each reply." />
+  <meta property="og:title" content="Personal agent" />
+  <meta property="og:description" content="One Durable Object, R2 notes, and Workers AI recall. A small slice of a personal agent." />
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Hanken+Grotesk:wght@400..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script src="./assets/theme.js"></script>
+  <link rel="stylesheet" href="./assets/app.css" />
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="https://tech-demos.theserverless.dev/" aria-label="Tech Demos gallery">
+      <svg class="brand__mark" width="26" height="26" viewBox="0 -3 128 128" aria-hidden="true">
+        <g stroke="currentColor" stroke-width="6" stroke-linecap="round" opacity="0.45"><line x1="4" y1="58" x2="20" y2="58"/><line x1="1" y1="72" x2="19" y2="72"/><line x1="6" y1="86" x2="22" y2="86"/></g>
+        <path d="M44 92 C31 92 20 82 20 69 C20 57 29 47 41 46 C45 33 57 24 70 24 C85 24 98 35 100 51 C110 53 118 62 118 72 C118 83 109 92 97 92 Z" fill="none" stroke="currentColor" stroke-width="7.5" stroke-linejoin="round"/>
+        <path d="M69 36 L50 71 L63 71 L57 102 L88 60 L72 60 L80 36 Z" fill="currentColor"/>
+      </svg>
+      <span>Tech Demos</span>
+    </a>
+    <div class="topbar__title">
+      <h1>Personal agent</h1>
+      <p>One Durable Object, R2 notes, Workers AI recall</p>
+    </div>
+    <div class="topbar__actions">
+      <a class="btn btn-primary" href="https://theserverless.dev/contact" rel="noopener">Contact</a>
+      <button class="btn btn-ghost btn-icon" id="theme" type="button" aria-label="Switch colour theme">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9Z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="strip" id="strip" role="status">
+    <span class="strip__dot"></span>
+    <span id="strip-text">This browser keeps an anonymous visitor id. Notes and chat are deleted 24 hours after the last write.</span>
+    <button class="btn btn-ghost" id="new-visitor" type="button">New visitor</button>
+  </div>
+
+  <main class="layout">
+    <section class="chat" aria-label="Conversation">
+      <ol class="messages" id="messages"></ol>
+      <p class="empty" id="empty">Save a note, then ask about it. Recalled titles and scores show under the reply.</p>
+      <form class="composer" id="composer">
+        <div id="turnstile"></div>
+        <label class="sr-only" for="message">Message</label>
+        <textarea id="message" rows="3" maxlength="2000" placeholder="Ask about a saved note, or start with “Remember that …”" required></textarea>
+        <div class="composer__row">
+          <p class="hint" id="hint" role="status"></p>
+          <button class="btn btn-primary" id="send" type="submit">Send</button>
+        </div>
+      </form>
+    </section>
+
+    <aside class="side">
+      <section class="panel" aria-label="Notes">
+        <header class="panel__head">
+          <h2>Notes</h2>
+          <span class="count" id="note-count">0</span>
+        </header>
+        <form class="note-form" id="note-form">
+          <label class="sr-only" for="note-title">Note title</label>
+          <input id="note-title" maxlength="120" placeholder="Title" required />
+          <label class="sr-only" for="note-body">Note body</label>
+          <textarea id="note-body" rows="4" maxlength="8000" placeholder="Markdown note stored in R2" required></textarea>
+          <button class="btn" id="save-note" type="submit">Save note</button>
+        </form>
+        <ol class="note-list" id="note-list"></ol>
+        <article class="viewer" id="viewer" hidden>
+          <header class="viewer__head">
+            <h3 id="viewer-title"></h3>
+            <button class="btn" id="delete-note" type="button">Delete</button>
+          </header>
+          <pre id="viewer-body"></pre>
+        </article>
+      </section>
+
+      <section class="panel" aria-label="Research">
+        <header class="panel__head">
+          <h2>Research</h2>
+        </header>
+        <p class="lede">Fetches 2–4 allowlisted pages, then summarizes them with citations. Leave the URL list empty to use the docs catalog.</p>
+        <form id="research-form">
+          <label class="sr-only" for="question">Research question</label>
+          <textarea id="question" rows="3" maxlength="500" placeholder="How do Durable Objects keep state?" required></textarea>
+          <label class="field-label" for="urls">URLs, one per line (optional)</label>
+          <textarea id="urls" rows="3" placeholder="https://developers.cloudflare.com/durable-objects/&#10;https://developers.cloudflare.com/r2/"></textarea>
+          <button class="btn" id="research" type="submit">Research</button>
+        </form>
+        <div class="report" id="report" hidden>
+          <p class="eyebrow" id="report-source"></p>
+          <p id="report-summary"></p>
+          <ul id="report-cites"></ul>
+        </div>
+      </section>
+    </aside>
+  </main>
+
+  <footer class="foot">
+    <p>
+      Inspired by <a href="https://github.com/DomWane/workers-personal-agent" rel="noopener">DomWane/workers-personal-agent</a>
+      (MIT).
+      <a href="https://x.com/tonycasavan/status/2101803028315537806" rel="noopener">X post</a>
+      ·
+      <a href="https://github.com/theserverlessdev/tech-demos/tree/main/demos/personal-agent" rel="noopener">Source</a>
+    </p>
+  </footer>
+  <script type="module" src="./assets/app.js"></script>
+</body>
+</html>
