@@ -32,6 +32,18 @@
         "wrangler": "^4.40.0",
       },
     },
+    "demos/clef-gate": {
+      "name": "@tech-demos/clef-gate",
+      "dependencies": {
+        "agents": "0.22.0",
+      },
+      "devDependencies": {
+        "@cloudflare/workers-types": "^4.20250906.0",
+        "playwright": "^1.63.0",
+        "typescript": "^5.9.2",
+        "wrangler": "^4.40.0",
+      },
+    },
     "demos/cloudflare-os": {
       "name": "@tech-demos/cloudflare-os",
       "dependencies": {
@@ -342,6 +354,8 @@
     "@speed-highlight/core": ["@speed-highlight/core@1.2.24", "", {}, "sha512-qeW2e1l78afw8VhRPfPQ1Gjj+KU5XFQ/OFV5ti6eTa9bruO7mJyZtA4vw0ofqmA3tKCkROE9xLk3VZoeRc98nw=="],
 
     "@tech-demos/apollo-desk": ["@tech-demos/apollo-desk@workspace:demos/apollo-desk"],
+
+    "@tech-demos/clef-gate": ["@tech-demos/clef-gate@workspace:demos/clef-gate"],
 
     "@tech-demos/cloudflare-os": ["@tech-demos/cloudflare-os@workspace:demos/cloudflare-os"],
 
