@@ -52,6 +52,7 @@ export type InboxRow = {
   blocklist: string;
   status: "active" | "disabled";
   created_at: number;
+  routing_rule_id: string | null;
 };
 
 export type ApiKeyRow = {

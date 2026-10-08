@@ -34,13 +34,17 @@ Zone `theserverless.dev`:
 
 DNS:Edit can change any record in the zone. Do not use this token to edit apex MX, apex SPF, apex DMARC, or `mail.theserverless.dev`.
 
-There is no Email Sending permission in the token catalog. Domain setup for sending is a dashboard task. The `send_email` binding deploys with Workers Scripts:Edit.
+Email Sending for the subdomain is an API call, not a dashboard-only step. The deploy token can run:
 
-Use a separate dashboard login for these tasks. They are not required on the deploy token:
+```bash
+bunx wrangler email sending enable agents.theserverless.dev
+```
 
-- Account: Email Routing Addresses:Edit
-- Zone `theserverless.dev`: Email Routing Rules:Edit
-- Account: Access: Apps and Policies:Edit
+Onboarding writes a DMARC TXT of `v=DMARC1; p=reject` on `_dmarc.agents.theserverless.dev`. Change that to `v=DMARC1; p=none` before you send mail.
+
+Use a separate token for Email Routing rules. See the `CF_ROUTING_TOKEN` section below. Do not add Email Routing Rules:Edit to the deploy token.
+
+Access app setup stays on a dashboard login: Account > Access: Apps and Policies:Edit.
 
 Export the token as `CLOUDFLARE_API_TOKEN`. Export `CLOUDFLARE_ACCOUNT_ID`.
 
@@ -53,7 +57,7 @@ bunx wrangler d1 create agent-mail
 bunx wrangler r2 bucket create agent-mail
 ```
 
-Put the D1 `database_id` into `wrangler.jsonc`. The placeholder id is `00000000-0000-0000-0000-000000000000`.
+The D1 `database_id` in `wrangler.jsonc` is `b82ef780-1715-4987-a6e5-841b0b5c7aa9`. That id is not a secret.
 
 The R2 bucket name is `agent-mail`. The Worker name is `agent-mail`.
 
@@ -65,15 +69,13 @@ Enable the subdomain `agents`. The MX records must land on `agents.theserverless
 
 Do not enable routing on the apex.
 
-The catch-all toggle is for the apex only (docs checked 2026-09-25). For this subdomain, add a routing rule:
+A wildcard rule does not deliver mail on a subdomain. The API accepts `*@agents.theserverless.dev`, and the dashboard may save it, but catch-all is apex-only. Mail to that pattern never arrives. Each inbox needs its own literal rule, for example `rescue@agents.theserverless.dev` → Worker `agent-mail`.
 
-- Custom address `*@agents.theserverless.dev` → Worker `agent-mail`
+When `CF_ROUTING_TOKEN` is set, creating an inbox in the panel or `POST /admin/agents/:id/inboxes` creates that literal rule. Disabling the inbox disables the rule. Deleting an empty inbox deletes the rule. If the token is unset, the inbox is still created. The agent page then shows `routing rule missing: add it in Cloudflare` and the exact rule to add by hand.
 
-If the dashboard rejects the wildcard, add one literal rule per inbox, for example `rescue@agents.theserverless.dev` → Worker `agent-mail`. Add a new rule each time you create an inbox.
+The Worker still accepts only local-parts that exist in D1. Unknown addresses are rejected or quarantined. A plus tag such as `rescue+notes@` uses the `rescue` inbox and the same literal rule.
 
-The Worker still accepts only local-parts that exist in D1. Unknown addresses are rejected or quarantined.
-
-Leave the DNS records the Routing page writes. They look like this. Keep the host names the dashboard shows if they differ (for example `amir.mx.cloudflare.net`).
+Leave the MX and SPF records the Routing page writes on the subdomain. Keep the host names the dashboard shows if they differ.
 
 | Type | Name | Content | Notes |
 | --- | --- | --- | --- |
@@ -81,11 +83,20 @@ Leave the DNS records the Routing page writes. They look like this. Keep the hos
 | MX | `agents.theserverless.dev` | `route2.mx.cloudflare.net` | Priority from the dashboard |
 | MX | `agents.theserverless.dev` | `route3.mx.cloudflare.net` | Priority from the dashboard |
 | TXT | `agents.theserverless.dev` | `v=spf1 include:_spf.mx.cloudflare.net ~all` | Routing SPF. Do not merge this into the apex SPF. |
-| TXT | `cf2024-1._domainkey.agents.theserverless.dev` | Value from the dashboard | Routing DKIM. Do not invent the value. |
+
+Turning subdomain routing on also writes a read-only TXT at `cf2024-1._domainkey.theserverless.dev` (the apex, not the subdomain). Do not edit or delete it. The zone-level Email Routing status then shows `misconfigured`, because the apex MX is Google Workspace. Both of those are expected. Do not turn on apex routing to clear that status.
 
 ## 4. Email Sending
 
-Onboard the subdomain `agents.theserverless.dev` for Email Sending. Do not onboard the apex.
+Enable Email Sending for the subdomain. Do not onboard the apex.
+
+```bash
+bunx wrangler email sending enable agents.theserverless.dev
+```
+
+That command is enough. You do not have to finish sending setup only in the dashboard.
+
+Onboarding writes DMARC as `p=reject`. Change `_dmarc.agents.theserverless.dev` to `v=DMARC1; p=none` before the first send.
 
 Leave the records the onboarding screen writes. They look like this:
 
@@ -94,7 +105,7 @@ Leave the records the onboarding screen writes. They look like this:
 | MX | `cf-bounce.agents.theserverless.dev` | Host from the dashboard | Bounce MX |
 | TXT | `cf-bounce.agents.theserverless.dev` | `v=spf1 include:_spf.mx.cloudflare.net ~all` | Sending SPF. This name is not the routing SPF name. |
 | TXT | `cf-bounce._domainkey.agents.theserverless.dev` | Value from the dashboard | Sending DKIM |
-| TXT | `_dmarc.agents.theserverless.dev` | `v=DMARC1; p=none;` | Start here. The onboard flow may write `p=reject`. |
+| TXT | `_dmarc.agents.theserverless.dev` | `v=DMARC1; p=none;` | Onboarding writes `p=reject`. Change it to `p=none` at the start. |
 
 Do not edit `_dmarc.theserverless.dev`.
 
@@ -130,7 +141,7 @@ Policy example:
 
 Add more emails when you invite more people. Access alone is not enough. The email must also exist in D1, or it must equal `ADMIN_EMAIL` on the first login.
 
-Copy the application AUD tag into the `POLICY_AUD` var. Replace `replace-with-access-aud-tag`.
+The application AUD tag is already in `POLICY_AUD`: `3d1c9fc7ef7c5c384934b5edd070862ba4405742c2a020a449cd907f4fb54574`. That value is an id, not a secret.
 
 The issuer is `https://theserverlessdev.cloudflareaccess.com` (`TEAM_DOMAIN`).
 
@@ -143,8 +154,10 @@ Vars in `wrangler.jsonc`:
 | `MAIL_DOMAIN` | `agents.theserverless.dev` |
 | `PUBLIC_ORIGIN` | `https://agents.theserverless.dev` |
 | `TEAM_DOMAIN` | `https://theserverlessdev.cloudflareaccess.com` |
-| `POLICY_AUD` | Access AUD tag |
+| `POLICY_AUD` | `3d1c9fc7ef7c5c384934b5edd070862ba4405742c2a020a449cd907f4fb54574` |
 | `ADMIN_EMAIL` | `hello@anks.in` |
+| `CF_ZONE_ID` | Zone id of `theserverless.dev`. Replace `replace-with-zone-id`. |
+| `ROUTING_WORKER_NAME` | `agent-mail` |
 
 `ADMIN_EMAIL` is the bootstrap address. The first valid Access login with that email creates the admin row. An empty value creates nobody. Change the var before that first login if you want a different admin.
 
@@ -157,9 +170,23 @@ bunx wrangler secret put WEBHOOK_KEY
 
 `WEBHOOK_KEY` encrypts webhook secrets and signs panel forms.
 
+Optional routing token. Create a second token with only this permission:
+
+- Zone `theserverless.dev`: Email Routing Rules:Edit
+
+```bash
+bunx wrangler secret put CF_ROUTING_TOKEN
+```
+
+Put the zone id of `theserverless.dev` in `CF_ZONE_ID` before you set the secret. The zone id is on the zone Overview page. `ROUTING_WORKER_NAME` is `agent-mail`.
+
+When the secret is unset, inbox create still succeeds. The panel shows `routing rule missing: add it in Cloudflare` and the literal rule, for example `rescue@agents.theserverless.dev -> worker agent-mail`.
+
 Never set `ENVIRONMENT=test` in production. That switch trusts the test signing key.
 
 ## 8. Deploy and smoke
+
+Wrangler needs Node.js 22 or newer. Bun runs the tests. Wrangler itself still uses Node.
 
 ```bash
 cd services/agent-mail
@@ -168,9 +195,9 @@ bun run deploy
 bun run smoke
 ```
 
-`bun run deploy` uses the top-level Worker config. It does not use the `dev` environment. The `dev` environment is only for `bun run dev` on your machine.
+`bun run deploy` applies D1 migrations, including `0002_routing_rule.sql`, then deploys the Worker.
 
-`bun run deploy` applies D1 migrations on the remote database, then deploys the Worker.
+`bun run deploy` uses the top-level Worker config. It does not use the `dev` environment. The `dev` environment is only for `bun run dev` on your machine.
 
 Optional: `SMOKE_API_KEY` calls `GET /v1/me` after you mint a key in the panel. `SMOKE_ORIGIN` defaults to `https://agents.theserverless.dev`.
 
@@ -186,7 +213,7 @@ The smoke script checks:
 2. Sign in through Access as `hello@anks.in` (or the email in `ADMIN_EMAIL`).
 3. The Worker inserts that user with role `admin`.
 4. Create an agent, an inbox, and an API key. The key is shown once.
-5. Add an Email Routing rule for that inbox if the wildcard rule is not active.
+5. If `CF_ROUTING_TOKEN` is set, the new inbox already has a literal routing rule. If the page says `routing rule missing`, add that exact rule in Cloudflare Email Routing.
 6. Send a test message to the inbox. Confirm it in **Mail**.
 7. Set the agent policy to `draft`, send from the API, and approve the draft.
 

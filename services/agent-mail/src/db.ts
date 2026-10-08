@@ -148,6 +148,22 @@ export async function listInboxes(db: D1Database, agentId: string): Promise<Inbo
   return results;
 }
 
+export async function setRoutingRuleId(db: D1Database, id: string, ruleId: string | null): Promise<void> {
+  await db.prepare("UPDATE inboxes SET routing_rule_id = ? WHERE id = ?").bind(ruleId, id).run();
+}
+
+export async function inboxIsEmpty(db: D1Database, id: string): Promise<boolean> {
+  const row = await db
+    .prepare("SELECT 1 AS n FROM threads WHERE inbox_id = ? UNION ALL SELECT 1 FROM drafts WHERE inbox_id = ? LIMIT 1")
+    .bind(id, id)
+    .first();
+  return !row;
+}
+
+export async function deleteInbox(db: D1Database, id: string): Promise<void> {
+  await db.prepare("DELETE FROM inboxes WHERE id = ?").bind(id).run();
+}
+
 export async function updateInbox(
   db: D1Database,
   id: string,

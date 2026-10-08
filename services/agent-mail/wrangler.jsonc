@@ -5,12 +5,12 @@
   // Newest date the pinned local Workers runtime accepts. Raise it with the runtime.
   "compatibility_date": "2026-08-22",
   "compatibility_flags": ["nodejs_compat"],
-  // Placeholder IDs. Replace them during the first deploy. See DEPLOY.md.
+  // database_id and POLICY_AUD are resource ids, not secrets.
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "agent-mail",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "b82ef780-1715-4987-a6e5-841b0b5c7aa9",
       "migrations_dir": "migrations"
     }
   ],
@@ -27,9 +27,12 @@
     "MAIL_DOMAIN": "agents.theserverless.dev",
     "PUBLIC_ORIGIN": "https://agents.theserverless.dev",
     "TEAM_DOMAIN": "https://theserverlessdev.cloudflareaccess.com",
-    "POLICY_AUD": "replace-with-access-aud-tag",
+    "POLICY_AUD": "3d1c9fc7ef7c5c384934b5edd070862ba4405742c2a020a449cd907f4fb54574",
     // First admin. Change this var to bootstrap a different email. The Worker reads the var.
-    "ADMIN_EMAIL": "hello@anks.in"
+    "ADMIN_EMAIL": "hello@anks.in",
+    // Zone id for theserverless.dev. Copy it from the zone Overview page.
+    "CF_ZONE_ID": "replace-with-zone-id",
+    "ROUTING_WORKER_NAME": "agent-mail"
   },
   "triggers": { "crons": ["17 * * * *"] },
   // Custom domain for HTTP only. It does not change MX records. See DEPLOY.md.
@@ -45,7 +48,7 @@
         {
           "binding": "DB",
           "database_name": "agent-mail",
-          "database_id": "00000000-0000-0000-0000-000000000000",
+          "database_id": "b82ef780-1715-4987-a6e5-841b0b5c7aa9",
           "migrations_dir": "migrations"
         }
       ],
@@ -55,8 +58,10 @@
         "MAIL_DOMAIN": "agents.theserverless.dev",
         "PUBLIC_ORIGIN": "https://agents.theserverless.dev",
         "TEAM_DOMAIN": "https://theserverlessdev.cloudflareaccess.com",
-        "POLICY_AUD": "replace-with-access-aud-tag",
-        "ADMIN_EMAIL": "hello@anks.in"
+        "POLICY_AUD": "3d1c9fc7ef7c5c384934b5edd070862ba4405742c2a020a449cd907f4fb54574",
+        "ADMIN_EMAIL": "hello@anks.in",
+        "CF_ZONE_ID": "replace-with-zone-id",
+        "ROUTING_WORKER_NAME": "agent-mail"
       }
     }
   },

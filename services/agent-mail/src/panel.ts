@@ -220,6 +220,7 @@ export function agentPage(
   inboxes: InboxRow[],
   keys: ApiKeyRow[],
   domain: string,
+  workerName: string,
   csrf: string,
   notice?: string,
 ): string {
@@ -236,12 +237,20 @@ export function agentPage(
       (inbox) => `<tr><td>${esc(inbox.local_part)}@${esc(domain)}</td><td>${esc(inbox.policy_override ?? "inherit")}</td><td>${inbox.daily_send_cap ?? "—"}</td><td>${esc(inbox.status)}</td></tr>`,
     )
     .join("");
+  const missing = inboxes
+    .filter((inbox) => inbox.status === "active" && !inbox.routing_rule_id)
+    .map(
+      (inbox) =>
+        `<div class="notice">routing rule missing: add it in Cloudflare. ${esc(`${inbox.local_part}@${domain} -> worker ${workerName}`)}</div>`,
+    )
+    .join("");
   return layout({
     title: agent.name,
     path: "/admin/agents",
     user,
     notice,
     body: `<h1>${esc(agent.name)}</h1>
+    ${missing}
     <div class="card"><form method="post" action="/admin/agents/${esc(agent.id)}">
       <input type="hidden" name="csrf" value="${esc(csrf)}">
       <label>Name</label><input name="name" value="${esc(agent.name)}">
@@ -275,11 +284,11 @@ export function agentPage(
         <button style="margin-top:0.6rem">Create inbox</button>
       </form>
     </div>
-    ${inboxForms(inboxes, domain, csrf)}`,
+    ${inboxForms(inboxes, domain, workerName, csrf)}`,
   });
 }
 
-function inboxForms(inboxes: InboxRow[], domain: string, csrf: string): string {
+function inboxForms(inboxes: InboxRow[], domain: string, workerName: string, csrf: string): string {
   return inboxes
     .map((inbox) => {
       const allow = parseJson<string[]>(inbox.allowlist, []).join("\n");
@@ -295,6 +304,11 @@ function inboxForms(inboxes: InboxRow[], domain: string, csrf: string): string {
         <label>Block list</label><textarea name="blocklist">${esc(block)}</textarea>
         <label>Status</label><select name="status"><option ${inbox.status === "active" ? "selected" : ""}>active</option><option ${inbox.status === "disabled" ? "selected" : ""}>disabled</option></select>
         <button style="margin-top:0.6rem">Save inbox</button>
+      </form>
+      ${inbox.status === "active" && !inbox.routing_rule_id ? `<p class="notice">routing rule missing: add it in Cloudflare. ${esc(`${inbox.local_part}@${domain} -> worker ${workerName}`)}</p>` : ""}
+      <form method="post" action="/admin/inboxes/${esc(inbox.id)}/delete" style="margin-top:0.6rem">
+        <input type="hidden" name="csrf" value="${esc(csrf)}">
+        <button class="danger">Delete inbox</button>
       </form></div>`;
     })
     .join("");

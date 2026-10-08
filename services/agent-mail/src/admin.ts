@@ -16,6 +16,9 @@ import {
   insertApiKey,
   insertInbox,
   insertUser,
+  inboxIsEmpty,
+  deleteInbox,
+  setRoutingRuleId,
   listAgents,
   listAudit,
   listDrafts,
@@ -32,6 +35,7 @@ import {
   updateSettings,
 } from "./db";
 import { approveDraft, editDraft, rejectDraft } from "./outbound";
+import { createRoutingRule, deleteRoutingRule, routingReady, routingRuleText, setRoutingRuleEnabled } from "./routing";
 import {
   agentPage,
   agentsPage,
@@ -155,7 +159,7 @@ admin.get("/admin/agents/:id", async (c) => {
   const user = c.get("user")!;
   const agent = await ownedAgent(c);
   const [inboxes, keys] = await Promise.all([listInboxes(c.env.DB, agent.id), listKeys(c.env.DB, agent.id)]);
-  return c.html(agentPage(user, agent, inboxes, keys, c.env.MAIL_DOMAIN, await csrfToken(c.env, user.id), notice(c)));
+  return c.html(agentPage(user, agent, inboxes, keys, c.env.MAIL_DOMAIN, c.env.ROUTING_WORKER_NAME ?? "agent-mail", await csrfToken(c.env, user.id), notice(c)));
 });
 
 admin.post("/admin/agents/:id", async (c) => {
@@ -241,7 +245,14 @@ admin.post("/admin/agents/:id/inboxes", async (c) => {
     throw err;
   }
   await audit(c.env.DB, { actor_type: "user", actor_id: user.id, action: "inbox.created", target_type: "inbox", target_id: inbox.id, detail: { localPart } });
-  return finish(c, { id: inbox.id, address: `${localPart}@${c.env.MAIL_DOMAIN}` }, `/admin/agents/${agent.id}?notice=Inbox+created`);
+  const routing = await createRoutingRule(c.env, localPart, user.id);
+  if (routing.ruleId) await setRoutingRuleId(c.env.DB, inbox.id, routing.ruleId);
+  const createdNotice = routing.notice ? `Inbox created. ${routing.notice}` : "Inbox created";
+  return finish(
+    c,
+    { id: inbox.id, address: `${localPart}@${c.env.MAIL_DOMAIN}`, routingRuleId: routing.ruleId, routingNotice: routing.notice },
+    `/admin/agents/${agent.id}?notice=${encodeURIComponent(createdNotice)}`,
+  );
 });
 
 admin.post("/admin/inboxes/:id", async (c) => {
@@ -262,8 +273,43 @@ admin.post("/admin/inboxes/:id", async (c) => {
     blocklist: JSON.stringify(blocklist),
     status,
   });
+  let routingNotice: string | null = null;
+  if (status !== inbox.status) {
+    if (status === "disabled" && inbox.routing_rule_id) {
+      routingNotice = await setRoutingRuleEnabled(c.env, inbox.local_part, inbox.routing_rule_id, false, user.id);
+    } else if (status === "active" && inbox.routing_rule_id) {
+      routingNotice = await setRoutingRuleEnabled(c.env, inbox.local_part, inbox.routing_rule_id, true, user.id);
+    } else if (status === "active") {
+      const routing = await createRoutingRule(c.env, inbox.local_part, user.id);
+      if (routing.ruleId) await setRoutingRuleId(c.env.DB, inbox.id, routing.ruleId);
+      routingNotice = routing.notice;
+    } else {
+      routingNotice = `Disable this rule in Cloudflare if it exists: ${routingRuleText(c.env, inbox.local_part)}`;
+    }
+  }
   await audit(c.env.DB, { actor_type: "user", actor_id: user.id, action: "inbox.updated", target_type: "inbox", target_id: inbox.id, detail: { listMode, status } });
-  return finish(c, { id: inbox.id }, `/admin/agents/${inbox.agent_id}?notice=Inbox+saved`);
+  const savedNotice = routingNotice ? `Inbox saved. ${routingNotice}` : "Inbox saved";
+  return finish(c, { id: inbox.id, routingNotice }, `/admin/agents/${inbox.agent_id}?notice=${encodeURIComponent(savedNotice)}`);
+});
+
+admin.post("/admin/inboxes/:id/delete", async (c) => {
+  const user = c.get("user")!;
+  const inbox = await ownedInbox(c);
+  await formGuard(c, user);
+  if (!(await inboxIsEmpty(c.env.DB, inbox.id))) {
+    throw new HttpError(409, "inbox_has_mail", "This inbox still has mail. Disable it instead.");
+  }
+  const routingConfigured = routingReady(c.env);
+  const routingNotice = inbox.routing_rule_id
+    ? await deleteRoutingRule(c.env, inbox.local_part, inbox.routing_rule_id, user.id)
+    : `Remove this rule in Cloudflare if it exists: ${routingRuleText(c.env, inbox.local_part)}`;
+  if (inbox.routing_rule_id && routingConfigured && routingNotice) {
+    throw new HttpError(502, "routing", routingNotice);
+  }
+  await deleteInbox(c.env.DB, inbox.id);
+  await audit(c.env.DB, { actor_type: "user", actor_id: user.id, action: "inbox.deleted", target_type: "inbox", target_id: inbox.id, detail: { localPart: inbox.local_part } });
+  const deletedNotice = routingNotice ? `Inbox deleted. ${routingNotice}` : "Inbox deleted";
+  return finish(c, { deleted: true, routingNotice }, `/admin/agents/${inbox.agent_id}?notice=${encodeURIComponent(deletedNotice)}`);
 });
 
 admin.get("/admin/users", async (c) => {

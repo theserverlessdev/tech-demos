@@ -9,8 +9,14 @@ declare namespace Cloudflare {
     TEAM_DOMAIN: string;
     /** Access application AUD tag. */
     POLICY_AUD: string;
-    /** Email that becomes the first admin on first valid Access login. */
-    ADMIN_EMAIL: string;
+  /** Email that becomes the first admin on first valid Access login. */
+  ADMIN_EMAIL: string;
+  /** Zone id for theserverless.dev. Used to write Email Routing rules. */
+  CF_ZONE_ID?: string;
+  /** Worker name used in literal Email Routing rules. */
+  ROUTING_WORKER_NAME?: string;
+  /** Optional. Zone Email Routing Rules:Edit. When unset, inboxes are created without a rule. */
+  CF_ROUTING_TOKEN?: string;
     /** AES key for webhook secrets, and the CSRF key. Set with wrangler secret put. */
     WEBHOOK_KEY: string;
     /** Set to "test" only by the vitest config. Never set this in production. */
