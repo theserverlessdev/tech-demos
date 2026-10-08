@@ -10,6 +10,13 @@
       "approvedAt": "2026-09-15T10:53:55Z",
       "licenseNote": "GPL-3.0 inspired-by only \u2014 do not vendor",
       "liveUrl": "https://tech-demos.theserverless.dev/demos/edgechat/"
+    },
+    {
+      "slug": "goodvibes",
+      "status": "live-pending-merge",
+      "pr": "https://github.com/theserverlessdev/tech-demos/pull/8",
+      "buildVia": "cloud-agent",
+      "liveUrl": "https://tech-demos.theserverless.dev/demos/goodvibes/"
     }
   ],
   "built": [
@@ -83,6 +90,21 @@
       "slug": "hello-dynamic",
       "title": "Hello Dynamic Worker",
       "built_at": "2026-09-10"
+    },
+    {
+      "slug": "goodvibes",
+      "repo": "https://github.com/benallfree/goodvibes",
+      "title": "GoodVibes",
+      "source": "approved-slice",
+      "approved_at": "2026-09-18",
+      "why": "Playable multiplayer Ember Rush on Workers + Durable Object WebSocket hibernation; orbs, scores, round clock \u2014 not a walking simulator",
+      "built_at": "2026-09-18",
+      "path": "demos/goodvibes",
+      "url": "https://tech-demos.theserverless.dev/demos/goodvibes/",
+      "subdomain": "https://goodvibes.tech-demos.theserverless.dev/",
+      "worker": "tech-demos-goodvibes",
+      "branch": "demo/goodvibes",
+      "notes": "Ember Rush: 75s orb hunt, server-authoritative round on a hibernatable VibeRoom. Not a vendor of upstream. Room create is rate-limited."
     }
   ],
   "skipped": [
@@ -97,11 +119,12 @@
     }
   ],
   "candidates_known": [
-    "edgechat"
+    "edgechat",
+    "goodvibes"
   ],
   "_meta": {
     "updatedBy": "tech-demos-bot",
-    "updatedAt": "2026-09-15T10:56:02Z",
-    "note": "edgechat live via Mac deploy; PR #6 open"
+    "updatedAt": "2026-09-18T12:15:27Z",
+    "note": "goodvibes live"
   }
 }
