@@ -1,0 +1,33 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tech-demos-actor-lab",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none"
+  },
+  // No Workers AI binding here. Wrangler treats that binding as remote-only and
+  // will not boot `wrangler dev` until you log in. Deploy uses wrangler.jsonc,
+  // which has the binding. Local runs take the labelled fallback path.
+  "durable_objects": {
+    "bindings": [
+      { "name": "RACE", "class_name": "RaceActor" },
+      { "name": "CHAT", "class_name": "ChatActor" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RaceActor", "ChatActor"] }],
+  "ratelimits": [
+    { "name": "RACE_LIMIT", "namespace_id": "7351", "simple": { "limit": 30, "period": 60 } },
+    { "name": "CHAT_LIMIT", "namespace_id": "7352", "simple": { "limit": 30, "period": 60 } }
+  ],
+  "vars": {
+    "AI_MODEL": "@cf/meta/llama-3.2-1b-instruct",
+    "TURNSTILE_SITE_KEY": "1x00000000000000000000AA"
+  },
+  "workers_dev": true,
+  "observability": { "enabled": true }
+}

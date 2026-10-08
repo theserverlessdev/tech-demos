@@ -1,0 +1,3 @@
+# Public Cloudflare Turnstile always-pass test secret (not a production secret).
+# https://developers.cloudflare.com/turnstile/troubleshooting/testing/
+TURNSTILE_SECRET=1x0000000000000000000000000000000AA

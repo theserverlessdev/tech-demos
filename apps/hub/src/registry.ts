@@ -83,6 +83,17 @@ const resolveHqFallbackSource = `export default {
 };
 `;
 
+// actor-lab is a standalone Worker (SQLite Durable Objects, Workers AI, hibernatable WebSockets).
+// Same pattern as resolve-hq: the zone route wins, and this source only redirects if that route is missing.
+const actorLabFallbackSource = `export default {
+  fetch(request) {
+    const url = new URL(request.url);
+    const rest = url.pathname.replace(/^\\/demos\\/actor-lab/, "") || "/";
+    return Response.redirect("https://actor-lab.tech-demos.theserverless.dev" + rest + url.search, 302);
+  },
+};
+`;
+
 export const demos: DemoEntry[] = [
   {
     slug: "resolve-hq",
@@ -122,6 +133,14 @@ export const demos: DemoEntry[] = [
     description: "Minimal HTML demo loaded via the hub Worker Loader.",
     tags: ["dynamic-workers", "starter"],
     source: helloDynamicSource,
+  },
+  {
+    slug: "actor-lab",
+    title: "Actor lab",
+    description:
+      "A Durable Object actor with auto-persisted fields and a one-at-a-time mailbox. Race a counter across a Workers AI wait, then chat on a hibernating WebSocket that keeps SQLite across a simulated eviction.",
+    tags: ["durable-objects", "workers-ai", "websockets", "turnstile"],
+    source: actorLabFallbackSource,
   },
 ];
 
