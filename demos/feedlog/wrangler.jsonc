@@ -16,8 +16,7 @@
     {
       "binding": "DB",
       "database_name": "tech-demos-feedlog",
-      // Placeholder. Replace with the id from `wrangler d1 create tech-demos-feedlog` before deploy.
-      "database_id": "00000000-0000-4000-8000-00000000f10d",
+      "database_id": "755a07de-470e-48b4-9d0f-20d86b69ff10",
       "migrations_dir": "migrations"
     }
   ],
@@ -28,14 +27,13 @@
     }
   ],
   // 384 dimensions, cosine. Must match @cf/baai/bge-small-en-v1.5. The metric cannot be changed later.
-  // Placeholder until `wrangler vectorize create tech-demos-feedlog --dimensions=384 --metric=cosine`.
   "vectorize": [
     {
       "binding": "VECTORS",
       "index_name": "tech-demos-feedlog"
     }
   ],
-  // Namespace ids follow the ones already used in this repo (7301–7331).
+  // Feedlog keeps 7341–7344. Other demos are moving off this range.
   "ratelimits": [
     { "name": "POST_LIMIT", "namespace_id": "7341", "simple": { "limit": 20, "period": 60 } },
     { "name": "VOTE_LIMIT", "namespace_id": "7342", "simple": { "limit": 40, "period": 60 } },
@@ -44,12 +42,12 @@
   ],
   "triggers": { "crons": ["17 * * * *"] },
   "vars": {
-    "EMBED_MODEL": "@cf/baai/bge-small-en-v1.5"
+    "EMBED_MODEL": "@cf/baai/bge-small-en-v1.5",
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFRgq04SvYB_gEMr"
   },
-  // Secrets, never commit: TURNSTILE_SECRET, ADMIN_TOKEN.
-  // Public var to add before deploy: TURNSTILE_SITE_KEY (the widget site key).
-  // Local `bun run dev` writes .dev.vars with Cloudflare's always-pass test pair. wrangler dev
-  // presents the zone route host, so a loopback check on the URL is not enough.
+  // Secrets, never commit: TURNSTILE_SECRET, ADMIN_TOKEN (set on the Worker; the owner holds ADMIN_TOKEN).
+  // Local `bun run dev` writes .dev.vars with Cloudflare's always-pass test pair, which overrides these
+  // vars on your machine. wrangler dev presents the zone route host, so a loopback check on the URL is not enough.
   "routes": [
     { "pattern": "tech-demos.theserverless.dev/demos/feedlog*", "zone_name": "theserverless.dev" },
     { "pattern": "feedlog.tech-demos.theserverless.dev/*", "zone_name": "theserverless.dev" }

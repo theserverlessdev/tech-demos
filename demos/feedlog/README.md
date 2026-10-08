@@ -2,7 +2,7 @@
 
 A public feedback board on Cloudflare Workers. This is a **small demo** inspired by [linkcraftstudio/feedlog](https://github.com/linkcraftstudio/feedlog) (MIT, by linkcraftstudio), not a fork of that app. The note that pointed at it: [on X](https://x.com/ceoplanet519/status/2087056479459119500).
 
-- **Live:** not deployed from this environment (no Cloudflare credentials). Intended URL: <https://tech-demos.theserverless.dev/demos/feedlog/>
+- **Live:** <https://tech-demos.theserverless.dev/demos/feedlog/>
 - **Subdomain:** <https://feedlog.tech-demos.theserverless.dev/>
 - **Plan:** [PLAN.md](./PLAN.md)
 - **What changed vs upstream:** [CHANGELOG.md](./CHANGELOG.md)
@@ -64,38 +64,32 @@ On `127.0.0.1` / `localhost` only, when the secrets are unset:
 
 Any other host fails closed until `TURNSTILE_SECRET`, `TURNSTILE_SITE_KEY`, and `ADMIN_TOKEN` are set. Do not ship the loopback token.
 
-`scripts/smoke.ts` sends the documented dummy token `XXXX.DUMMY.TOKEN.XXXX`. Against a production widget that token will fail, which is what you want. Pass `ADMIN_TOKEN` in the environment if you point smoke at a deployed Worker.
+`scripts/smoke.ts` sends the documented dummy token `XXXX.DUMMY.TOKEN.XXXX` against localhost. Against the live Worker that token will fail, which is what you want. On a remote base URL the config check expects the production site key instead of the localhost test key. Pass `ADMIN_TOKEN` in the environment if you point smoke at the deployed Worker.
 
-## Owner steps to deploy
+## Deployed
 
-This environment’s `wrangler whoami` was not authenticated. The D1 id in `wrangler.jsonc` is a placeholder. Nothing was deployed.
+The Worker is live. These resources already exist on the owner account:
 
-From `demos/feedlog`, with the owner account (unset any other API token):
+| Resource | Name |
+| --- | --- |
+| D1 | `tech-demos-feedlog` (`755a07de-470e-48b4-9d0f-20d86b69ff10`) |
+| R2 | `tech-demos-feedlog` |
+| Vectorize | `tech-demos-feedlog` (384 dimensions, cosine) |
+| Rate limits | `7341`–`7344` (this demo keeps them; other demos are moving off this range) |
 
-```bash
-env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bunx wrangler whoami
-
-env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bunx wrangler d1 create tech-demos-feedlog
-# paste the database_id over the placeholder in wrangler.jsonc
-
-env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bunx wrangler r2 bucket create tech-demos-feedlog
-
-env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bunx wrangler vectorize create tech-demos-feedlog --dimensions=384 --metric=cosine
-
-# Widget hostnames: tech-demos.theserverless.dev and feedlog.tech-demos.theserverless.dev
-# Add the public site key under vars in wrangler.jsonc:
-#   "TURNSTILE_SITE_KEY": "<widget site key>"
-env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bunx wrangler secret put TURNSTILE_SECRET
-env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bunx wrangler secret put ADMIN_TOKEN
-
-env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bun run deploy
-```
-
-Then redeploy the hub (`apps/hub`) so the gallery card is the new registry entry. The zone route already wins when it exists. The registry source only redirects to the subdomain if that route is missing.
+`TURNSTILE_SITE_KEY` is the public var in `wrangler.jsonc`. `TURNSTILE_SECRET` and `ADMIN_TOKEN` are Worker secrets. The owner holds `ADMIN_TOKEN`. Neither secret is in the repo.
 
 Routes:
 
 - `tech-demos.theserverless.dev/demos/feedlog*`
 - `feedlog.tech-demos.theserverless.dev/*`
 
-Rate-limit namespace ids are `7341`–`7344`. They are created with the Worker. Workers AI has to be available on the Paid account. The embedding model and the index are both 384 dimensions. Changing the model means creating a new index.
+To redeploy from this folder, with the owner account (unset any other API token):
+
+```bash
+env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bun run deploy
+```
+
+Then redeploy the hub (`apps/hub`) if the gallery card is missing. The zone route wins when it exists. The registry source only redirects to the subdomain if that route is missing.
+
+The embedding model and the index are both 384 dimensions. Changing the model means creating a new index.

@@ -2,6 +2,15 @@
 import type { BoardConfig, ChangelogEntry, Health, Post, SimilarResult } from "../src/shared/types";
 
 const base = (process.argv.find((arg) => arg.startsWith("http")) ?? "http://127.0.0.1:8787").replace(/\/$/, "");
+const PRODUCTION_SITE_KEY = "0x4AAAAAAFRgq04SvYB_gEMr";
+const TEST_SITE_KEY = "1x00000000000000000000AA";
+
+function isLoopbackBase(url: string): boolean {
+  const host = new URL(url).hostname;
+  return host === "127.0.0.1" || host === "localhost" || host === "[::1]";
+}
+
+const local = isLoopbackBase(base);
 const dummy = "XXXX.DUMMY.TOKEN.XXXX";
 const admin = process.env.ADMIN_TOKEN || "dev-feedlog-admin";
 const jar = new Map<string, string>();
@@ -55,7 +64,15 @@ const health = await call<Health>("/api/health");
 check("health lists seeded posts and changelog", health.status === 200 && (health.data?.posts ?? 0) >= 5 && (health.data?.changelog ?? 0) >= 2, health.data);
 
 const config = await call<BoardConfig>("/api/config");
-check("loopback config opens writes with the test site key", config.data?.writesOpen === true && config.data.turnstileSiteKey === "1x00000000000000000000AA", config.data);
+if (local) {
+  check("loopback config opens writes with the test site key", config.data?.writesOpen === true && config.data.turnstileSiteKey === TEST_SITE_KEY, config.data);
+} else {
+  check(
+    "remote config opens writes with the production site key",
+    config.data?.writesOpen === true && config.data.turnstileSiteKey === PRODUCTION_SITE_KEY,
+    config.data,
+  );
+}
 
 const list = await call<{ posts: Post[] }>("/api/posts");
 const titles = list.data?.posts.map((post) => post.title) ?? [];

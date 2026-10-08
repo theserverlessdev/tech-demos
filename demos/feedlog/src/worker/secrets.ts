@@ -2,7 +2,6 @@
 declare global {
   interface Env {
     TURNSTILE_SECRET?: string;
-    TURNSTILE_SITE_KEY?: string;
     ADMIN_TOKEN?: string;
   }
 }
