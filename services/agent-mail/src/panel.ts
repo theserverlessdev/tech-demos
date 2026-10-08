@@ -367,6 +367,7 @@ export function settingsPage(user: UserRow, settings: SettingsRow, csrf: string,
     body: `<h1>Settings</h1><div class="card"><form method="post" action="/admin/settings">
       <input type="hidden" name="csrf" value="${esc(csrf)}">
       <label><input type="checkbox" name="globalKill" ${settings.global_kill ? "checked" : ""}> Global kill switch</label>
+      <label><input type="checkbox" name="approveLinks" ${settings.approve_links ? "checked" : ""}> One-tap approval links</label>
       <label>Unknown address</label><select name="unknownPolicy"><option ${settings.unknown_policy === "reject" ? "selected" : ""}>reject</option><option ${settings.unknown_policy === "quarantine" ? "selected" : ""}>quarantine</option></select>
       <label>Spam TTL days</label><input name="spamTtlDays" type="number" min="1" max="365" value="${settings.spam_ttl_days}">
       <button style="margin-top:0.7rem">Save</button>

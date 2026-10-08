@@ -369,6 +369,7 @@ admin.post("/admin/settings", async (c) => {
     global_kill: flag(body.globalKill) ? 1 : 0,
     unknown_policy: unknown,
     spam_ttl_days: intField(body.spamTtlDays ?? 30, "spamTtlDays", 1, 365),
+    approve_links: flag(body.approveLinks) ? 1 : 0,
   });
   await audit(c.env.DB, { actor_type: "user", actor_id: user.id, action: "settings.updated", detail: { globalKill: flag(body.globalKill), unknown } });
   return finish(c, { ok: true }, "/admin/settings?notice=Saved");

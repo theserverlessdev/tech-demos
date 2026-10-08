@@ -25,6 +25,8 @@ Creating an inbox writes a literal routing rule (`local@agents.theserverless.dev
 
 Outbound mail uses the Email Sending binding. The From address is the inbox address. Replies set `In-Reply-To` and `References`.
 
+When a send becomes a draft, the API returns `approveUrl` once. That URL is `/a/<token>` and does not require Access. The owner can approve or reject from the page. The raw token is not stored and is not returned again. `GET /v1/drafts/{id}` includes `adminUrl` only. A GET of the approval link does not send mail. Links last `APPROVE_LINK_TTL_HOURS` (168 hours unless you change the var). Settings can turn them off.
+
 `/admin` checks `Cf-Access-Jwt-Assertion`. The first login whose email equals the `ADMIN_EMAIL` var becomes the admin. `/v1` checks a hashed bearer key. The Worker does not store the raw key.
 
 ## Local checks

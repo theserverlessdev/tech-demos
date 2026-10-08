@@ -133,6 +133,17 @@ export type SettingsRow = {
   global_kill: number;
   unknown_policy: UnknownPolicy;
   spam_ttl_days: number;
+  /** 1 when one-tap approval links are issued. */
+  approve_links: number;
+};
+
+export type ApproveTokenRow = {
+  id: string;
+  draft_id: string;
+  token_hash: string;
+  expires_at: number;
+  used_at: number | null;
+  created_at: number;
 };
 
 export type QuarantineRow = {

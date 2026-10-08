@@ -9,8 +9,10 @@ declare namespace Cloudflare {
     TEAM_DOMAIN: string;
     /** Access application AUD tag. */
     POLICY_AUD: string;
-  /** Email that becomes the first admin on first valid Access login. */
-  ADMIN_EMAIL: string;
+    /** Email that becomes the first admin on first valid Access login. */
+    ADMIN_EMAIL: string;
+    /** Hours a one-tap approval link stays valid. Default 168 (7 days). */
+    APPROVE_LINK_TTL_HOURS?: string;
   /** Zone id for theserverless.dev. Used to write Email Routing rules. */
   CF_ZONE_ID?: string;
   /** Worker name used in literal Email Routing rules. */

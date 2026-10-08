@@ -12,6 +12,7 @@ import {
   insertDraft,
   insertMessage,
   insertThread,
+  invalidateApproveTokens,
   latestMessage,
   listThreadMessageIds,
   markDraft,
@@ -20,6 +21,7 @@ import {
   tryConsume,
   updateDraftContent,
 } from "./db";
+import { issueApproveToken } from "./approve-token";
 import { decide, effectivePolicy, inboxLists } from "./policy";
 import type { AgentRow, CreatedBy, DraftReason, DraftRow, InboxRow, MessageRow, ThreadRow, UserRow, Via } from "./types";
 import {
@@ -51,9 +53,20 @@ export type SendBody = {
 
 export type SendResult =
   | { outcome: "sent"; messageId: string; providerMessageId: string | null; threadId: string; draftId: string | null }
-  | { outcome: "drafted"; draftId: string; status: "pending"; reason: DraftReason; threadId: string | null; statusUrl: string };
+  | {
+      outcome: "drafted";
+      draftId: string;
+      status: "pending";
+      reason: DraftReason;
+      threadId: string | null;
+      statusUrl: string;
+      /** Panel URL. Safe to fetch again. */
+      adminUrl: string;
+      /** One-time public approval URL. Null when approve links are off. Omitted on later GETs. */
+      approveUrl: string | null;
+    };
 
-type Actor = { type: "agent" | "user"; id: string };
+type Actor = { type: string; id: string | null };
 
 export async function requestSend(
   env: Env,
@@ -95,6 +108,19 @@ export async function requestSend(
 export async function approveDraft(env: Env, user: UserRow, draftId: string): Promise<SendResult> {
   const loaded = await loadPending(env, draftId);
   if (!canAccessAgent(user, loaded.agent)) throw new HttpError(404, "not_found", "No pending draft has this id.");
+  return approveLoaded(env, loaded, { type: "user", id: user.id });
+}
+
+/** Same send path as panel approval. The actor is written to the audit log. */
+export async function approveDraftAs(env: Env, draftId: string, actor: Actor): Promise<SendResult> {
+  return approveLoaded(env, await loadPending(env, draftId), actor);
+}
+
+async function approveLoaded(
+  env: Env,
+  loaded: { draft: DraftRow; inbox: InboxRow; agent: AgentRow; thread: ThreadRow | null; replyTo: MessageRow | null },
+  actor: Actor,
+): Promise<SendResult> {
   const settings = await getSettings(env.DB);
   if (settings.global_kill) throw new HttpError(409, "kill_global", "The global kill switch is on. Turn it off, then approve.");
   if (loaded.agent.kill_switch) throw new HttpError(409, "kill_agent", "The agent kill switch is on. Turn it off, then approve.");
@@ -107,12 +133,13 @@ export async function approveDraft(env: Env, user: UserRow, draftId: string): Pr
   try {
     const sent = await deliver(
       env,
-      { inbox: loaded.inbox, agent: loaded.agent, actor: { type: "user", id: user.id }, createdBy: "owner", via: "panel", body },
+      { inbox: loaded.inbox, agent: loaded.agent, actor, createdBy: "owner", via: "panel", body },
       loaded.draft.id,
     );
+    await invalidateApproveTokens(env.DB, loaded.draft.id, Date.now());
     await audit(env.DB, {
-      actor_type: "user",
-      actor_id: user.id,
+      actor_type: actor.type,
+      actor_id: actor.id,
       action: "draft.approved",
       target_type: "draft",
       target_id: loaded.draft.id,
@@ -122,8 +149,8 @@ export async function approveDraft(env: Env, user: UserRow, draftId: string): Pr
   } catch (err) {
     if (err instanceof HttpError) throw err;
     await audit(env.DB, {
-      actor_type: "user",
-      actor_id: user.id,
+      actor_type: actor.type,
+      actor_id: actor.id,
       action: "send.failed",
       target_type: "draft",
       target_id: loaded.draft.id,
@@ -154,6 +181,7 @@ export async function editDraft(
     text_body: fields.text,
     html_body: fields.html,
   });
+  await invalidateApproveTokens(env.DB, draftId, Date.now());
   await audit(env.DB, {
     actor_type: "user",
     actor_id: user.id,
@@ -170,11 +198,27 @@ export async function editDraft(
 export async function rejectDraft(env: Env, user: UserRow, draftId: string, note: string | null): Promise<DraftRow> {
   const loaded = await loadPending(env, draftId);
   if (!canAccessAgent(user, loaded.agent)) throw new HttpError(404, "not_found", "No pending draft has this id.");
+  return rejectLoaded(env, draftId, { type: "user", id: user.id }, note);
+}
+
+export async function rejectDraftAs(env: Env, draftId: string, actor: Actor, note: string | null): Promise<DraftRow> {
+  await loadPending(env, draftId);
+  return rejectLoaded(env, draftId, actor, note);
+}
+
+async function rejectLoaded(env: Env, draftId: string, actor: Actor, note: string | null): Promise<DraftRow> {
   const now = Date.now();
-  await markDraft(env.DB, draftId, { status: "rejected", decided_at: now, decided_by: user.id, decision_note: note, sent_message_id: null });
+  await markDraft(env.DB, draftId, {
+    status: "rejected",
+    decided_at: now,
+    decided_by: actor.id ?? actor.type,
+    decision_note: note,
+    sent_message_id: null,
+  });
+  await invalidateApproveTokens(env.DB, draftId, now);
   await audit(env.DB, {
-    actor_type: "user",
-    actor_id: user.id,
+    actor_type: actor.type,
+    actor_id: actor.id,
     action: "draft.rejected",
     target_type: "draft",
     target_id: draftId,
@@ -276,13 +320,17 @@ async function saveDraft(
     target_id: draft.id,
     detail: { reason, inboxId: input.inbox.id },
   });
+  const origin = originOf(env);
+  const raw = await issueApproveToken(env, draft.id, now);
   return {
     outcome: "drafted",
     draftId: draft.id,
     status: "pending",
     reason,
     threadId: draft.thread_id,
-    statusUrl: `${originOf(env)}/v1/drafts/${draft.id}`,
+    statusUrl: `${origin}/v1/drafts/${draft.id}`,
+    adminUrl: `${origin}/admin/drafts/${draft.id}`,
+    approveUrl: raw ? `${origin}/a/${raw}` : null,
   };
 }
 
@@ -362,7 +410,7 @@ async function deliver(
       await markDraft(env.DB, draftId, {
         status: "sent",
         decided_at: now,
-        decided_by: input.actor.type === "user" ? input.actor.id : input.actor.id,
+        decided_by: input.actor.id ?? input.actor.type,
         decision_note: null,
         sent_message_id: stored.id,
       });

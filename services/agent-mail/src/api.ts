@@ -294,6 +294,7 @@ export function draftJson(env: Env, draft: DraftRow) {
     decidedAt: draft.decided_at,
     sentMessageId: draft.sent_message_id,
     statusUrl: `${originOf(env)}/v1/drafts/${draft.id}`,
+    adminUrl: `${originOf(env)}/admin/drafts/${draft.id}`,
   };
 }
 

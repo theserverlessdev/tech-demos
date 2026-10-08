@@ -131,7 +131,7 @@ Create a self-hosted Access application.
 - Application domain: `agents.theserverless.dev`
 - Path: `/admin`
 
-Do not protect `/`, `/health`, `/v1`, or the email handler. Agents call `/v1` with a bearer key. Email Routing calls the email handler. Those paths must not require Access.
+Do not protect `/`, `/health`, `/v1`, `/a`, or the email handler. Agents call `/v1` with a bearer key. Email Routing calls the email handler. `/a/<token>` is the one-tap approval link. Those paths must not require Access.
 
 Policy example:
 
@@ -158,6 +158,7 @@ Vars in `wrangler.jsonc`:
 | `ADMIN_EMAIL` | `hello@anks.in` |
 | `CF_ZONE_ID` | `e60a45645a0c2f830636bfe7c121ca86` |
 | `ROUTING_WORKER_NAME` | `agent-mail` |
+| `APPROVE_LINK_TTL_HOURS` | `168` (7 days). How long a one-tap approval link stays valid. |
 
 `ADMIN_EMAIL` is the bootstrap address. The first valid Access login with that email creates the admin row. An empty value creates nobody. Change the var before that first login if you want a different admin.
 
@@ -229,7 +230,17 @@ bun run deploy
 bun run smoke
 ```
 
-`bun run deploy` applies D1 migrations, including `0002_routing_rule.sql`, then deploys the Worker.
+`bun run deploy` applies D1 migrations, including `0003_approve_links.sql`, then deploys the Worker.
+
+Apply the migration on its own with:
+
+```bash
+bunx wrangler d1 migrations apply DB --remote
+```
+
+`0003_approve_links.sql` adds `approve_tokens` and the `settings.approve_links` column (default on). There is no new secret. `APPROVE_LINK_TTL_HOURS` defaults to `168`.
+
+One-tap links live at `/a/<token>`, outside `/admin`. Do not put that path behind Access. A GET only shows the draft. Approve and reject are POST requests. The raw token is returned once, on the API response that created the draft, as `approveUrl`. Later draft GETs include `adminUrl` and omit `approveUrl`. Turn links off under **Settings**. An off switch stops new links and ignores existing ones.
 
 `bun run deploy` uses the top-level Worker config. It does not use the `dev` environment. The `dev` environment is only for `bun run dev` on your machine.
 

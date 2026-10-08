@@ -28,6 +28,24 @@ export function openApiSpec(env: Env): Record<string, unknown> {
             status: { type: "string" },
             reason: { type: "string" },
             statusUrl: { type: "string" },
+            adminUrl: { type: "string", description: "Panel URL for this draft. Present when outcome is drafted." },
+            approveUrl: {
+              type: "string",
+              nullable: true,
+              description:
+                "One-time approval link. Present only on the create response that drafted the message. Null when approve links are off. Later GETs omit this field because the raw token is not stored.",
+            },
+          },
+        },
+        Draft: {
+          type: "object",
+          properties: {
+            id: { type: "string" },
+            status: { type: "string", enum: ["pending", "sent", "rejected"] },
+            reason: { type: "string" },
+            subject: { type: "string" },
+            adminUrl: { type: "string" },
+            statusUrl: { type: "string" },
           },
         },
       },
@@ -56,7 +74,10 @@ export function openApiSpec(env: Env): Record<string, unknown> {
       },
       "/v1/inboxes/{id}/send": {
         post: {
-          ...op("Send or draft a message. The policy chooses the outcome.", "202"),
+          ...op(
+            "Send or draft a message. The policy chooses the outcome. A drafted response includes adminUrl. approveUrl is returned only on this response, and only when approve links are on.",
+            "202",
+          ),
           requestBody: jsonBody(["to", "subject", "text"]),
           responses: { "201": { description: "Sent" }, "202": { description: "Drafted" }, "403": error },
         },
@@ -67,8 +88,8 @@ export function openApiSpec(env: Env): Record<string, unknown> {
           responses: { "201": { description: "Sent" }, "202": { description: "Drafted" } },
         },
       },
-      "/v1/drafts": { get: op("List drafts for this agent", "200") },
-      "/v1/drafts/{id}": { get: op("Read draft status", "200") },
+      "/v1/drafts": { get: op("List drafts for this agent. Each draft includes adminUrl and does not include approveUrl.", "200") },
+      "/v1/drafts/{id}": { get: op("Read draft status. Includes adminUrl. Does not include approveUrl.", "200") },
       "/v1/openapi.json": { get: { summary: "This document", security: [], responses: { "200": { description: "OpenAPI document" } } } },
     },
   };

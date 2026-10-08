@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { admin } from "./admin";
 import { api, type AppEnv } from "./api";
+import { approveLinks } from "./approve-link";
 import { cleanupSpam, handleInbound } from "./inbound";
 import { publicHome, simplePage } from "./panel";
 import { HttpError, logEvent } from "./util";
@@ -30,7 +31,7 @@ app.onError((err, c) => {
   if (!http) logEvent("api_error", { error: err instanceof Error ? err.name : "error" });
   const accept = c.req.header("accept") ?? "";
   const json = (c.req.header("content-type") ?? "").includes("application/json") || accept.includes("application/json");
-  if (!json && (c.req.path === "/" || c.req.path.startsWith("/admin"))) {
+  if (!json && (c.req.path === "/" || c.req.path.startsWith("/admin") || c.req.path === "/a" || c.req.path.startsWith("/a/"))) {
     return c.html(simplePage("Agent Mail", message), status as 403);
   }
   return c.json({ error: { code, message } }, status as 500);
@@ -38,6 +39,7 @@ app.onError((err, c) => {
 
 app.get("/health", (c) => c.json({ ok: true, service: "agent-mail", domain: c.env.MAIL_DOMAIN }));
 app.get("/", (c) => c.html(publicHome(c.env.MAIL_DOMAIN)));
+app.route("/", approveLinks);
 app.route("/", api);
 app.route("/", admin);
 

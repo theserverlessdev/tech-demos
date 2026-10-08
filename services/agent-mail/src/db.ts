@@ -1,6 +1,7 @@
 import type {
   AgentRow,
   ApiKeyRow,
+  ApproveTokenRow,
   AuditRow,
   DraftRow,
   InboxRow,
@@ -21,12 +22,44 @@ export async function getSettings(db: D1Database): Promise<SettingsRow> {
 
 export async function updateSettings(
   db: D1Database,
-  fields: { global_kill: number; unknown_policy: SettingsRow["unknown_policy"]; spam_ttl_days: number },
+  fields: { global_kill: number; unknown_policy: SettingsRow["unknown_policy"]; spam_ttl_days: number; approve_links: number },
 ): Promise<void> {
   await db
-    .prepare("UPDATE settings SET global_kill = ?, unknown_policy = ?, spam_ttl_days = ? WHERE id = 1")
-    .bind(fields.global_kill, fields.unknown_policy, fields.spam_ttl_days)
+    .prepare("UPDATE settings SET global_kill = ?, unknown_policy = ?, spam_ttl_days = ?, approve_links = ? WHERE id = 1")
+    .bind(fields.global_kill, fields.unknown_policy, fields.spam_ttl_days, fields.approve_links)
     .run();
+}
+
+export async function insertApproveToken(
+  db: D1Database,
+  row: { id: string; draft_id: string; token_hash: string; expires_at: number; created_at: number },
+): Promise<void> {
+  await db
+    .prepare("INSERT INTO approve_tokens (id, draft_id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?)")
+    .bind(row.id, row.draft_id, row.token_hash, row.expires_at, row.created_at)
+    .run();
+}
+
+export async function getApproveTokenByHash(db: D1Database, tokenHash: string): Promise<ApproveTokenRow | null> {
+  return db.prepare("SELECT * FROM approve_tokens WHERE token_hash = ?").bind(tokenHash).first<ApproveTokenRow>();
+}
+
+/** Marks one unused, unexpired token used. Returns the row only when this call won the update. */
+export async function consumeApproveToken(db: D1Database, tokenHash: string, now: number): Promise<ApproveTokenRow | null> {
+  return db
+    .prepare(
+      `UPDATE approve_tokens SET used_at = ? WHERE token_hash = ? AND used_at IS NULL AND expires_at > ? RETURNING *`,
+    )
+    .bind(now, tokenHash, now)
+    .first<ApproveTokenRow>();
+}
+
+export async function releaseApproveToken(db: D1Database, id: string): Promise<void> {
+  await db.prepare("UPDATE approve_tokens SET used_at = NULL WHERE id = ?").bind(id).run();
+}
+
+export async function invalidateApproveTokens(db: D1Database, draftId: string, now: number): Promise<void> {
+  await db.prepare("UPDATE approve_tokens SET used_at = ? WHERE draft_id = ? AND used_at IS NULL").bind(now, draftId).run();
 }
 
 export async function getUserByEmail(db: D1Database, email: string): Promise<UserRow | null> {

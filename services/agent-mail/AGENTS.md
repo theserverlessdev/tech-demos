@@ -38,7 +38,11 @@ The panel at `/admin` uses Cloudflare Access. Do not send your API key there.
 
 If you omit `to`, the reply goes to the last external sender.
 
-A `201` body has `"outcome": "sent"`. A `202` body has `"outcome": "drafted"`, a `draftId`, a `reason`, and a `statusUrl`. Only an owner approval sends a draft.
+A `201` body has `"outcome": "sent"`. A `202` body has `"outcome": "drafted"`, a `draftId`, a `reason`, a `statusUrl`, an `adminUrl`, and an `approveUrl`.
+
+`approveUrl` is a one-time link the owner can open without signing in. Send it to the owner when you tell them a draft is waiting. Do not store it to show again. `GET /v1/drafts/{id}` returns `adminUrl` and does not return `approveUrl`. If approve links are off, `approveUrl` is null.
+
+Opening `approveUrl` does not send the mail. The owner approves from that page, or from `adminUrl`. Approval still obeys the kill switch and the daily cap.
 
 Your owner sets one of these policies:
 
