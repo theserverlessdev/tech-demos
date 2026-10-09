@@ -1,0 +1,44 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tech-demos-memory-repo",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "tech-demos-memory-repo",
+      "database_id": "00000000-0000-4000-8000-000000007431",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "ChatAgent", "class_name": "ChatAgent" },
+      { "name": "MemoryAgent", "class_name": "MemoryAgent" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ChatAgent", "MemoryAgent"] }],
+  "ratelimits": [
+    { "name": "CHAT_LIMIT", "namespace_id": "7431", "simple": { "limit": 12, "period": 60 } },
+    { "name": "DREAM_LIMIT", "namespace_id": "7432", "simple": { "limit": 4, "period": 60 } },
+    { "name": "CREATE_LIMIT", "namespace_id": "7433", "simple": { "limit": 4, "period": 60 } },
+    { "name": "READ_LIMIT", "namespace_id": "7434", "simple": { "limit": 60, "period": 60 } }
+  ],
+  "vars": {
+    "AI_MODEL": "@cf/zai-org/glm-5.3-flash",
+    "VISITOR_TTL_HOURS": "24",
+    "DREAM_INTERVAL_SECONDS": "14400",
+    "DREAMS_PER_HOUR": "6",
+    "ENVIRONMENT": "local",
+    "TURNSTILE_SITE_KEY": "1x00000000000000000000AA"
+  },
+  "secrets": { "required": ["TURNSTILE_SECRET"] },
+  "workers_dev": true
+}

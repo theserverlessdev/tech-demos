@@ -1,0 +1,61 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tech-demos-memory-repo",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none"
+  },
+  "ai": { "binding": "AI" },
+  "artifacts": [
+    {
+      "binding": "ARTIFACTS",
+      "namespace": "tech-demos",
+      "remote": true
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "tech-demos-memory-repo",
+      "database_id": "a4810d2e-56d9-424f-a9f8-93cdbb41a42c",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "ChatAgent", "class_name": "ChatAgent" },
+      { "name": "MemoryAgent", "class_name": "MemoryAgent" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ChatAgent", "MemoryAgent"] }],
+  "ratelimits": [
+    { "name": "CHAT_LIMIT", "namespace_id": "7431", "simple": { "limit": 12, "period": 60 } },
+    { "name": "DREAM_LIMIT", "namespace_id": "7432", "simple": { "limit": 4, "period": 60 } },
+    { "name": "CREATE_LIMIT", "namespace_id": "7433", "simple": { "limit": 4, "period": 60 } },
+    { "name": "READ_LIMIT", "namespace_id": "7434", "simple": { "limit": 60, "period": 60 } }
+  ],
+  "vars": {
+    "AI_MODEL": "@cf/zai-org/glm-5.3-flash",
+    "VISITOR_TTL_HOURS": "24",
+    "DREAM_INTERVAL_SECONDS": "14400",
+    "DREAMS_PER_HOUR": "6",
+    // Empty in production. .dev.vars sets "local" so the Turnstile test secret
+    // works under wrangler dev, which rewrites Host to the first route.
+    "ENVIRONMENT": "",
+    // Replace after creating the widget. Local .dev.vars uses the always-pass test key.
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFR__jdvlvsysD_8"
+  },
+  "secrets": { "required": ["TURNSTILE_SECRET"] },
+  "triggers": { "crons": ["*/15 * * * *"] },
+  "routes": [
+    { "pattern": "tech-demos.theserverless.dev/demos/memory-repo*", "zone_name": "theserverless.dev" },
+    { "pattern": "memory-repo.tech-demos.theserverless.dev/*", "zone_name": "theserverless.dev" }
+  ],
+  "workers_dev": true,
+  "observability": { "enabled": true }
+}
