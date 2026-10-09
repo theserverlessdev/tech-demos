@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark light" />
+  <meta name="theme-color" content="#0e0e11" />
+  <title>Memory repo · Tech Demos</title>
+  <meta name="description" content="An agent's long-term memory as markdown files in a git repo. Every fact and every dream is a commit." />
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,560..800&family=Hanken+Grotesk:wght@400..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./assets/app.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="https://tech-demos.theserverless.dev/" aria-label="Tech Demos gallery">
+      <svg class="brand__mark" width="26" height="26" viewBox="0 -3 128 128" aria-hidden="true">
+        <g stroke="currentColor" stroke-width="6" stroke-linecap="round" opacity="0.45"><line x1="4" y1="58" x2="20" y2="58"/><line x1="1" y1="72" x2="19" y2="72"/><line x1="6" y1="86" x2="22" y2="86"/></g>
+        <path d="M44 92 C31 92 20 82 20 69 C20 57 29 47 41 46 C45 33 57 24 70 24 C85 24 98 35 100 51 C110 53 118 62 118 72 C118 83 109 92 97 92 Z" fill="none" stroke="currentColor" stroke-width="7.5" stroke-linejoin="round"/>
+        <path d="M69 36 L50 71 L63 71 L57 102 L88 60 L72 60 L80 36 Z" fill="currentColor"/>
+      </svg>
+      <span>Tech Demos</span>
+    </a>
+    <div class="topbar__title">
+      <h1>Memory repo</h1>
+      <p>Markdown memory, one commit at a time</p>
+    </div>
+    <div class="topbar__actions">
+      <a class="btn btn-primary" href="https://theserverless.dev/contact" rel="noopener">Contact</a>
+      <button class="btn btn-ghost btn-icon" id="theme" type="button" aria-label="Switch colour theme">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9Z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <p class="shows shows--bar"><span class="shows__k">What this shows</span> Long-term memory is plain markdown in a git repo. A fact becomes a commit. A dream merges those files, and the diff shows exactly what changed.</p>
+
+  <div class="strip" role="status">
+    <span class="strip__dot"></span>
+    <span id="strip-text">This browser's repo, index, and chat are deleted 24 hours after the last message. No account.</span>
+  </div>
+
+  <section class="intro">
+    <h2>What you can do</h2>
+    <ul>
+      <li>Pass Turnstile and open a memory repo for this browser.</li>
+      <li>State a name, a preference, or a project and watch a commit land.</li>
+      <li>Read <code>MEMORY.md</code> and the topic files.</li>
+      <li>Open a commit and read the unified diff.</li>
+      <li>Run Dream now and see the steps, or why nothing was committed.</li>
+    </ul>
+  </section>
+
+  <section class="gate" id="gate">
+    <h2>Open a memory repo</h2>
+    <p>Turnstile runs once, before the Artifacts repo is created. Chat and dreams then use the cookie for this browser.</p>
+    <div id="gate-turnstile" class="turnstile"></div>
+    <button class="btn btn-primary" id="open-repo" type="button">Open memory repo</button>
+    <p class="hint" id="gate-hint" role="status"></p>
+  </section>
+
+  <div class="app" id="app" hidden>
+    <div class="tabs" role="tablist" aria-label="Memory repo panes">
+      <button class="tab is-active" type="button" role="tab" id="tab-chat" aria-controls="pane-chat" aria-selected="true" data-pane="chat">Chat</button>
+      <button class="tab" type="button" role="tab" id="tab-memory" aria-controls="pane-memory" aria-selected="false" data-pane="memory">Memory</button>
+      <button class="tab" type="button" role="tab" id="tab-history" aria-controls="pane-history" aria-selected="false" data-pane="history">History</button>
+    </div>
+
+    <div class="workspace">
+      <section class="pane is-active" id="pane-chat" role="tabpanel" aria-labelledby="tab-chat" data-pane="chat">
+        <header class="pane__head">
+          <h2>Chat</h2>
+          <span class="count" id="expires"></span>
+        </header>
+        <div class="messages" id="messages" aria-live="polite"></div>
+        <div class="chips" id="chips">
+          <button class="chip" type="button" data-seed="I prefer dark mode and short answers.">Dark mode</button>
+          <button class="chip" type="button" data-seed="My name is Ankur and I work on Cloudflare demos.">Name and work</button>
+          <button class="chip" type="button" data-seed="The memory-repo demo should stay on Workers Paid.">Workers Paid</button>
+          <button class="chip" type="button" data-seed="I like jasmine tea in the afternoon.">Jasmine tea</button>
+        </div>
+        <form class="composer" id="composer">
+          <label class="sr" for="message">Message</label>
+          <textarea id="message" name="message" rows="2" maxlength="800" required placeholder="Tell the agent a fact worth keeping"></textarea>
+          <button class="btn btn-primary" id="send" type="submit">Send</button>
+        </form>
+        <p class="hint" id="chat-hint" role="status"></p>
+      </section>
+
+      <section class="pane" id="pane-memory" role="tabpanel" aria-labelledby="tab-memory" data-pane="memory">
+        <header class="pane__head">
+          <h2>Memory</h2>
+          <button class="btn btn-ghost" id="source-toggle" type="button" aria-pressed="false">Source</button>
+        </header>
+        <div class="tree" id="tree" role="tree" aria-label="Memory files"></div>
+        <article class="md" id="file-view"></article>
+      </section>
+
+      <section class="pane" id="pane-history" role="tabpanel" aria-labelledby="tab-history" data-pane="history">
+        <header class="pane__head">
+          <h2>History</h2>
+          <button class="btn btn-primary" id="dream" type="button">Dream now</button>
+        </header>
+        <ol class="steps" id="dream-steps" hidden></ol>
+        <p class="hint" id="dream-hint" role="status"></p>
+        <ol class="commits" id="commits"></ol>
+        <p class="muted" id="diff-meta">Select a commit.</p>
+        <pre class="diff" id="diff"><code id="diff-code"></code></pre>
+      </section>
+    </div>
+  </div>
+
+  <footer class="foot">
+    <p>
+      Inspired by <a href="https://github.com/supermemoryai/memoryrepo" rel="noopener">supermemoryai/memoryrepo</a>
+      (MIT) and Cognition's <a href="https://cognition.com/agent-memory-repo" rel="noopener">agent memory repo</a>.
+      This slice keeps the git-backed memory and the dream. No Alchemy, email, or vendored code.
+      <a href="https://memoryrepo.dev" rel="noopener">memoryrepo.dev</a>
+    </p>
+  </footer>
+
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
+  <script type="module" src="./assets/app.js"></script>
+</body>
+</html>

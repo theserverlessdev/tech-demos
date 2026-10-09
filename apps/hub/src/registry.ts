@@ -177,6 +177,17 @@ const repoPerAgentFallbackSource = `export default {
 };
 `;
 
+// memory-repo is a standalone Worker (Artifacts, Agents SDK, D1, Workers AI). Same pattern as repo-per-agent:
+// the zone route wins, and this source only redirects if that route is missing.
+const memoryRepoFallbackSource = `export default {
+  fetch(request) {
+    const url = new URL(request.url);
+    const rest = url.pathname.replace(/^\\/demos\\/memory-repo/, "") || "/";
+    return Response.redirect("https://memory-repo.tech-demos.theserverless.dev" + rest + url.search, 302);
+  },
+};
+`;
+
 // edgechat is a standalone Worker (Durable Objects, D1, KV, R2). Same pattern as resolve-hq:
 // the zone route wins, and this source only redirects if that route is missing.
 const edgechatFallbackSource = `export default {
@@ -505,6 +516,27 @@ export const demos: DemoEntry[] = [
     ],
     tags: ["artifacts", "agents-sdk", "workers-ai", "d1", "turnstile"],
     source: repoPerAgentFallbackSource,
+  },
+  {
+    slug: "memory-repo",
+    title: "Memory repo",
+    description: "An agent's memory is markdown in a git repo. Facts and dreams are commits you can diff.",
+    demonstrates:
+      "One ChatAgent Durable Object per thread recalls an FTS5 index, then Workers AI replies. One MemoryAgent per anonymous visitor owns an Artifacts git repo of markdown. Every memory write is a commit, and a dream alarm consolidates the files into another commit. If the model output is unusable, nothing is committed. A cron deletes the repo and rows 24 hours after the last message.",
+    capabilities: [
+      "Pass Turnstile and open a memory repo for this browser",
+      "State a name, preference, or project and see the commit",
+      "Read MEMORY.md and the topic files the reply recalled",
+      "Open a commit and read the unified diff",
+      "Run Dream now and see the steps, or why nothing was committed",
+    ],
+    useCases: [
+      "A personal agent whose memory you can clone and audit",
+      "A consolidation job that rewrites notes and leaves a diff",
+      "A demo tenant whose git repo deletes itself on a timer",
+    ],
+    tags: ["artifacts", "agents-sdk", "workers-ai", "d1", "turnstile"],
+    source: memoryRepoFallbackSource,
   },
 ];
 

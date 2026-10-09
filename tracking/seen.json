@@ -105,6 +105,20 @@
       "worker": "tech-demos-goodvibes",
       "branch": "demo/goodvibes",
       "notes": "Ember Rush: 75s orb hunt, server-authoritative round on a hibernatable VibeRoom. Not a vendor of upstream. Room create is rate-limited."
+    },
+    {
+      "slug": "memory-repo",
+      "repo": "https://github.com/supermemoryai/memoryrepo",
+      "title": "Memory repo",
+      "source": "approved-slice",
+      "why": "Agent memory as markdown in an Artifacts git repo: every fact and every dream is a commit you can diff",
+      "built_at": "2026-10-09",
+      "path": "demos/memory-repo",
+      "url": "https://tech-demos.theserverless.dev/demos/memory-repo/",
+      "subdomain": "https://memory-repo.tech-demos.theserverless.dev/",
+      "worker": "tech-demos-memory-repo",
+      "branch": "cursor/memory-repo-219e",
+      "notes": "MIT inspired-by only. No Alchemy, email, or vendored code. Anonymous cookie, Turnstile on create, 24h deletion."
     }
   ],
   "skipped": [
