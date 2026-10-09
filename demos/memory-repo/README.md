@@ -65,12 +65,14 @@ bunx wrangler secret put TURNSTILE_SECRET
 env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bunx wrangler deploy
 ```
 
+A brand-new Worker with `secrets.required` needs a first deploy before `wrangler secret put` works, or a secrets file.
+
 ### Resources to create
 
 | Resource | Name | Status |
 | --- | --- | --- |
-| D1 database | `tech-demos-memory-repo` | **Create.** `database_id` in `wrangler.jsonc` is the placeholder `00000000-0000-4000-8000-000000007431`. Replace it with the id from `wrangler d1 create`. |
-| Turnstile widget | `tech-demos-memory-repo` | **Create.** Hostnames: `tech-demos.theserverless.dev`, `memory-repo.tech-demos.theserverless.dev`. Put the site key in `TURNSTILE_SITE_KEY` (it is `REPLACE_ME` today). Put the secret with `wrangler secret put TURNSTILE_SECRET`. |
+| D1 database | `tech-demos-memory-repo` | **Exists.** `database_id` in `wrangler.jsonc` is `a4810d2e-56d9-424f-a9f8-93cdbb41a42c`. Self-hosters: `wrangler d1 create tech-demos-memory-repo` and paste that id over the one in `wrangler.jsonc`. |
+| Turnstile widget | `tech-demos-memory-repo` | **Exists.** Hostnames: `tech-demos.theserverless.dev`, `memory-repo.tech-demos.theserverless.dev`. `TURNSTILE_SITE_KEY` is `0x4AAAAAAFR__jdvlvsysD_8`. Self-hosters: create a widget for those hostnames, put the site key in `TURNSTILE_SITE_KEY`, and put the secret with `wrangler secret put TURNSTILE_SECRET`. |
 | Artifacts namespace | `tech-demos` | Shared with repo-per-agent. Create it only if this account does not already have it. |
 | Rate-limit namespaces | `7431` chat, `7432` dream, `7433` create, `7434` read | Created when this Worker is deployed. They do not overlap the ids already in the repo. |
 | Durable Object classes | `ChatAgent`, `MemoryAgent` | Created by the `v1` migration on deploy. |

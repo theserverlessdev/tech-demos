@@ -22,7 +22,7 @@
     {
       "binding": "DB",
       "database_name": "tech-demos-memory-repo",
-      "database_id": "00000000-0000-4000-8000-000000007431",
+      "database_id": "a4810d2e-56d9-424f-a9f8-93cdbb41a42c",
       "migrations_dir": "migrations"
     }
   ],
@@ -48,7 +48,7 @@
     // works under wrangler dev, which rewrites Host to the first route.
     "ENVIRONMENT": "",
     // Replace after creating the widget. Local .dev.vars uses the always-pass test key.
-    "TURNSTILE_SITE_KEY": "REPLACE_ME"
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFR__jdvlvsysD_8"
   },
   "secrets": { "required": ["TURNSTILE_SECRET"] },
   "triggers": { "crons": ["*/15 * * * *"] },
