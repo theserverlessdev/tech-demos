@@ -1,0 +1,66 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tech-demos-edge-browser",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-10-12",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none"
+  },
+  "ai": { "binding": "AI" },
+  "browser": { "binding": "BROWSER" },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "tech-demos-edge-browser",
+      "database_id": "00000000-0000-4000-8000-000000007441",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "BUCKET",
+      "bucket_name": "tech-demos-edge-browser"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "BROWSER_SESSION", "class_name": "BrowserSession" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["BrowserSession"] }],
+  "workflows": [
+    {
+      "name": "tech-demos-edge-browser-capture",
+      "binding": "CAPTURE",
+      "class_name": "CaptureWorkflow"
+    }
+  ],
+  // 7441–7443 are unused elsewhere in this repo.
+  "ratelimits": [
+    { "name": "CAPTURE_LIMIT", "namespace_id": "7441", "simple": { "limit": 4, "period": 60 } },
+    { "name": "READ_LIMIT", "namespace_id": "7442", "simple": { "limit": 120, "period": 60 } },
+    { "name": "SESSION_LIMIT", "namespace_id": "7443", "simple": { "limit": 40, "period": 60 } }
+  ],
+  "vars": {
+    "AI_MODEL": "@cf/zai-org/glm-5.3-flash",
+    // Empty in production. .dev.vars sets "local" so the Turnstile test secret
+    // works under wrangler dev, which rewrites Host to the first route.
+    // "local" also skips Browser Rendering and writes the stand-in outputs.
+    "ENVIRONMENT": "",
+    "TURNSTILE_SITE_KEY": "REPLACE_ME"
+  },
+  "secrets": { "required": ["TURNSTILE_SECRET"] },
+  "triggers": { "crons": ["*/15 * * * *"] },
+  "routes": [
+    { "pattern": "tech-demos.theserverless.dev/demos/edge-browser*", "zone_name": "theserverless.dev" },
+    { "pattern": "edge-browser.tech-demos.theserverless.dev/*", "zone_name": "theserverless.dev" }
+  ],
+  "workers_dev": true,
+  "observability": {
+    "enabled": true,
+    "logs": { "enabled": true, "head_sampling_rate": 1 },
+    "traces": { "enabled": true, "head_sampling_rate": 1 }
+  }
+}

@@ -87,7 +87,34 @@ const goodvibesFallbackSource = standalone("goodvibes");
 // the zone route wins, and this source only redirects if that route is missing.
 const byokPlaygroundFallbackSource = standalone("byok-playground");
 
+// edge-browser is a standalone Worker (ASSETS, BROWSER, AI, DB, BUCKET, CAPTURE, CAPTURE_LIMIT, READ_LIMIT, SESSION_LIMIT, cron, Turnstile).
+// The zone route wins, and this source only redirects if that route is missing.
+const edgeBrowserFallbackSource = standalone("edge-browser");
+
 export const demos: DemoEntry[] = [
+  {
+    slug: "edge-browser",
+    title: "Edge browser",
+    description: "Paste a URL. A workflow screenshots it, saves a PDF, and summarizes the page.",
+    demonstrates:
+      "A Worker on the Workers Paid plan drives headless Chrome through the Browser Rendering binding and @cloudflare/puppeteer. A Workflow takes a desktop screenshot, a 390px phone screenshot, a PDF, and markdown, then Workers AI summarizes it. Warm reuse connects to the newest Browser Rendering session under the context cap, and otherwise launches a browser and disconnects it. There are no Containers and no Workers for Platforms.",
+    capabilities: [
+      "Paste a URL, pass Turnstile, and watch each workflow step",
+      "Open the desktop and phone screenshots, the PDF, the markdown, and the summary",
+      "See whether the capture reused the warm session or launched a browser",
+      "Try a blocked address and read the SSRF rejection",
+      "Open a recent capture from this browser",
+    ],
+    useCases: [
+      "Link previews that store a screenshot and a short summary",
+      "Page archiving with a PDF and markdown kept for a day",
+      "Visual regression checks from a desktop shot and a 390px shot",
+      "A scraping step that turns a page into markdown for RAG",
+    ],
+    tags: ["browser-rendering", "puppeteer", "workflows", "r2", "d1", "workers-ai", "turnstile"],
+    kind: "standalone",
+    source: edgeBrowserFallbackSource,
+  },
   {
     slug: "byok-playground",
     title: "BYOK playground",
