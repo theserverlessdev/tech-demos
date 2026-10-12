@@ -38,6 +38,7 @@
 }
 
 *, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { margin: 0; min-height: 100%; max-width: 100%; overflow-x: hidden; }
 body {
   font-family: var(--font-body);

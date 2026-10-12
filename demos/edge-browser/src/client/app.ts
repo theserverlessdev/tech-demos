@@ -212,7 +212,6 @@ function mountTurnstile(): void {
     theme: document.documentElement.dataset.theme === "light" ? "light" : "dark",
     callback: (token: string) => {
       turnstileToken = token;
-      hint(formHint, "");
     },
     "expired-callback": () => {
       turnstileToken = "";
@@ -222,6 +221,13 @@ function mountTurnstile(): void {
       hint(formHint, "Turnstile could not load. Refresh and try again.", true);
     },
   });
+}
+
+async function refreshQuota(): Promise<void> {
+  const session = await call<SessionPayload>("/session");
+  if (!session.data) return;
+  const left = Math.max(0, session.data.capturesPerHour - session.data.capturesUsed);
+  quota.textContent = `${left} of ${session.data.capturesPerHour} captures left this hour. Files are deleted after ${session.data.retentionHours} hours.`;
 }
 
 async function boot(): Promise<void> {
@@ -236,10 +242,7 @@ async function boot(): Promise<void> {
   } else {
     hint(formHint, "Turnstile site key is not set.", true);
   }
-  if (session.data) {
-    const left = Math.max(0, session.data.capturesPerHour - session.data.capturesUsed);
-    quota.textContent = `${left} of ${session.data.capturesPerHour} captures left this hour. Files are deleted after ${session.data.retentionHours} hours.`;
-  }
+  await refreshQuota();
   await refreshGallery();
 }
 
@@ -268,9 +271,11 @@ form.addEventListener("submit", async (event) => {
   if (widget && turnstileId) widget.reset(turnstileId);
   if (!result.data || result.data.error || !result.data.id) {
     hint(formHint, result.data?.error?.message ?? "The capture was not started.", true);
+    if (result.status === 429) await refreshQuota();
     return;
   }
   hint(formHint, "Capture started.");
+  await refreshQuota();
   await openCapture(result.data.id);
 });
 
