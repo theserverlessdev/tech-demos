@@ -267,7 +267,7 @@ async function refreshQuota(): Promise<void> {
   const perHour = session.data.capturesPerHour;
   const browserLeft = Math.max(0, perHour - session.data.capturesUsed);
   const networkLeft = Math.max(0, perHour - session.data.networkUsed);
-  quota.textContent = `${browserLeft} of ${perHour} left for this browser and ${networkLeft} of ${perHour} left for this network, this hour. ${session.data.dailyCap} captures a day for the demo. Files are removed about a day after they are created.`;
+  quota.textContent = `${browserLeft} of ${perHour} left for this browser and ${networkLeft} of ${perHour} left for this network (/64), this hour. ${session.data.network48Cap} per IPv6 /48. ${session.data.dailyCap} captures a day for the demo. Files are removed about a day after they are created.`;
 }
 
 async function boot(): Promise<void> {

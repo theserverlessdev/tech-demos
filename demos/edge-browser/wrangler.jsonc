@@ -24,14 +24,10 @@
     {
       "binding": "BUCKET",
       "bucket_name": "tech-demos-edge-browser"
-      // Lifecycle is not a wrangler.jsonc field. After the bucket exists, add a
-      // dashboard rule: prefix captures/, delete objects after 2 days. See README.
+      // Lifecycle is not a wrangler.jsonc field. After the bucket exists:
+      // wrangler r2 bucket lifecycle add tech-demos-edge-browser captures-expiry captures/ --expire-days 1
     }
   ],
-  "durable_objects": {
-    "bindings": [{ "name": "BROWSER_SESSION", "class_name": "BrowserSession" }]
-  },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["BrowserSession"] }],
   "workflows": [
     {
       "name": "tech-demos-edge-browser-capture",
@@ -53,7 +49,7 @@
     "ENVIRONMENT": "",
     "TURNSTILE_SITE_KEY": "REPLACE_ME"
   },
-  "secrets": { "required": ["TURNSTILE_SECRET"] },
+  "secrets": { "required": ["TURNSTILE_SECRET", "IP_HASH_SECRET"] },
   "triggers": { "crons": ["*/15 * * * *"] },
   "routes": [
     { "pattern": "tech-demos.theserverless.dev/demos/edge-browser*", "zone_name": "theserverless.dev" },

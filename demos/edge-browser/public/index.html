@@ -57,7 +57,7 @@
   <div class="layout">
     <section class="panel" aria-labelledby="capture-heading">
       <h2 id="capture-heading">Capture a page</h2>
-      <p class="muted" id="quota">6 captures per browser and per network each hour. 300 a day for the demo. Public http and https only.</p>
+      <p class="muted" id="quota">6 captures per browser and per IPv6 /64 each hour. 20 per IPv6 /48. 300 a day for the demo.</p>
       <form id="capture-form">
         <label class="sr" for="url">Page URL</label>
         <input id="url" name="url" type="url" inputmode="url" autocomplete="off" required maxlength="2000" placeholder="https://example.com" />
@@ -98,7 +98,7 @@
           <div class="shot-frame"><img id="phone" alt="Phone screenshot of the captured page" /></div>
         </figure>
       </div>
-      <p id="pdf-row" hidden><a class="btn" id="pdf" href="#" target="_blank" rel="noopener">Open PDF</a></p>
+      <p id="pdf-row" hidden><a class="btn" id="pdf" href="#" download="page.pdf">Open PDF</a></p>
       <article class="md-wrap" id="markdown-wrap" hidden>
         <div class="pane__head">
           <h3>Markdown</h3>

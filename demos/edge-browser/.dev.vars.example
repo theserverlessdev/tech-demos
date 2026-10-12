@@ -5,3 +5,5 @@
 ENVIRONMENT=local
 TURNSTILE_SITE_KEY=1x00000000000000000000AA
 TURNSTILE_SECRET=1x0000000000000000000000000000000AA
+# Local HMAC key for the stored network id. Production uses `wrangler secret put IP_HASH_SECRET`.
+IP_HASH_SECRET=local-dev-only-change-me

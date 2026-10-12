@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { LIMITS } from "../shared/limits";
 import type { CaptureListItem, CaptureView, SessionPayload } from "../shared/types";
-import { countRecent, countRecentIp, countSince, deleteCaptureRow, getCapture, insertCapture, listCaptures, listExpiredIds, markError, objectKey, toView, type CaptureRow } from "./db";
+import { countRecent, countRecentIp, countRecentIp48, countSince, deleteCaptureRow, getCapture, insertCapture, listCaptures, listExpiredIds, markError, objectKey, toView, type CaptureRow } from "./db";
 import { budgetDecision, hashIpKey, networkKey } from "./policy";
 import { authorizeNavigation, assessUrl, cloudflareDoh } from "./ssrf";
 import { turnstileConfigured, verifyTurnstile } from "./turnstile";
@@ -113,6 +113,12 @@ function field(body: unknown, key: string): unknown {
   return (body as Record<string, unknown>)[key];
 }
 
+function ipSecret(env: Env): string {
+  const secret = env.IP_HASH_SECRET?.trim() ?? "";
+  if (!secret) throw new HttpError(503, "unconfigured", "IP_HASH_SECRET is not set.");
+  return secret;
+}
+
 function publicSiteKey(env: Env): string | null {
   const key = env.TURNSTILE_SITE_KEY?.trim() ?? "";
   if (!key || key === "REPLACE_ME") return null;
@@ -212,13 +218,16 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
   if (request.method === "GET" && path === "/api/session") {
     await limit(env.READ_LIMIT, request, "Too many reads from this address. Wait a minute.");
     const since = Date.now() - 60 * 60 * 1000;
-    const ipKey = await hashIpKey(clientIp(request));
+    const secret = ipSecret(env);
+    const ip = clientIp(request);
+    const ipKey = await hashIpKey(ip, secret, "64");
     const [capturesUsed, networkUsed] = await Promise.all([countRecent(env, visitor.id, since), countRecentIp(env, ipKey, since)]);
     const payload: SessionPayload = {
       siteKey: publicSiteKey(env),
       capturesPerHour: LIMITS.capturesPerHour,
       capturesUsed,
       networkUsed,
+      network48Cap: LIMITS.network48PerHour,
       dailyCap: LIMITS.dailyCap,
       retentionHours: 24,
     };
@@ -265,19 +274,33 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
       throw new HttpError(403, "turnstile_failed", "Turnstile did not pass. Try the check again.");
     }
     const now = Date.now();
-    const ipKey = await hashIpKey(clientIp(request));
-    const [cookieUsed, networkUsed, dailyUsed] = await Promise.all([
-      countRecent(env, visitor.id, now - 60 * 60 * 1000),
-      countRecentIp(env, ipKey, now - 60 * 60 * 1000),
-      countSince(env, now - LIMITS.retentionMs),
-    ]);
-    const budget = budgetDecision({ cookie: cookieUsed, network: networkUsed, daily: dailyUsed });
+    const secret = ipSecret(env);
+    const ip = clientIp(request);
+    const ipKey = await hashIpKey(ip, secret, "64");
+    const ip48Key = await hashIpKey(ip, secret, "48");
+    const sinceHour = now - 60 * 60 * 1000;
+    const sinceDay = now - LIMITS.retentionMs;
+    const spend = async () =>
+      Promise.all([
+        countRecent(env, visitor.id, sinceHour),
+        countRecentIp(env, ipKey, sinceHour),
+        countRecentIp48(env, ip48Key, sinceHour),
+        countSince(env, sinceDay),
+      ]);
+    const [cookieUsed, networkUsed, network48Used, dailyUsed] = await spend();
+    const budget = budgetDecision({ cookie: cookieUsed, network: networkUsed, network48: network48Used, daily: dailyUsed });
     if (!budget.ok) throw new HttpError(budget.status, budget.code, budget.message);
     const decision = await authorizeNavigation(assessed.url, cloudflareDoh);
     if (!decision.ok) throw new HttpError(400, decision.code, decision.message);
     const id = newId();
     if (!CAPTURE_ID.test(id)) throw new HttpError(500, "internal", "The server failed. Try again.");
-    await insertCapture(env, { id, visitorId: visitor.id, ipKey, url: decision.url, now });
+    const inserted = await insertCapture(env, { id, visitorId: visitor.id, ipKey, ip48Key, url: decision.url, now });
+    if (!inserted) {
+      const [cookieAgain, networkAgain, network48Again, dailyAgain] = await spend();
+      const again = budgetDecision({ cookie: cookieAgain, network: networkAgain, network48: network48Again, daily: dailyAgain });
+      if (!again.ok) throw new HttpError(again.status, again.code, again.message);
+      throw new HttpError(429, "hourly", "This network has used its captures for this hour.");
+    }
     try {
       await env.CAPTURE.create({ id, params: { captureId: id, visitorId: visitor.id } });
     } catch (err) {

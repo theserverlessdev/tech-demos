@@ -24,10 +24,6 @@
       "bucket_name": "tech-demos-edge-browser"
     }
   ],
-  "durable_objects": {
-    "bindings": [{ "name": "BROWSER_SESSION", "class_name": "BrowserSession" }]
-  },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["BrowserSession"] }],
   "workflows": [
     {
       "name": "tech-demos-edge-browser-capture",
@@ -45,6 +41,6 @@
     "ENVIRONMENT": "local",
     "TURNSTILE_SITE_KEY": "1x00000000000000000000AA"
   },
-  "secrets": { "required": ["TURNSTILE_SECRET"] },
+  "secrets": { "required": ["TURNSTILE_SECRET", "IP_HASH_SECRET"] },
   "workers_dev": false
 }

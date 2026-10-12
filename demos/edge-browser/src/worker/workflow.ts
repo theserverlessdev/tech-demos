@@ -3,7 +3,7 @@ import { NonRetryableError } from "cloudflare:workflows";
 import { simplePdf, stripedPng } from "../shared/files";
 import { LIMITS, type StepName } from "../shared/limits";
 import type { CaptureParams } from "../shared/types";
-import { capturePage, type PageProfile } from "./browse";
+import { browserEndpoint, capturePage, type PageProfile } from "./browse";
 import { getCapture, markComplete, markError, markStep, objectKey } from "./db";
 import { PermanentError } from "./errors";
 import { authorizeNavigation, cloudflareDoh } from "./ssrf";
@@ -13,10 +13,6 @@ const PAGE_STEPS: { name: StepName; profile: PageProfile }[] = [
   { name: "Desktop, PDF, and markdown", profile: "desktop" },
   { name: "Phone screenshot", profile: "phone" },
 ];
-
-function pool(env: Env) {
-  return env.BROWSER_SESSION.get(env.BROWSER_SESSION.idFromName("pool"));
-}
 
 function short(err: unknown, fallback: string): string {
   if (err instanceof PermanentError) return err.message.slice(0, 180);
@@ -55,18 +51,26 @@ export class CaptureWorkflow extends WorkflowEntrypoint<Env, CaptureParams> {
     for (const item of PAGE_STEPS) {
       await step.do(
         item.name,
-        { timeout: "70 seconds", retries: { limit: 1, delay: "2 seconds", backoff: "constant" } },
+        { timeout: "120 seconds", retries: { limit: 1, delay: "2 seconds", backoff: "constant" } },
         async () => {
           await markStep(this.env, captureId, item.name, "running");
           const row = await getCapture(this.env, captureId);
-          if (!row) throw new NonRetryableError("The capture does not exist.");
-          const plan = await pool(this.env).acquire(visitorId);
-          if (!plan.ok) {
-            await markError(this.env, captureId, item.name, plan.message);
-            throw new NonRetryableError(plan.message);
+          if (!row || row.visitor_id !== visitorId) throw new NonRetryableError("The capture does not exist.");
+          const rate = await this.env.SESSION_LIMIT.limit({ key: visitorId || "anon" });
+          if (!rate.success) {
+            const message = "Too many browser steps from this browser. Wait a minute.";
+            await markError(this.env, captureId, item.name, message);
+            throw new NonRetryableError(message);
+          }
+          const environment: string = this.env.ENVIRONMENT;
+          const stub = environment === "local";
+          if (!stub && !browserEndpoint(this.env.BROWSER)) {
+            const message = "Browser Rendering is not bound to this Worker.";
+            await markError(this.env, captureId, item.name, message);
+            throw new NonRetryableError(message);
           }
           try {
-            const produced = plan.stub
+            const produced = stub
               ? await writeStub(this.env, captureId, row.url, item.profile, "Local stand-in. Browser Rendering needs a Cloudflare login, so this capture did not launch Chrome.")
               : await capturePage(this.env, captureId, row.url, item.profile);
             await markStep(this.env, captureId, item.name, "done", {
@@ -138,7 +142,7 @@ async function writeStub(env: Env, captureId: string, url: string, profile: Page
       "",
       `Requested: ${url}`,
       "",
-      "The live Worker uses `@cloudflare/puppeteer` with the Browser Rendering binding. It reuses a session from `puppeteer.sessions` when `Target.getBrowserContexts` is under the cap, and closes a one-off browser otherwise.",
+      "The live Worker uses `@cloudflare/puppeteer` with the Browser Rendering binding. It connects to the newest session under the context cap, and otherwise launches a browser and disconnects it.",
       "",
       `- Desktop screenshot width: ${LIMITS.desktopWidth}px`,
       `- Phone screenshot width: ${LIMITS.phoneWidth}px`,

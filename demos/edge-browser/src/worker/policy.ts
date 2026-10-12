@@ -1,20 +1,14 @@
 import { LIMITS } from "../shared/limits";
-import { parseIPv4, parseIPv6, dottedIPv4, authorizeNavigation, type Decision, type Lookup, isBlockedIp } from "./ssrf";
+import { addressBlocked, assessUrl, dottedIPv4, isBlockedIp, parseIPv4, parseIPv6, type Decision, type Lookup } from "./ssrf";
 
-/** What to do with Browser Rendering after sessions() and, when connected, Target.getBrowserContexts. */
-export type ReusePlan = "connect" | "launch-warm" | "launch-one-off";
+/** Newest startTime first. Empty ids are dropped. */
+export function rankSessions<T extends { sessionId: string; startTime: number }>(listed: T[]): T[] {
+  return listed.filter((session) => session.sessionId.length > 0).sort((a, b) => b.startTime - a.startTime);
+}
 
-/**
- * No stored inflight counter. A listed session is reused only when its context
- * count is under the cap. A full session means a one-off browser that the caller closes.
- * A failed measurement (null) is not reused.
- */
-export function reusePlan(sessionIds: string[], contextCount: number | null, maxContexts = LIMITS.maxContexts): ReusePlan {
-  const sessionId = sessionIds.find((id) => id.length > 0);
-  if (!sessionId) return "launch-warm";
-  if (contextCount === null) return "launch-one-off";
-  if (contextCount < maxContexts) return "connect";
-  return "launch-one-off";
+/** A failed measurement (null) is not capacity. The caller tries the next session. */
+export function sessionHasCapacity(contextCount: number | null, maxContexts = LIMITS.maxContexts): boolean {
+  return contextCount !== null && contextCount < maxContexts;
 }
 
 /** Refuse a new browser when either acquisitions are exhausted or the account is already at the session cap. */
@@ -64,20 +58,41 @@ export function createGuard(): PageGuard {
   };
 }
 
-/** One DoH lookup per hostname for the life of the page. */
-export function cachedAuthorize(cache: Map<string, Promise<Decision>>, raw: string, lookup: Lookup): Promise<Decision> {
-  let host = "";
-  try {
-    host = new URL(raw).hostname.replace(/^\[|\]$/g, "").toLowerCase();
-  } catch {
-    host = "";
+/**
+ * Scheme and port are assessed on every request. Only the DNS answer is cached,
+ * and only for subresources. Main-frame hops call authorizeNavigation directly.
+ * Past maxSubresourceHosts, a new host is rejected with no lookup.
+ */
+export async function authorizeSubresource(raw: string, cache: Map<string, Promise<string[]>>, lookup: Lookup, maxHosts = LIMITS.maxSubresourceHosts): Promise<Decision> {
+  const assessed = assessUrl(raw);
+  if (!assessed.ok) return assessed;
+  const host = new URL(assessed.url).hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "").toLowerCase();
+  if (addressBlocked(host) !== null) return assessed;
+  if (!cache.has(host) && cache.size >= maxHosts) {
+    return { ok: false, code: "ssrf", message: "The page asked for too many hosts." };
   }
-  const key = host || raw;
-  const existing = cache.get(key);
-  if (existing) return existing;
-  const pending = authorizeNavigation(raw, lookup);
-  cache.set(key, pending);
-  return pending;
+  let pending = cache.get(host);
+  if (!pending) {
+    pending = lookup(host);
+    cache.set(host, pending);
+  }
+  let addresses: string[];
+  try {
+    addresses = await pending;
+  } catch {
+    return { ok: false, code: "dns", message: "The hostname could not be resolved." };
+  }
+  if (addresses.length === 0) return { ok: false, code: "dns", message: "The hostname did not resolve." };
+  for (const address of addresses) {
+    if (addressBlocked(address) !== false) return { ok: false, code: "ssrf", message: "DNS for that hostname includes a blocked address." };
+  }
+  return assessed;
+}
+
+function prefixGroups(ip: bigint, groups: number): string {
+  const parts: string[] = [];
+  for (let i = 0; i < groups; i++) parts.push(((ip >> BigInt(112 - 16 * i)) & 0xffffn).toString(16));
+  return `${parts.join(":")}::`;
 }
 
 /** IPv4 as dotted decimal, or the IPv6 /64. Mapped IPv6 uses the embedded IPv4. */
@@ -89,21 +104,39 @@ export function networkKey(ip: string): string {
   const v6 = parseIPv6(trimmed);
   if (v6 === null) return "local";
   if (v6 >> 32n === 0xffffn) return dottedIPv4(Number(v6 & 0xffffffffn));
-  const prefix = v6 & ~((1n << 64n) - 1n);
-  const groups: string[] = [];
-  for (let i = 0; i < 4; i++) groups.push(((prefix >> BigInt(112 - 16 * i)) & 0xffffn).toString(16));
-  return `${groups.join(":")}::`;
+  return prefixGroups(v6 & ~((1n << 64n) - 1n), 4);
 }
 
-export async function hashIpKey(ip: string): Promise<string> {
-  const material = new TextEncoder().encode(`edge-browser-ip-v1:${networkKey(ip)}`);
-  const digest = await crypto.subtle.digest("SHA-256", material);
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+/** IPv6 /48. IPv4 and mapped IPv4 use the whole address, which is already inside the tighter /64 cap. */
+export function network48(ip: string): string {
+  const trimmed = ip.trim();
+  if (!trimmed || trimmed === "local") return "local";
+  const v4 = parseIPv4(trimmed);
+  if (v4 !== null) return dottedIPv4(v4);
+  const v6 = parseIPv6(trimmed);
+  if (v6 === null) return "local";
+  if (v6 >> 32n === 0xffffn) return dottedIPv4(Number(v6 & 0xffffffffn));
+  return prefixGroups(v6 & ~((1n << 80n) - 1n), 3);
 }
 
-export function budgetDecision(input: { cookie: number; network: number; daily: number }): { ok: true } | { ok: false; status: 429 | 503; code: "hourly" | "daily"; message: string } {
+function hex(buffer: ArrayBuffer): string {
+  return [...new Uint8Array(buffer)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/** HMAC of the network key. The address itself is not stored. */
+export async function hashIpKey(ip: string, secret: string, scope: "64" | "48" = "64"): Promise<string> {
+  if (!secret) throw new Error("IP_HASH_SECRET is not set.");
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const label = scope === "48" ? network48(ip) : networkKey(ip);
+  const prefix = scope === "48" ? "edge-browser-ip48-v1" : "edge-browser-ip-v1";
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${prefix}:${label}`));
+  return hex(sig);
+}
+
+export function budgetDecision(input: { cookie: number; network: number; network48: number; daily: number }): { ok: true } | { ok: false; status: 429 | 503; code: "hourly" | "daily"; message: string } {
   if (input.daily >= LIMITS.dailyCap) return { ok: false, status: 503, code: "daily", message: "daily budget used up" };
   if (input.cookie >= LIMITS.capturesPerHour) return { ok: false, status: 429, code: "hourly", message: "This browser has used its 6 captures for this hour." };
   if (input.network >= LIMITS.capturesPerHour) return { ok: false, status: 429, code: "hourly", message: "This network has used its 6 captures for this hour." };
+  if (input.network48 >= LIMITS.network48PerHour) return { ok: false, status: 429, code: "hourly", message: "This network has used its 20 captures for this hour." };
   return { ok: true };
 }

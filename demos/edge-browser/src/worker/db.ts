@@ -15,6 +15,7 @@ export type CaptureRow = {
   session_note: string;
   summary_source: SummarySource;
   ip_key: string;
+  ip48_key: string;
   has_desktop: number;
   has_phone: number;
   has_pdf: number;
@@ -24,7 +25,7 @@ export type CaptureRow = {
   expires_at: number;
 };
 
-const COLUMNS = `id, visitor_id, url, final_url, title, status, steps_json, error, browser_mode, session_id, session_note, summary_source, ip_key, has_desktop, has_phone, has_pdf, has_markdown, created_at, updated_at, expires_at`;
+const COLUMNS = `id, visitor_id, url, final_url, title, status, steps_json, error, browser_mode, session_id, session_note, summary_source, ip_key, ip48_key, has_desktop, has_phone, has_pdf, has_markdown, created_at, updated_at, expires_at`;
 
 export function freshSteps(): CaptureStep[] {
   return STEP_NAMES.map((name) => ({ name, status: "pending", at: null }));
@@ -53,17 +54,49 @@ export async function countRecentIp(env: Env, ipKey: string, since: number): Pro
   return countWhere(env, `SELECT COUNT(*) AS n FROM captures WHERE ip_key = ? AND created_at >= ?`, ipKey, since);
 }
 
+export async function countRecentIp48(env: Env, ip48Key: string, since: number): Promise<number> {
+  return countWhere(env, `SELECT COUNT(*) AS n FROM captures WHERE ip48_key = ? AND created_at >= ?`, ip48Key, since);
+}
+
 export async function countSince(env: Env, since: number): Promise<number> {
   return countWhere(env, `SELECT COUNT(*) AS n FROM captures WHERE created_at >= ?`, since);
 }
 
-export async function insertCapture(env: Env, row: { id: string; visitorId: string; ipKey: string; url: string; now: number }): Promise<void> {
-  await env.DB.prepare(
-    `INSERT INTO captures (id, visitor_id, ip_key, url, status, steps_json, created_at, updated_at, expires_at)
-     VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
+export async function insertCapture(env: Env, row: { id: string; visitorId: string; ipKey: string; ip48Key: string; url: string; now: number }): Promise<boolean> {
+  const sinceHour = row.now - 60 * 60 * 1000;
+  const sinceDay = row.now - LIMITS.retentionMs;
+  const result = await env.DB.prepare(
+    `INSERT INTO captures (id, visitor_id, ip_key, ip48_key, url, status, steps_json, created_at, updated_at, expires_at)
+     SELECT ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?
+     WHERE (SELECT COUNT(*) FROM captures WHERE visitor_id = ? AND created_at >= ?) < ?
+       AND (SELECT COUNT(*) FROM captures WHERE ip_key = ? AND created_at >= ?) < ?
+       AND (SELECT COUNT(*) FROM captures WHERE ip48_key = ? AND created_at >= ?) < ?
+       AND (SELECT COUNT(*) FROM captures WHERE created_at >= ?) < ?`,
   )
-    .bind(row.id, row.visitorId, row.ipKey, row.url, JSON.stringify(freshSteps()), row.now, row.now, row.now + LIMITS.retentionMs)
+    .bind(
+      row.id,
+      row.visitorId,
+      row.ipKey,
+      row.ip48Key,
+      row.url,
+      JSON.stringify(freshSteps()),
+      row.now,
+      row.now,
+      row.now + LIMITS.retentionMs,
+      row.visitorId,
+      sinceHour,
+      LIMITS.capturesPerHour,
+      row.ipKey,
+      sinceHour,
+      LIMITS.capturesPerHour,
+      row.ip48Key,
+      sinceHour,
+      LIMITS.network48PerHour,
+      sinceDay,
+      LIMITS.dailyCap,
+    )
     .run();
+  return (result.meta?.changes ?? 0) > 0;
 }
 
 export async function getCapture(env: Env, id: string): Promise<CaptureRow | null> {

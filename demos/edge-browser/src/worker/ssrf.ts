@@ -163,11 +163,11 @@ function internalHostname(host: string): boolean {
   if (!name || BLOCKED_HOSTS.has(name)) return true;
   if (name.endsWith(".localhost") || name.endsWith(".local") || name.endsWith(".localdomain")) return true;
   if (name.endsWith(".internal") || name.endsWith(".cluster.local")) return true;
+  // .arpa covers in-addr.arpa, ip6.arpa, and home.arpa.
   if (name === "arpa" || name.endsWith(".arpa")) return true;
   if (name === "lan" || name.endsWith(".lan")) return true;
   if (name === "intranet" || name.endsWith(".intranet")) return true;
   if (name === "corp" || name.endsWith(".corp")) return true;
-  if (name === "home.arpa" || name.endsWith(".home.arpa")) return true;
   if (!name.includes(".")) return true;
   return false;
 }
@@ -235,14 +235,18 @@ export async function authorizeChain(urls: string[], lookup: Lookup): Promise<De
 type DohResponse = { Answer?: { type?: number; data?: string }[] };
 
 export async function cloudflareDoh(hostname: string): Promise<string[]> {
+  const responses = await Promise.all(
+    (["A", "AAAA"] as const).map(async (type) => {
+      const response = await fetch(`https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(hostname)}&type=${type}`, {
+        headers: { accept: "application/dns-json" },
+        signal: AbortSignal.timeout(4_000),
+      });
+      if (!response.ok) throw new Error(`DoH ${type} returned ${response.status}`);
+      return (await response.json()) as DohResponse;
+    }),
+  );
   const addresses: string[] = [];
-  for (const type of ["A", "AAAA"] as const) {
-    const response = await fetch(`https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(hostname)}&type=${type}`, {
-      headers: { accept: "application/dns-json" },
-      signal: AbortSignal.timeout(4_000),
-    });
-    if (!response.ok) throw new Error(`DoH ${type} returned ${response.status}`);
-    const data = (await response.json()) as DohResponse;
+  for (const data of responses) {
     for (const answer of data.Answer ?? []) {
       if ((answer.type === 1 || answer.type === 28) && answer.data) addresses.push(answer.data);
     }

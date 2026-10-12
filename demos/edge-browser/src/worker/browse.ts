@@ -1,9 +1,8 @@
-import { connect, launch, limits, sessions, type Browser, type Page, type Target } from "@cloudflare/puppeteer";
+import { connect, launch, limits, sessions, type ActiveSession, type Browser, type BrowserContext, type BrowserContextOptions, type BrowserWorker, type Page } from "@cloudflare/puppeteer";
 import { LIMITS } from "../shared/limits";
 import { objectKey } from "./db";
 import { PermanentError } from "./errors";
-import { acquisitionsAllowed, cachedAuthorize, createGuard, reusePlan, sessionPrefix, type PageGuard } from "./policy";
-import { browserEndpoint } from "./session";
+import { acquisitionsAllowed, authorizeSubresource, createGuard, rankSessions, sessionHasCapacity, sessionPrefix, type PageGuard } from "./policy";
 import { authorizeNavigation, cloudflareDoh } from "./ssrf";
 
 const DESKTOP_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
@@ -11,7 +10,7 @@ const PHONE_UA = "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (K
 
 const NEUTER = `(() => {
   const block = function Blocked() { throw new Error("Blocked in this capture."); };
-  for (const name of ["WebSocket", "WebTransport", "RTCPeerConnection", "SharedWorker"]) {
+  for (const name of ["WebSocket", "WebTransport", "RTCPeerConnection", "SharedWorker", "Worker"]) {
     try { window[name] = block; } catch (err) { /* The page hid the constructor. */ }
   }
   try { window.open = function open() { return null; }; } catch (err) { /* ignore */ }
@@ -26,10 +25,34 @@ export type PageProfile = "desktop" | "phone";
 
 type Artifact = { body: Uint8Array | string; contentType: string; filename: "desktop.png" | "desktop.jpg" | "phone.png" | "phone.jpg" | "page.pdf" | "page.md" };
 
-type Opened = { finalUrl: string; title: string; guard: PageGuard; seal: () => Promise<void> };
+type Opened = { finalUrl: string; title: string; guard: PageGuard };
+
+type PopupTarget = { type: () => string; page: () => Promise<{ close: () => Promise<void> } | null> };
+
+export function browserEndpoint(binding: Env["BROWSER"] | undefined): BrowserWorker | null {
+  if (!binding || typeof binding.fetch !== "function") return null;
+  return { fetch: binding.fetch.bind(binding) };
+}
 
 function cleanTitle(value: string): string {
   return value.replace(/[\u0000-\u001f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 180);
+}
+
+/**
+ * newPage() emits targetcreated before it resolves, and a browser-level listener
+ * sees every context. Attach only after newPage, on this context, and skip our page.
+ */
+export async function openContextPage<T extends PopupTarget, P extends { target: () => T }>(context: {
+  on: (event: "targetcreated", handler: (target: T) => void) => void;
+  newPage: () => Promise<P>;
+}): Promise<P> {
+  const page = await context.newPage();
+  const mine = page.target();
+  context.on("targetcreated", (target) => {
+    if (target === mine || target.type() !== "page") return;
+    void target.page().then((popup) => popup?.close()).catch(() => undefined);
+  });
+  return page;
 }
 
 async function contextCount(browser: Browser): Promise<number | null> {
@@ -47,13 +70,13 @@ async function contextCount(browser: Browser): Promise<number | null> {
   }
 }
 
-async function refuseIfCapped(binding: NonNullable<ReturnType<typeof browserEndpoint>>): Promise<void> {
+async function refuseIfCapped(binding: BrowserWorker): Promise<void> {
   let account;
   try {
     account = await limits(binding);
   } catch (err) {
     console.error(JSON.stringify({ event: "browser_limits_failed", error: String(err).slice(0, 200) }));
-    throw new PermanentError("Browser Rendering is at its concurrency cap. Try again in a minute.");
+    throw new Error("Browser Rendering limits could not be read. Try again in a minute.");
   }
   const allowed = acquisitionsAllowed({
     allowedBrowserAcquisitions: account.allowedBrowserAcquisitions,
@@ -63,25 +86,43 @@ async function refuseIfCapped(binding: NonNullable<ReturnType<typeof browserEndp
   if (!allowed) throw new PermanentError("Browser Rendering is at its concurrency cap. Try again in a minute.");
 }
 
-function watchPopups(browser: Browser, allowed: Set<Target>): void {
-  browser.on("targetcreated", (target) => {
-    if (target.type() !== "page") return;
-    setTimeout(() => {
-      if (allowed.has(target)) return;
-      void target.page().then((popup) => popup?.close().catch(() => undefined));
-    }, 0);
-  });
+async function createCaptureContext(browser: Browser): Promise<BrowserContext> {
+  // disposeOnDetach drops the context if this worker disconnects before context.close().
+  // @cloudflare/puppeteer 1.4.0 only forwards proxyServer and proxyBypassList, so the
+  // flag is passed only when this build's createBrowserContext mentions it.
+  // The finally block still closes the context before disconnect().
+  if (browser.createBrowserContext.toString().includes("disposeOnDetach")) {
+    return browser.createBrowserContext({ disposeOnDetach: true } as BrowserContextOptions);
+  }
+  return browser.createBrowserContext();
 }
 
 async function arm(page: Page): Promise<{ guard: PageGuard; seal: () => Promise<void> }> {
   const guard = createGuard();
-  const cache = new Map<string, ReturnType<typeof cachedAuthorize>>();
+  const cache = new Map<string, Promise<string[]>>();
   let hops = 0;
   let sealed = false;
   await page.setBypassServiceWorker(true);
   await page.evaluateOnNewDocument(NEUTER);
   page.on("dialog", (dialog) => {
     void dialog.dismiss();
+  });
+  page.on("workercreated", (worker) => {
+    void (async () => {
+      try {
+        const client = worker.client;
+        await client.send("Network.enable");
+        await client.send("Network.emulateNetworkConditions", {
+          offline: true,
+          latency: 0,
+          downloadThroughput: -1,
+          uploadThroughput: -1,
+        });
+      } catch (err) {
+        console.error(JSON.stringify({ event: "worker_isolate_failed", error: String(err).slice(0, 200) }));
+        guard.blockMain("A page worker could not be isolated.");
+      }
+    })();
   });
   page.on("response", (response) => {
     let ip = "";
@@ -95,9 +136,16 @@ async function arm(page: Page): Promise<{ guard: PageGuard; seal: () => Promise<
   await page.setRequestInterception(true);
   page.on("request", (request) => {
     void (async () => {
+      const abort = async () => {
+        try {
+          await request.abort("blockedbyclient");
+        } catch {
+          /* The request already settled. */
+        }
+      };
       try {
         if (sealed) {
-          await request.abort("blockedbyclient");
+          await abort();
           return;
         }
         const target = request.url();
@@ -109,41 +157,35 @@ async function arm(page: Page): Promise<{ guard: PageGuard; seal: () => Promise<
         if (request.isNavigationRequest() && request.resourceType() !== "document") {
           if (main) guard.blockMain("Blocked a navigation that was not a document.");
           else guard.abortSubresource();
-          await request.abort("blockedbyclient");
+          await abort();
           return;
         }
-        if (main) {
-          hops += 1;
-          if (hops > LIMITS.maxRedirectHops + 1) {
-            guard.blockMain("The page redirected too many times.");
-            await request.abort("blockedbyclient");
-            return;
-          }
-          const decision = await cachedAuthorize(cache, target, cloudflareDoh);
-          if (!decision.ok) {
-            guard.blockMain(decision.message);
-            await request.abort("blockedbyclient");
-            return;
-          }
-          await request.continue();
+        const decision = main
+          ? await (async () => {
+              hops += 1;
+              if (hops > LIMITS.maxRedirectHops + 1) {
+                guard.blockMain("The page redirected too many times.");
+                return null;
+              }
+              return authorizeNavigation(target, cloudflareDoh);
+            })()
+          : await authorizeSubresource(target, cache, cloudflareDoh);
+        if (sealed) {
+          await abort();
           return;
         }
-        const decision = await cachedAuthorize(cache, target, cloudflareDoh);
-        if (!decision.ok) {
-          guard.abortSubresource();
-          await request.abort("blockedbyclient");
+        if (!decision || !decision.ok) {
+          if (main && decision) guard.blockMain(decision.message);
+          else if (!main) guard.abortSubresource();
+          await abort();
           return;
         }
         await request.continue();
       } catch {
         const main = request.isNavigationRequest() && request.frame() === page.mainFrame();
-        if (main) guard.blockMain(guard.failure() ?? "The request was blocked.");
+        if (main) guard.blockMain("The request was blocked.");
         else guard.abortSubresource();
-        try {
-          await request.abort("blockedbyclient");
-        } catch {
-          /* The request already settled. */
-        }
+        await abort();
       }
     })();
   });
@@ -156,14 +198,17 @@ async function arm(page: Page): Promise<{ guard: PageGuard; seal: () => Promise<
   };
 }
 
+function blockedError(guard: PageGuard): PermanentError | null {
+  const message = guard.failure();
+  return message ? new PermanentError(message) : null;
+}
+
 async function openPage(page: Page, url: string, profile: PageProfile): Promise<Opened> {
-  if (profile === "phone") {
-    await page.setViewport({ width: LIMITS.phoneWidth, height: LIMITS.phoneHeight, deviceScaleFactor: 1, isMobile: true, hasTouch: true });
-    await page.setUserAgent(PHONE_UA);
-  } else {
-    await page.setViewport({ width: LIMITS.desktopWidth, height: LIMITS.desktopHeight, deviceScaleFactor: 1 });
-    await page.setUserAgent(DESKTOP_UA);
-  }
+  const phone = profile === "phone";
+  const width = phone ? LIMITS.phoneWidth : LIMITS.desktopWidth;
+  const fallback = phone ? LIMITS.phoneHeight : LIMITS.desktopHeight;
+  await page.setViewport({ width, height: fallback, deviceScaleFactor: 1, isMobile: phone, hasTouch: phone });
+  await page.setUserAgent(phone ? PHONE_UA : DESKTOP_UA);
   page.setDefaultNavigationTimeout(LIMITS.navigationTimeoutMs);
   page.setDefaultTimeout(LIMITS.navigationTimeoutMs);
   const armed = await arm(page);
@@ -172,10 +217,12 @@ async function openPage(page: Page, url: string, profile: PageProfile): Promise<
   try {
     response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: LIMITS.navigationTimeoutMs });
   } catch (err) {
-    if (armed.guard.failure()) throw new PermanentError(armed.guard.failure() ?? "The page was blocked.");
+    const blocked = blockedError(armed.guard);
+    if (blocked) throw blocked;
     throw err;
   }
-  if (armed.guard.failure()) throw new PermanentError(armed.guard.failure() ?? "The page was blocked.");
+  const early = blockedError(armed.guard);
+  if (early) throw early;
   if (!response) throw new PermanentError("The page did not respond.");
 
   const headers = response.headers();
@@ -188,14 +235,29 @@ async function openPage(page: Page, url: string, profile: PageProfile): Promise<
 
   const finalDecision = await authorizeNavigation(page.url(), cloudflareDoh);
   if (!finalDecision.ok) throw new PermanentError(finalDecision.message);
-  await page.waitForNetworkIdle({ idleTime: 400, timeout: 3_000 }).catch(() => undefined);
-  if (armed.guard.failure()) throw new PermanentError(armed.guard.failure() ?? "The page was blocked.");
+  await page.waitForNetworkIdle({ idleTime: 400, timeout: LIMITS.networkIdleMs }).catch(() => undefined);
+  const afterIdle = blockedError(armed.guard);
+  if (afterIdle) throw afterIdle;
+
+  const height = await shotHeight(page, fallback);
+  await page.setViewport({ width, height, deviceScaleFactor: 1, isMobile: phone, hasTouch: phone });
+  await page.evaluate(async (total: number) => {
+    const step = Math.max(200, window.innerHeight || 800);
+    for (let y = 0; y < total; y += step) {
+      window.scrollTo(0, y);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    }
+    window.scrollTo(0, 0);
+  }, height);
+  await page.waitForNetworkIdle({ idleTime: 400, timeout: LIMITS.networkIdleMs }).catch(() => undefined);
+  const afterSettle = blockedError(armed.guard);
+  if (afterSettle) throw afterSettle;
   await armed.seal();
 
   const htmlChars = await page.evaluate(() => (document.documentElement ? document.documentElement.outerHTML.length : 0));
-  if (htmlChars > LIMITS.maxHtmlBytes) throw new PermanentError("The page is too large.");
+  if (htmlChars > LIMITS.maxHtmlChars) throw new PermanentError("The page is too large.");
   const title = cleanTitle(await page.title());
-  return { finalUrl: finalDecision.url, title, guard: armed.guard, seal: armed.seal };
+  return { finalUrl: finalDecision.url, title, guard: armed.guard };
 }
 
 async function shotHeight(page: Page, fallback: number): Promise<number> {
@@ -273,64 +335,63 @@ async function produce(page: Page, profile: PageProfile): Promise<Artifact[]> {
   ];
 }
 
+async function connectWithCapacity(binding: BrowserWorker, listed: ActiveSession[]): Promise<{ browser: Browser; sessionId: string } | { browser: null; full: boolean }> {
+  let full = false;
+  for (const session of rankSessions(listed)) {
+    let candidate: Browser | null = null;
+    try {
+      candidate = await connect(binding, session.sessionId);
+      const count = await contextCount(candidate);
+      if (sessionHasCapacity(count)) {
+        return { browser: candidate, sessionId: candidate.sessionId() };
+      }
+      full = true;
+      await candidate.disconnect().catch(() => undefined);
+    } catch (err) {
+      console.error(JSON.stringify({ event: "browser_connect_failed", error: String(err).slice(0, 200) }));
+      if (candidate) await candidate.disconnect().catch(() => undefined);
+    }
+  }
+  return { browser: null, full };
+}
+
 export async function capturePage(env: Env, captureId: string, url: string, profile: PageProfile): Promise<{ mode: "connect" | "launch"; sessionId: string; note: string; finalUrl: string; title: string }> {
   const binding = browserEndpoint(env.BROWSER);
   if (!binding) throw new PermanentError("Browser Rendering is not bound to this Worker.");
 
   let browser: Browser | null = null;
-  let dispose: "disconnect" | "close" = "disconnect";
   let mode: "connect" | "launch" = "launch";
   let sessionId = "";
   let note = "Launched a fresh browser with keep_alive of 5 minutes.";
 
   try {
-    let active: { sessionId: string }[] = [];
+    let active: ActiveSession[] = [];
     try {
       active = await sessions(binding);
     } catch (err) {
       console.error(JSON.stringify({ event: "browser_sessions_failed", error: String(err).slice(0, 200) }));
       active = [];
     }
-    const first = active.find((session) => session.sessionId)?.sessionId ?? "";
-    let oneOff = false;
-    if (first) {
-      try {
-        browser = await connect(binding, first);
-        const count = await contextCount(browser);
-        if (reusePlan([first], count) === "connect") {
-          mode = "connect";
-          dispose = "disconnect";
-          sessionId = browser.sessionId();
-          note = `Reused warm session ${sessionPrefix(sessionId)}. keep_alive is 5 minutes.`;
-        } else {
-          await browser.disconnect().catch(() => undefined);
-          browser = null;
-          oneOff = true;
-        }
-      } catch (err) {
-        console.error(JSON.stringify({ event: "browser_connect_failed", error: String(err).slice(0, 200) }));
-        if (browser) await browser.disconnect().catch(() => undefined);
-        browser = null;
-      }
-    }
-
-    if (!browser) {
+    const picked = await connectWithCapacity(binding, active);
+    if (picked.browser) {
+      browser = picked.browser;
+      mode = "connect";
+      sessionId = picked.sessionId;
+      note = `Reused warm session ${sessionPrefix(sessionId)}. keep_alive is 5 minutes.`;
+    } else {
       await refuseIfCapped(binding);
-      dispose = oneOff ? "close" : "disconnect";
-      browser = await launch(binding, oneOff ? {} : { keep_alive: LIMITS.keepAliveMs });
+      const overflow = picked.full;
+      browser = await launch(binding, { keep_alive: overflow ? LIMITS.overflowKeepAliveMs : LIMITS.keepAliveMs });
       mode = "launch";
       sessionId = browser.sessionId();
-      note = oneOff
-        ? "The warm session is at its context limit, so this step launched a browser and closed it."
+      note = overflow
+        ? "Every warm session is at its context limit, so this step launched a browser with keep_alive of 10 seconds."
         : "Launched a fresh browser with keep_alive of 5 minutes.";
     }
 
-    const allowed = new Set<Target>();
-    watchPopups(browser, allowed);
-    const context = await browser.createBrowserContext();
+    const context = await createCaptureContext(browser);
     try {
-      const page = await context.newPage();
-      allowed.add(page.target());
+      const page = await openContextPage(context);
       const opened = await openPage(page, url, profile);
       const artifacts = await produce(page, profile);
       const blocked = opened.guard.failure();
@@ -347,8 +408,7 @@ export async function capturePage(env: Env, captureId: string, url: string, prof
   } finally {
     if (browser) {
       try {
-        if (dispose === "close") await browser.close();
-        else await browser.disconnect();
+        await browser.disconnect();
       } catch (err) {
         console.error(JSON.stringify({ event: "browser_release_failed", error: String(err).slice(0, 200) }));
       }

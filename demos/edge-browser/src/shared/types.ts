@@ -49,6 +49,7 @@ export type SessionPayload = {
   capturesPerHour: number;
   capturesUsed: number;
   networkUsed: number;
+  network48Cap: number;
   dailyCap: number;
   retentionHours: number;
 };

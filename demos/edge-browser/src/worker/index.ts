@@ -1,6 +1,5 @@
 import { cleanupExpired, handleApi, HttpError } from "./api";
 
-export { BrowserSession } from "./session";
 export { CaptureWorkflow } from "./workflow";
 
 /** The hub serves this demo under a path. The subdomain serves it at the root. */
