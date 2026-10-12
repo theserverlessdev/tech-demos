@@ -48,11 +48,12 @@ export type SessionPayload = {
   siteKey: string | null;
   capturesPerHour: number;
   capturesUsed: number;
+  networkUsed: number;
+  dailyCap: number;
   retentionHours: number;
 };
 
 export type CaptureParams = {
   captureId: string;
-  url: string;
   visitorId: string;
 };

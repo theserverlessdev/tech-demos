@@ -24,6 +24,8 @@
     {
       "binding": "BUCKET",
       "bucket_name": "tech-demos-edge-browser"
+      // Lifecycle is not a wrangler.jsonc field. After the bucket exists, add a
+      // dashboard rule: prefix captures/, delete objects after 2 days. See README.
     }
   ],
   "durable_objects": {
@@ -57,7 +59,7 @@
     { "pattern": "tech-demos.theserverless.dev/demos/edge-browser*", "zone_name": "theserverless.dev" },
     { "pattern": "edge-browser.tech-demos.theserverless.dev/*", "zone_name": "theserverless.dev" }
   ],
-  "workers_dev": true,
+  "workers_dev": false,
   "observability": {
     "enabled": true,
     "logs": { "enabled": true, "head_sampling_rate": 1 },

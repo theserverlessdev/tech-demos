@@ -126,6 +126,8 @@ export function ipv6Blocked(ip: bigint): boolean {
   if (ip >> 32n === 0n) return true;
   // IPv4-mapped ::ffff:0:0/96. The whole prefix is blocked; it is an alternate spelling of an IPv4 address.
   if (ip >> 32n === 0xffffn) return true;
+  // SIIT IPv4-translated ::ffff:0:0:0/96. The whole prefix is blocked.
+  if (ip >> 32n === 0xffff0000n) return true;
   // NAT64 well-known prefix 64:ff9b::/96. The low 32 bits are the real target.
   if (ip >> 32n === 0x64ff9b0000000000000000n) return ipv4Blocked(Number(ip & 0xffffffffn));
   // Local-use NAT64 64:ff9b:1::/48.
@@ -161,6 +163,11 @@ function internalHostname(host: string): boolean {
   if (!name || BLOCKED_HOSTS.has(name)) return true;
   if (name.endsWith(".localhost") || name.endsWith(".local") || name.endsWith(".localdomain")) return true;
   if (name.endsWith(".internal") || name.endsWith(".cluster.local")) return true;
+  if (name === "arpa" || name.endsWith(".arpa")) return true;
+  if (name === "lan" || name.endsWith(".lan")) return true;
+  if (name === "intranet" || name.endsWith(".intranet")) return true;
+  if (name === "corp" || name.endsWith(".corp")) return true;
+  if (name === "home.arpa" || name.endsWith(".home.arpa")) return true;
   if (!name.includes(".")) return true;
   return false;
 }

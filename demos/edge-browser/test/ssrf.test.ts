@@ -28,6 +28,9 @@ describe("address forms", () => {
     expect(addressBlocked("::1")).toBe(true);
     expect(addressBlocked("::")).toBe(true);
     expect(addressBlocked("::ffff:127.0.0.1")).toBe(true);
+    expect(addressBlocked("::ffff:0:127.0.0.1")).toBe(true);
+    expect(addressBlocked("::ffff:0:7f00:1")).toBe(true);
+    expect(addressBlocked("::ffff:0:8.8.8.8")).toBe(true);
     expect(addressBlocked("::ffff:7f00:1")).toBe(true);
     expect(addressBlocked("[::ffff:127.0.0.1]")).toBe(true);
     expect(addressBlocked("::7f00:1")).toBe(true);
@@ -69,6 +72,13 @@ describe("assessUrl", () => {
     expect(assessUrl("http://2130706433/").ok).toBe(false);
     expect(assessUrl("http://0x7f000001/").ok).toBe(false);
     expect(assessUrl("http://[::ffff:7f00:1]/").ok).toBe(false);
+    expect(assessUrl("http://[::ffff:0:127.0.0.1]/").ok).toBe(false);
+    expect(assessUrl("http://[::ffff:0:8.8.8.8]/").ok).toBe(false);
+    expect(assessUrl("http://nas.home.arpa/").ok).toBe(false);
+    expect(assessUrl("http://printer.lan/").ok).toBe(false);
+    expect(assessUrl("http://files.intranet/").ok).toBe(false);
+    expect(assessUrl("http://dc.corp/").ok).toBe(false);
+    expect(assessUrl("http://1.2.3.4.in-addr.arpa/").ok).toBe(false);
   });
 
   test("accepts a public https URL without resolving it", () => {

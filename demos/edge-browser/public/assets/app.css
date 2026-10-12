@@ -223,6 +223,7 @@ input[type="url"], input[type="text"] {
 .shot-frame {
   max-height: min(70dvh, 36rem);
   overflow: auto;
+  overscroll-behavior: contain;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: #0a0a0c;
@@ -271,6 +272,10 @@ textarea, select { font-size: 16px; }
   .topbar__actions { grid-column: 2; grid-row: 1; }
   .intro, .shows--bar, .strip { padding-left: max(12px, env(safe-area-inset-left)); padding-right: max(12px, env(safe-area-inset-right)); }
   .shot-frame { max-height: min(60dvh, 28rem); }
+}
+
+@media (max-width: 360px) {
+  .turnstile { min-height: 140px; }
 }
 
 @media (max-height: 500px) {

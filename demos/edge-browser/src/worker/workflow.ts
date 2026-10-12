@@ -3,34 +3,44 @@ import { NonRetryableError } from "cloudflare:workflows";
 import { simplePdf, stripedPng } from "../shared/files";
 import { LIMITS, type StepName } from "../shared/limits";
 import type { CaptureParams } from "../shared/types";
-import { captureArtifact, type ArtifactKind } from "./browse";
-import { markComplete, markError, markStep, objectKey } from "./db";
+import { capturePage, type PageProfile } from "./browse";
+import { getCapture, markComplete, markError, markStep, objectKey } from "./db";
 import { PermanentError } from "./errors";
 import { authorizeNavigation, cloudflareDoh } from "./ssrf";
 import { summarize } from "./summary";
 
-const BROWSER_STEPS: { name: StepName; kind: ArtifactKind }[] = [
-  { name: "Desktop screenshot", kind: "desktop" },
-  { name: "Phone screenshot", kind: "phone" },
-  { name: "PDF", kind: "pdf" },
-  { name: "Markdown", kind: "markdown" },
+const PAGE_STEPS: { name: StepName; profile: PageProfile }[] = [
+  { name: "Desktop, PDF, and markdown", profile: "desktop" },
+  { name: "Phone screenshot", profile: "phone" },
 ];
 
 function pool(env: Env) {
   return env.BROWSER_SESSION.get(env.BROWSER_SESSION.idFromName("pool"));
 }
 
+function short(err: unknown, fallback: string): string {
+  if (err instanceof PermanentError) return err.message.slice(0, 180);
+  return fallback;
+}
+
 export class CaptureWorkflow extends WorkflowEntrypoint<Env, CaptureParams> {
   async run(event: WorkflowEvent<CaptureParams>, step: WorkflowStep): Promise<{ status: string }> {
-    const { captureId, url, visitorId } = event.payload;
+    const { captureId, visitorId } = event.payload;
 
-    const checked = await step.do("check url", { timeout: "20 seconds", retries: { limit: 0, delay: "1 second" } }, async () => {
+    await step.do("check url", { timeout: "20 seconds", retries: { limit: 0, delay: "1 second" } }, async () => {
       await markStep(this.env, captureId, "Check the URL", "running", { captureStatus: "running" });
+      const row = await getCapture(this.env, captureId);
+      if (!row || row.visitor_id !== visitorId) {
+        const message = "The capture does not exist.";
+        await markError(this.env, captureId, "Check the URL", message);
+        throw new NonRetryableError(message);
+      }
       let decision;
       try {
-        decision = await authorizeNavigation(url, cloudflareDoh);
+        decision = await authorizeNavigation(row.url, cloudflareDoh);
       } catch (err) {
-        const message = err instanceof Error ? err.message : "The URL could not be checked.";
+        console.error(JSON.stringify({ event: "url_check_failed", error: String(err).slice(0, 200) }));
+        const message = short(err, "The URL could not be checked.");
         await markError(this.env, captureId, "Check the URL", message);
         throw new NonRetryableError(message);
       }
@@ -39,40 +49,47 @@ export class CaptureWorkflow extends WorkflowEntrypoint<Env, CaptureParams> {
         throw new NonRetryableError(decision.message);
       }
       await markStep(this.env, captureId, "Check the URL", "done", { finalUrl: decision.url });
-      return { url: decision.url };
+      return { ok: true };
     });
 
-    for (const item of BROWSER_STEPS) {
+    for (const item of PAGE_STEPS) {
       await step.do(
         item.name,
-        { timeout: "50 seconds", retries: { limit: 1, delay: "2 seconds", backoff: "constant" } },
+        { timeout: "70 seconds", retries: { limit: 1, delay: "2 seconds", backoff: "constant" } },
         async () => {
           await markStep(this.env, captureId, item.name, "running");
+          const row = await getCapture(this.env, captureId);
+          if (!row) throw new NonRetryableError("The capture does not exist.");
           const plan = await pool(this.env).acquire(visitorId);
           if (!plan.ok) {
             await markError(this.env, captureId, item.name, plan.message);
             throw new NonRetryableError(plan.message);
           }
           try {
-            const produced = plan.action === "stub"
-              ? await writeStub(this.env, captureId, checked.url, item.kind, plan.note)
-              : await captureArtifact(this.env, plan, captureId, checked.url, item.kind);
+            const produced = plan.stub
+              ? await writeStub(this.env, captureId, row.url, item.profile, "Local stand-in. Browser Rendering needs a Cloudflare login, so this capture did not launch Chrome.")
+              : await capturePage(this.env, captureId, row.url, item.profile);
             await markStep(this.env, captureId, item.name, "done", {
               finalUrl: produced.finalUrl,
               title: produced.title,
               browserMode: produced.mode,
               sessionId: produced.sessionId,
               sessionNote: produced.note,
+              hasDesktop: item.profile === "desktop",
+              hasPhone: item.profile === "phone",
+              hasPdf: item.profile === "desktop",
+              hasMarkdown: item.profile === "desktop",
             });
             return { mode: produced.mode };
           } catch (err) {
             if (err instanceof NonRetryableError) throw err;
-            const message = err instanceof Error ? err.message : "The browser step failed.";
+            const message = short(err, "The browser step failed.");
+            console.error(JSON.stringify({ event: "browser_step_failed", step: item.name, error: String(err).slice(0, 200) }));
             if (err instanceof PermanentError) {
               await markError(this.env, captureId, item.name, message);
               throw new NonRetryableError(message);
             }
-            throw err;
+            throw new Error(message);
           }
         },
       );
@@ -95,20 +112,25 @@ export class CaptureWorkflow extends WorkflowEntrypoint<Env, CaptureParams> {
   }
 }
 
-async function writeStub(env: Env, captureId: string, url: string, kind: ArtifactKind, note: string): Promise<{ mode: "stub"; sessionId: string; note: string; finalUrl: string; title: string }> {
+async function writeStub(env: Env, captureId: string, url: string, profile: PageProfile, note: string): Promise<{ mode: "stub"; sessionId: string; note: string; finalUrl: string; title: string }> {
   await new Promise((resolve) => setTimeout(resolve, 700));
-  const title = new URL(url).hostname;
-  if (kind === "desktop" || kind === "phone") {
-    const width = kind === "phone" ? 390 : 640;
-    const png = await stripedPng(width, 1400);
-    await env.BUCKET.put(objectKey(captureId, kind === "phone" ? "phone.png" : "desktop.png"), png, {
+  let title = "page";
+  try {
+    title = new URL(url).hostname;
+  } catch {
+    title = "page";
+  }
+  if (profile === "phone") {
+    await env.BUCKET.put(objectKey(captureId, "phone.png"), await stripedPng(390, 1400), {
       httpMetadata: { contentType: "image/png" },
     });
-  } else if (kind === "pdf") {
+  } else {
+    await env.BUCKET.put(objectKey(captureId, "desktop.png"), await stripedPng(640, 1400), {
+      httpMetadata: { contentType: "image/png" },
+    });
     await env.BUCKET.put(objectKey(captureId, "page.pdf"), simplePdf(`Edge browser local stand-in for ${title}`), {
       httpMetadata: { contentType: "application/pdf" },
     });
-  } else {
     const markdown = [
       `# ${title}`,
       "",
@@ -116,7 +138,7 @@ async function writeStub(env: Env, captureId: string, url: string, kind: Artifac
       "",
       `Requested: ${url}`,
       "",
-      "The live Worker uses `@cloudflare/puppeteer` with the Browser Rendering binding. A warm session is reused with `puppeteer.connect` until its limits, then `puppeteer.launch` starts another browser with `keep_alive`.",
+      "The live Worker uses `@cloudflare/puppeteer` with the Browser Rendering binding. It reuses a session from `puppeteer.sessions` when `Target.getBrowserContexts` is under the cap, and closes a one-off browser otherwise.",
       "",
       `- Desktop screenshot width: ${LIMITS.desktopWidth}px`,
       `- Phone screenshot width: ${LIMITS.phoneWidth}px`,

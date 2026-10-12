@@ -4,7 +4,8 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="color-scheme" content="dark light" />
-  <meta name="theme-color" content="#0e0e11" />
+  <meta name="theme-color" content="#0e0e11" media="(prefers-color-scheme: dark)" />
+  <meta name="theme-color" content="#faf9f6" media="(prefers-color-scheme: light)" />
   <title>Edge browser · Tech Demos</title>
   <meta name="description" content="A headless Chrome at the edge. Paste a URL and a Workflow saves screenshots, a PDF, markdown, and a short summary." />
   <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
@@ -39,7 +40,7 @@
 
   <div class="strip" role="status">
     <span class="strip__dot"></span>
-    <span id="strip-text">Captures and their R2 files are deleted 24 hours after they are created. A cron runs every 15 minutes. No account.</span>
+    <span id="strip-text">A cron deletes capture rows and their R2 files about a day after they are created. It runs every 15 minutes, so a file can remain a little longer. An R2 lifecycle rule is the backstop. No account.</span>
   </div>
 
   <section class="intro">
@@ -56,7 +57,7 @@
   <div class="layout">
     <section class="panel" aria-labelledby="capture-heading">
       <h2 id="capture-heading">Capture a page</h2>
-      <p class="muted" id="quota">6 captures per browser each hour. Public http and https only.</p>
+      <p class="muted" id="quota">6 captures per browser and per network each hour. 300 a day for the demo. Public http and https only.</p>
       <form id="capture-form">
         <label class="sr" for="url">Page URL</label>
         <input id="url" name="url" type="url" inputmode="url" autocomplete="off" required maxlength="2000" placeholder="https://example.com" />
@@ -83,7 +84,7 @@
       <ol class="steps" id="steps" aria-live="polite"></ol>
       <p class="hint" id="output-hint" role="status"></p>
       <article class="summary" id="summary" hidden>
-        <h3>Summary</h3>
+        <h3>Summary of untrusted page content</h3>
         <p id="summary-text"></p>
         <p class="meta" id="summary-source"></p>
       </article>
@@ -97,7 +98,7 @@
           <div class="shot-frame"><img id="phone" alt="Phone screenshot of the captured page" /></div>
         </figure>
       </div>
-      <p id="pdf-row" hidden><a class="btn" id="pdf" href="#" rel="noopener">Open PDF</a></p>
+      <p id="pdf-row" hidden><a class="btn" id="pdf" href="#" target="_blank" rel="noopener">Open PDF</a></p>
       <article class="md-wrap" id="markdown-wrap" hidden>
         <div class="pane__head">
           <h3>Markdown</h3>

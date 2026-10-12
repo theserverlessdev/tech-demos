@@ -65,17 +65,33 @@ function fileUrl(id: string, kind: "desktop" | "phone" | "pdf"): string {
 }
 
 function renderSteps(steps: CaptureStep[]): void {
-  stepsEl.replaceChildren();
-  for (const step of steps) {
-    const item = document.createElement("li");
-    const name = document.createElement("span");
-    name.textContent = step.name;
-    const state = document.createElement("span");
-    state.className = `state is-${step.status}`;
-    state.textContent = step.status;
-    item.append(name, state);
-    stepsEl.append(item);
+  const items = [...stepsEl.querySelectorAll("li")];
+  if (items.length !== steps.length) {
+    stepsEl.replaceChildren();
+    for (const step of steps) {
+      const item = document.createElement("li");
+      const name = document.createElement("span");
+      name.className = "name";
+      name.textContent = step.name;
+      const state = document.createElement("span");
+      state.className = `state is-${step.status}`;
+      state.textContent = step.status;
+      item.append(name, state);
+      stepsEl.append(item);
+    }
+    return;
   }
+  steps.forEach((step, index) => {
+    const item = items[index];
+    if (!item) return;
+    const name = item.querySelector(".name");
+    const state = item.querySelector(".state");
+    if (name && name.textContent !== step.name) name.textContent = step.name;
+    if (state) {
+      if (state.textContent !== step.status) state.textContent = step.status;
+      state.className = `state is-${step.status}`;
+    }
+  });
 }
 
 function renderMarkdownView(): void {
@@ -113,7 +129,9 @@ function renderCapture(view: CaptureView): void {
   if (view.summary) {
     summary.hidden = false;
     summaryText.textContent = view.summary;
-    summarySource.textContent = view.summarySource === "workers-ai" ? "Workers AI" : "Excerpt, because Workers AI did not write this one";
+    summarySource.textContent = view.summarySource === "workers-ai"
+      ? "Workers AI. This is a summary of untrusted page content."
+      : "Excerpt, because Workers AI did not write this one. This is untrusted page content.";
   } else {
     summary.hidden = true;
   }
@@ -139,31 +157,47 @@ function resetMedia(): void {
 }
 
 function renderGallery(items: CaptureListItem[], activeId: string): void {
-  gallery.replaceChildren();
   if (items.length === 0) {
+    if (gallery.querySelector("[data-empty]")) return;
+    gallery.replaceChildren();
     const empty = document.createElement("li");
+    empty.dataset.empty = "1";
     empty.className = "muted";
     empty.textContent = "No captures from this browser yet.";
     gallery.append(empty);
     return;
   }
+  gallery.querySelector("[data-empty]")?.remove();
+  const seen = new Set(items.map((item) => item.id));
+  for (const child of [...gallery.querySelectorAll<HTMLLIElement>("li[data-id]")]) {
+    if (!seen.has(child.dataset.id ?? "")) child.remove();
+  }
   for (const item of items) {
-    const li = document.createElement("li");
-    const button = document.createElement("button");
-    button.type = "button";
-    button.classList.toggle("is-active", item.id === activeId);
-    const url = document.createElement("span");
-    url.className = "item__url";
-    url.textContent = item.title || item.url;
-    const meta = document.createElement("span");
-    meta.className = "item__meta";
-    meta.textContent = `${labelStatus(item.status)} · ${new Date(item.createdAt).toLocaleString()}`;
-    button.append(url, meta);
-    button.addEventListener("click", () => {
-      void openCapture(item.id);
-    });
-    li.append(button);
-    gallery.append(li);
+    let li = gallery.querySelector<HTMLLIElement>(`li[data-id="${item.id}"]`);
+    if (!li) {
+      li = document.createElement("li");
+      li.dataset.id = item.id;
+      const button = document.createElement("button");
+      button.type = "button";
+      const url = document.createElement("span");
+      url.className = "item__url";
+      const meta = document.createElement("span");
+      meta.className = "item__meta";
+      button.append(url, meta);
+      button.addEventListener("click", () => {
+        void openCapture(item.id);
+      });
+      li.append(button);
+      gallery.append(li);
+    }
+    const button = li.querySelector("button");
+    button?.classList.toggle("is-active", item.id === activeId);
+    const url = li.querySelector(".item__url");
+    const label = item.title || item.url;
+    if (url && url.textContent !== label) url.textContent = label;
+    const metaText = `${labelStatus(item.status)} · ${new Date(item.createdAt).toLocaleString()}`;
+    const meta = li.querySelector(".item__meta");
+    if (meta && meta.textContent !== metaText) meta.textContent = metaText;
   }
 }
 
@@ -181,6 +215,7 @@ async function refreshGallery(activeId = ""): Promise<void> {
 
 async function openCapture(id: string): Promise<void> {
   const token = ++watchToken;
+  let seenStatus = "";
   resetMedia();
   showSource = false;
   sourceToggle.setAttribute("aria-pressed", "false");
@@ -195,9 +230,12 @@ async function openCapture(id: string): Promise<void> {
       return;
     }
     renderCapture(result.data);
-    await refreshGallery(id);
+    if (result.data.status !== seenStatus) {
+      seenStatus = result.data.status;
+      await refreshGallery(id);
+    }
     if (result.data.status === "complete" || result.data.status === "error") return;
-    await new Promise((resolve) => setTimeout(resolve, 1200));
+    await new Promise((resolve) => setTimeout(resolve, 3000));
   }
   hint(outputHint, "Still running. Open it again from the list in a moment.", true);
 }
@@ -208,7 +246,7 @@ function mountTurnstile(): void {
   turnstileId = widget.render(turnstileHost, {
     sitekey: siteKey,
     action: "capture",
-    size: "flexible",
+    size: window.innerWidth < 360 ? "compact" : "flexible",
     theme: document.documentElement.dataset.theme === "light" ? "light" : "dark",
     callback: (token: string) => {
       turnstileToken = token;
@@ -226,8 +264,10 @@ function mountTurnstile(): void {
 async function refreshQuota(): Promise<void> {
   const session = await call<SessionPayload>("/session");
   if (!session.data) return;
-  const left = Math.max(0, session.data.capturesPerHour - session.data.capturesUsed);
-  quota.textContent = `${left} of ${session.data.capturesPerHour} captures left this hour. Files are deleted after ${session.data.retentionHours} hours.`;
+  const perHour = session.data.capturesPerHour;
+  const browserLeft = Math.max(0, perHour - session.data.capturesUsed);
+  const networkLeft = Math.max(0, perHour - session.data.networkUsed);
+  quota.textContent = `${browserLeft} of ${perHour} left for this browser and ${networkLeft} of ${perHour} left for this network, this hour. ${session.data.dailyCap} captures a day for the demo. Files are removed about a day after they are created.`;
 }
 
 async function boot(): Promise<void> {
@@ -271,7 +311,7 @@ form.addEventListener("submit", async (event) => {
   if (widget && turnstileId) widget.reset(turnstileId);
   if (!result.data || result.data.error || !result.data.id) {
     hint(formHint, result.data?.error?.message ?? "The capture was not started.", true);
-    if (result.status === 429) await refreshQuota();
+    if (result.status === 429 || result.status === 503) await refreshQuota();
     return;
   }
   hint(formHint, "Capture started.");
@@ -286,12 +326,28 @@ sourceToggle.addEventListener("click", () => {
   renderMarkdownView();
 });
 
+function applyTheme(theme: "light" | "dark"): void {
+  document.documentElement.dataset.theme = theme;
+  const color = theme === "light" ? "#faf9f6" : "#0e0e11";
+  for (const meta of document.querySelectorAll('meta[name="theme-color"]')) {
+    if (meta.id !== "theme-color") meta.remove();
+  }
+  let meta = document.querySelector<HTMLMetaElement>("#theme-color");
+  if (!meta) {
+    meta = document.createElement("meta");
+    meta.id = "theme-color";
+    meta.name = "theme-color";
+    document.head.append(meta);
+  }
+  meta.content = color;
+}
+
 const themeButton = document.querySelector<HTMLButtonElement>("#theme")!;
 const stored = localStorage.getItem("edge-browser-theme");
-if (stored === "light" || stored === "dark") document.documentElement.dataset.theme = stored;
+if (stored === "light" || stored === "dark") applyTheme(stored);
 themeButton.addEventListener("click", () => {
   const next = document.documentElement.dataset.theme === "light" ? "dark" : "light";
-  document.documentElement.dataset.theme = next;
+  applyTheme(next);
   localStorage.setItem("edge-browser-theme", next);
 });
 

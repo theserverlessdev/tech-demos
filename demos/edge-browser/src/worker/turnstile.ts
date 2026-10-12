@@ -61,8 +61,9 @@ export async function verifyTurnstile(env: Env, request: Request, token: string)
   }
   const host = result.hostname ?? "";
   const dummyHost = TEST_SECRETS.has(secret) && (localHost(host) || host === "example.com");
-  const hostOk = dummyHost || ALLOWED_HOSTS.has(host) || host.endsWith(".workers.dev");
+  const hostOk = dummyHost || ALLOWED_HOSTS.has(host);
   if (!hostOk) return false;
-  if (!TEST_SECRETS.has(secret) && result.action && result.action !== ACTION) return false;
+  // Production must echo action=capture. The always-pass test response omits action.
+  if (result.action !== ACTION && !(TEST_SECRETS.has(secret) && !result.action)) return false;
   return true;
 }

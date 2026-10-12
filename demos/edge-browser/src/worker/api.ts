@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { LIMITS } from "../shared/limits";
 import type { CaptureListItem, CaptureView, SessionPayload } from "../shared/types";
-import { countRecent, deleteCaptureRow, getCapture, insertCapture, listCaptures, listExpiredIds, markError, objectKey, toView, type CaptureRow } from "./db";
+import { countRecent, countRecentIp, countSince, deleteCaptureRow, getCapture, insertCapture, listCaptures, listExpiredIds, markError, objectKey, toView, type CaptureRow } from "./db";
+import { budgetDecision, hashIpKey, networkKey } from "./policy";
 import { authorizeNavigation, assessUrl, cloudflareDoh } from "./ssrf";
 import { turnstileConfigured, verifyTurnstile } from "./turnstile";
 
@@ -23,9 +24,9 @@ const TurnstileSchema = z.string().trim().min(1).max(2048);
 const UrlSchema = z.string().trim().min(1).max(LIMITS.maxUrlLength);
 
 const FILES = {
-  desktop: { name: "desktop.png" as const, type: "image/png" },
-  phone: { name: "phone.png" as const, type: "image/png" },
-  pdf: { name: "page.pdf" as const, type: "application/pdf" },
+  desktop: { names: ["desktop.png", "desktop.jpg"] as const, type: "image/png" },
+  phone: { names: ["phone.png", "phone.jpg"] as const, type: "image/png" },
+  pdf: { names: ["page.pdf"] as const, type: "application/pdf" },
 };
 
 function json(data: unknown, status = 200, extra?: Headers): Response {
@@ -44,7 +45,12 @@ function readVisitor(request: Request): string | null {
   for (const part of header.split(";")) {
     const [name, ...rest] = part.trim().split("=");
     if (name === COOKIE) {
-      const value = decodeURIComponent(rest.join("="));
+      let value = "";
+      try {
+        value = decodeURIComponent(rest.join("="));
+      } catch {
+        return null;
+      }
       return VISITOR.test(value) ? value : null;
     }
   }
@@ -81,12 +87,17 @@ function assertSameOrigin(request: Request): void {
   if (origin !== new URL(request.url).origin) throw new HttpError(403, "origin", "Origin not allowed.");
 }
 
-async function limit(binding: RateLimit, request: Request, message: string): Promise<void> {
-  const { success } = await binding.limit({ key: clientIp(request) });
+async function limit(binding: RateLimit, request: Request, message: string, key = networkKey(clientIp(request))): Promise<void> {
+  const { success } = await binding.limit({ key });
   if (!success) throw new HttpError(429, "rate_limited", message);
 }
 
 async function readBody(request: Request): Promise<unknown> {
+  const declared = request.headers.get("content-length");
+  if (declared !== null) {
+    const size = Number(declared);
+    if (!Number.isFinite(size) || size < 0 || size > 8_000) throw new HttpError(413, "too_large", "The request body is too large.");
+  }
   const text = await request.text();
   if (text.length > 8_000) throw new HttpError(413, "too_large", "The request body is too large.");
   if (!text.trim()) return {};
@@ -134,15 +145,27 @@ function listItem(row: CaptureRow): CaptureListItem {
   return { id: row.id, url: row.url, title: row.title, status: row.status, createdAt: row.created_at, expiresAt: row.expires_at };
 }
 
+function owned(row: CaptureRow | null, visitorId: string): CaptureRow {
+  if (!row || row.visitor_id !== visitorId) throw new HttpError(404, "not_found", "That capture does not exist.");
+  return row;
+}
+
 async function fileResponse(env: Env, id: string, kind: keyof typeof FILES): Promise<Response> {
   const file = FILES[kind];
-  const object = await env.BUCKET.get(objectKey(id, file.name));
+  let object: R2ObjectBody | null = null;
+  for (const name of file.names) {
+    object = await env.BUCKET.get(objectKey(id, name));
+    if (object) break;
+  }
   if (!object) throw new HttpError(404, "not_found", "That file is not ready.");
   const headers = new Headers();
   headers.set("content-type", object.httpMetadata?.contentType || file.type);
   headers.set("cache-control", "private, max-age=3600");
   headers.set("x-content-type-options", "nosniff");
-  if (kind === "pdf") headers.set("content-disposition", "inline; filename=\"page.pdf\"");
+  headers.set("cross-origin-resource-policy", "same-origin");
+  headers.set("x-robots-tag", "noindex");
+  headers.set("content-security-policy", "sandbox; default-src 'none'");
+  if (kind === "pdf") headers.set("content-disposition", "attachment; filename=\"page.pdf\"");
   return new Response(object.body, { headers });
 }
 
@@ -188,11 +211,15 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
 
   if (request.method === "GET" && path === "/api/session") {
     await limit(env.READ_LIMIT, request, "Too many reads from this address. Wait a minute.");
-    const capturesUsed = await countRecent(env, visitor.id, Date.now() - 60 * 60 * 1000);
+    const since = Date.now() - 60 * 60 * 1000;
+    const ipKey = await hashIpKey(clientIp(request));
+    const [capturesUsed, networkUsed] = await Promise.all([countRecent(env, visitor.id, since), countRecentIp(env, ipKey, since)]);
     const payload: SessionPayload = {
       siteKey: publicSiteKey(env),
       capturesPerHour: LIMITS.capturesPerHour,
       capturesUsed,
+      networkUsed,
+      dailyCap: LIMITS.dailyCap,
       retentionHours: 24,
     };
     return withVisitor(request, json(payload), visitor);
@@ -209,8 +236,7 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
     await limit(env.READ_LIMIT, request, "Too many reads from this address. Wait a minute.");
     const id = fileMatch[1] ?? "";
     const kind = fileMatch[2] as keyof typeof FILES;
-    const row = await getCapture(env, id);
-    if (!row) throw new HttpError(404, "not_found", "That capture does not exist.");
+    owned(await getCapture(env, id), visitor.id);
     return withVisitor(request, await fileResponse(env, id, kind), visitor);
   }
 
@@ -218,8 +244,7 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
   if (request.method === "GET" && oneMatch) {
     await limit(env.READ_LIMIT, request, "Too many reads from this address. Wait a minute.");
     const id = oneMatch[1] ?? "";
-    const row = await getCapture(env, id);
-    if (!row) throw new HttpError(404, "not_found", "That capture does not exist.");
+    const row = owned(await getCapture(env, id), visitor.id);
     const current = await reconcile(env, row);
     const view: CaptureView = await toView(env, current);
     return withVisitor(request, json(view), visitor);
@@ -235,22 +260,26 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
     if (!urlField.success) throw new HttpError(400, "url", "Enter an http or https URL.");
     const assessed = assessUrl(urlField.data);
     if (!assessed.ok) throw new HttpError(400, assessed.code, assessed.message);
-    await limit(env.CAPTURE_LIMIT, request, "Too many captures from this address. Wait a minute.");
+    await limit(env.CAPTURE_LIMIT, request, "Too many captures from this network. Wait a minute.");
     if (!(await verifyTurnstile(env, request, token.data))) {
       throw new HttpError(403, "turnstile_failed", "Turnstile did not pass. Try the check again.");
     }
-    const used = await countRecent(env, visitor.id, Date.now() - 60 * 60 * 1000);
-    if (used >= LIMITS.capturesPerHour) {
-      throw new HttpError(429, "hourly", "This browser has used its 6 captures for this hour.");
-    }
+    const now = Date.now();
+    const ipKey = await hashIpKey(clientIp(request));
+    const [cookieUsed, networkUsed, dailyUsed] = await Promise.all([
+      countRecent(env, visitor.id, now - 60 * 60 * 1000),
+      countRecentIp(env, ipKey, now - 60 * 60 * 1000),
+      countSince(env, now - LIMITS.retentionMs),
+    ]);
+    const budget = budgetDecision({ cookie: cookieUsed, network: networkUsed, daily: dailyUsed });
+    if (!budget.ok) throw new HttpError(budget.status, budget.code, budget.message);
     const decision = await authorizeNavigation(assessed.url, cloudflareDoh);
     if (!decision.ok) throw new HttpError(400, decision.code, decision.message);
     const id = newId();
     if (!CAPTURE_ID.test(id)) throw new HttpError(500, "internal", "The server failed. Try again.");
-    const now = Date.now();
-    await insertCapture(env, { id, visitorId: visitor.id, url: decision.url, now });
+    await insertCapture(env, { id, visitorId: visitor.id, ipKey, url: decision.url, now });
     try {
-      await env.CAPTURE.create({ id, params: { captureId: id, url: decision.url, visitorId: visitor.id } });
+      await env.CAPTURE.create({ id, params: { captureId: id, visitorId: visitor.id } });
     } catch (err) {
       console.error(JSON.stringify({ event: "workflow_create_failed", error: String(err).slice(0, 300) }));
       await markError(env, id, "Check the URL", "The capture could not be started.");

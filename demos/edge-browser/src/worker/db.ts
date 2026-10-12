@@ -14,12 +14,17 @@ export type CaptureRow = {
   session_id: string;
   session_note: string;
   summary_source: SummarySource;
+  ip_key: string;
+  has_desktop: number;
+  has_phone: number;
+  has_pdf: number;
+  has_markdown: number;
   created_at: number;
   updated_at: number;
   expires_at: number;
 };
 
-const COLUMNS = `id, visitor_id, url, final_url, title, status, steps_json, error, browser_mode, session_id, session_note, summary_source, created_at, updated_at, expires_at`;
+const COLUMNS = `id, visitor_id, url, final_url, title, status, steps_json, error, browser_mode, session_id, session_note, summary_source, ip_key, has_desktop, has_phone, has_pdf, has_markdown, created_at, updated_at, expires_at`;
 
 export function freshSteps(): CaptureStep[] {
   return STEP_NAMES.map((name) => ({ name, status: "pending", at: null }));
@@ -35,17 +40,29 @@ export function parseSteps(raw: string): CaptureStep[] {
   }
 }
 
-export async function countRecent(env: Env, visitorId: string, since: number): Promise<number> {
-  const row = await env.DB.prepare(`SELECT COUNT(*) AS n FROM captures WHERE visitor_id = ? AND created_at >= ?`).bind(visitorId, since).first<{ n: number }>();
+async function countWhere(env: Env, sql: string, ...binds: (string | number)[]): Promise<number> {
+  const row = await env.DB.prepare(sql).bind(...binds).first<{ n: number }>();
   return Number(row?.n ?? 0);
 }
 
-export async function insertCapture(env: Env, row: { id: string; visitorId: string; url: string; now: number }): Promise<void> {
+export async function countRecent(env: Env, visitorId: string, since: number): Promise<number> {
+  return countWhere(env, `SELECT COUNT(*) AS n FROM captures WHERE visitor_id = ? AND created_at >= ?`, visitorId, since);
+}
+
+export async function countRecentIp(env: Env, ipKey: string, since: number): Promise<number> {
+  return countWhere(env, `SELECT COUNT(*) AS n FROM captures WHERE ip_key = ? AND created_at >= ?`, ipKey, since);
+}
+
+export async function countSince(env: Env, since: number): Promise<number> {
+  return countWhere(env, `SELECT COUNT(*) AS n FROM captures WHERE created_at >= ?`, since);
+}
+
+export async function insertCapture(env: Env, row: { id: string; visitorId: string; ipKey: string; url: string; now: number }): Promise<void> {
   await env.DB.prepare(
-    `INSERT INTO captures (id, visitor_id, url, status, steps_json, created_at, updated_at, expires_at)
-     VALUES (?, ?, ?, 'queued', ?, ?, ?, ?)`,
+    `INSERT INTO captures (id, visitor_id, ip_key, url, status, steps_json, created_at, updated_at, expires_at)
+     VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
   )
-    .bind(row.id, row.visitorId, row.url, JSON.stringify(freshSteps()), row.now, row.now, row.now + LIMITS.retentionMs)
+    .bind(row.id, row.visitorId, row.ipKey, row.url, JSON.stringify(freshSteps()), row.now, row.now, row.now + LIMITS.retentionMs)
     .run();
 }
 
@@ -58,8 +75,24 @@ export async function listCaptures(env: Env, visitorId: string): Promise<Capture
   return result.results ?? [];
 }
 
-async function writeSteps(env: Env, id: string, steps: CaptureStep[], extra: { status?: CaptureStatus; error?: string | null; finalUrl?: string; title?: string; browserMode?: BrowserMode; sessionId?: string; sessionNote?: string; summarySource?: SummarySource }): Promise<void> {
+type StepExtra = {
+  status?: CaptureStatus;
+  error?: string | null;
+  finalUrl?: string;
+  title?: string;
+  browserMode?: BrowserMode;
+  sessionId?: string;
+  sessionNote?: string;
+  summarySource?: SummarySource;
+  hasDesktop?: boolean;
+  hasPhone?: boolean;
+  hasPdf?: boolean;
+  hasMarkdown?: boolean;
+};
+
+async function writeSteps(env: Env, id: string, steps: CaptureStep[], extra: StepExtra): Promise<void> {
   const now = Date.now();
+  const sessionId = extra.sessionId ? extra.sessionId.slice(0, 8) : "";
   await env.DB.prepare(
     `UPDATE captures
      SET steps_json = ?, updated_at = ?,
@@ -70,7 +103,11 @@ async function writeSteps(env: Env, id: string, steps: CaptureStep[], extra: { s
          browser_mode = CASE WHEN ? = '' THEN browser_mode ELSE ? END,
          session_id = CASE WHEN ? = '' THEN session_id ELSE ? END,
          session_note = CASE WHEN ? = '' THEN session_note ELSE ? END,
-         summary_source = CASE WHEN ? = '' THEN summary_source ELSE ? END
+         summary_source = CASE WHEN ? = '' THEN summary_source ELSE ? END,
+         has_desktop = CASE WHEN ? = 1 THEN 1 ELSE has_desktop END,
+         has_phone = CASE WHEN ? = 1 THEN 1 ELSE has_phone END,
+         has_pdf = CASE WHEN ? = 1 THEN 1 ELSE has_pdf END,
+         has_markdown = CASE WHEN ? = 1 THEN 1 ELSE has_markdown END
      WHERE id = ?`,
   )
     .bind(
@@ -85,18 +122,22 @@ async function writeSteps(env: Env, id: string, steps: CaptureStep[], extra: { s
       extra.title ?? "",
       extra.browserMode ?? "",
       extra.browserMode ?? "",
-      extra.sessionId ?? "",
-      extra.sessionId ?? "",
+      sessionId,
+      sessionId,
       extra.sessionNote ?? "",
       extra.sessionNote ?? "",
       extra.summarySource ?? "",
       extra.summarySource ?? "",
+      extra.hasDesktop ? 1 : 0,
+      extra.hasPhone ? 1 : 0,
+      extra.hasPdf ? 1 : 0,
+      extra.hasMarkdown ? 1 : 0,
       id,
     )
     .run();
 }
 
-export async function markStep(env: Env, id: string, name: StepName, status: CaptureStep["status"], extra: { error?: string | null; finalUrl?: string; title?: string; browserMode?: BrowserMode; sessionId?: string; sessionNote?: string; summarySource?: SummarySource; captureStatus?: CaptureStatus } = {}): Promise<void> {
+export async function markStep(env: Env, id: string, name: StepName, status: CaptureStep["status"], extra: StepExtra & { captureStatus?: CaptureStatus } = {}): Promise<void> {
   const row = await getCapture(env, id);
   if (!row) return;
   const steps = parseSteps(row.steps_json).map((step) => (step.name === name ? { ...step, status, at: Date.now() } : step));
@@ -126,7 +167,7 @@ export function prefix(id: string): string {
   return `captures/${id}/`;
 }
 
-export function objectKey(id: string, name: "desktop.png" | "phone.png" | "page.pdf" | "page.md" | "summary.txt"): string {
+export function objectKey(id: string, name: "desktop.png" | "desktop.jpg" | "phone.png" | "phone.jpg" | "page.pdf" | "page.md" | "summary.txt"): string {
   return `${prefix(id)}${name}`;
 }
 
@@ -140,14 +181,16 @@ export async function deleteCaptureRow(env: Env, id: string): Promise<void> {
 }
 
 export async function toView(env: Env, row: CaptureRow): Promise<CaptureView> {
-  const [summary, markdown, desktop, phone, pdf] = await Promise.all([
-    env.BUCKET.head(objectKey(row.id, "summary.txt")),
-    env.BUCKET.get(objectKey(row.id, "page.md")),
-    env.BUCKET.head(objectKey(row.id, "desktop.png")),
-    env.BUCKET.head(objectKey(row.id, "phone.png")),
-    env.BUCKET.head(objectKey(row.id, "page.pdf")),
-  ]);
-  const summaryObject = summary ? await env.BUCKET.get(objectKey(row.id, "summary.txt")) : null;
+  let summary: string | null = null;
+  let markdown: string | null = null;
+  if (row.status === "complete") {
+    const [summaryObject, markdownObject] = await Promise.all([
+      env.BUCKET.get(objectKey(row.id, "summary.txt")),
+      env.BUCKET.get(objectKey(row.id, "page.md")),
+    ]);
+    summary = summaryObject ? await summaryObject.text() : null;
+    markdown = markdownObject ? await markdownObject.text() : null;
+  }
   return {
     id: row.id,
     url: row.url,
@@ -157,14 +200,14 @@ export async function toView(env: Env, row: CaptureRow): Promise<CaptureView> {
     steps: parseSteps(row.steps_json),
     error: row.error,
     browserMode: row.browser_mode,
-    sessionId: row.session_id,
+    sessionId: row.session_id.slice(0, 8),
     sessionNote: row.session_note,
     summarySource: row.summary_source,
-    summary: summaryObject ? await summaryObject.text() : null,
-    markdown: markdown ? await markdown.text() : null,
-    hasDesktop: Boolean(desktop),
-    hasPhone: Boolean(phone),
-    hasPdf: Boolean(pdf),
+    summary,
+    markdown,
+    hasDesktop: row.has_desktop === 1,
+    hasPhone: row.has_phone === 1,
+    hasPdf: row.has_pdf === 1,
     createdAt: row.created_at,
     expiresAt: row.expires_at,
   };

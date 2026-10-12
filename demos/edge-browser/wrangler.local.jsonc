@@ -46,5 +46,5 @@
     "TURNSTILE_SITE_KEY": "1x00000000000000000000AA"
   },
   "secrets": { "required": ["TURNSTILE_SECRET"] },
-  "workers_dev": true
+  "workers_dev": false
 }
