@@ -85,8 +85,8 @@ console panel ──@callable RPC───────────────�
 
 - Prices: `glm-5.3-flash` costs $0.15 per M input tokens and $0.50 per M output tokens. Whisper costs $0.0005 per audio minute. MeloTTS costs $0.0002 per audio minute. `bge-small` costs $0.02 per M tokens.
 - One text turn costs about $0.0006. The `Meter` DO holds a global daily budget (`AI_DAILY_BUDGET_USD`, default `0.10`). The worst case is $3 each month.
-- Hello requires Turnstile. Each IP can spend 15% of the daily budget. Each desk is capped at 60 turns per UTC day.
-- The rate limit is 10 turns per minute per IP and 8 per desk. A voice turn has a limit of 15 s of audio.
+- Hello requires Turnstile. Each network (IPv4 or IPv6 /64) can spend 15% of the daily budget. Each desk is capped at 60 turns per UTC day.
+- The rate limit is 10 turns per minute per network and 8 per desk (`DESK_LIMIT` 7465). A voice turn has a limit of 15 s of audio.
 - Each desk keeps 200 facts or fewer and 100 list items or fewer. A timer or reminder has a limit of 24 hours.
 - The demo uses no Vectorize index, no Containers, no Browser Rendering, and no Workers for Platforms.
 

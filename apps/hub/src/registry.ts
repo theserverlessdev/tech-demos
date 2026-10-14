@@ -21,8 +21,8 @@ function standalone(slug: string, origin = standaloneOrigin(slug)): string {
 // if that route is missing, and it sends the visitor to the demo subdomain.
 const cloudflareOsFallbackSource = standalone("cloudflare-os");
 
-// apollo-desk is a standalone Worker (ASSETS, AI, Apollo, METER, TURN_LIMIT). Same pattern as
-// cloudflare-os: the zone route wins, and this source only redirects if that route is missing.
+// apollo-desk is a standalone Worker (ASSETS, AI, Apollo, METER, TURN_LIMIT, DESK_LIMIT, READ_LIMIT, Turnstile).
+// Same pattern as cloudflare-os: the zone route wins, and this source only redirects if that route is missing.
 const apolloDeskFallbackSource = standalone("apollo-desk");
 
 // temp-email is a standalone Worker (ASSETS, DB, ATTACHMENTS, CREATE_LIMIT, READ_LIMIT, Email, cron, Turnstile).
@@ -175,7 +175,7 @@ export const demos: DemoEntry[] = [
       "Hold to talk, type, or tap a suggested turn",
       "Save a fact, a list item, or a timer, then refresh and see them return",
       "Ask it to change the volume; the brain calls an MCP-style JSON-RPC tool server in the desk",
-      "Ask it to forget everything and confirm or cancel within 30 seconds",
+      "Ask it to forget everything — facts, lists, conversation, location, timers, and reminders — and confirm or cancel within 30 seconds",
       "Open the console for the SQLite transcript, vector scores, and the turn trace",
     ],
     useCases: [

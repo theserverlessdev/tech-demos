@@ -32,7 +32,7 @@ The demo runs on Workers Paid. It does not use Workers for Platforms, Containers
 **Limits**
 
 - The browser is a stand-in for the ESP32 desk. There is no physical device.
-- Workers AI spend is metered by a shared daily budget. A Turnstile check is required before any AI path. Each network can use at most 15% of the day's budget, and each desk is capped at 60 turns per UTC day. Without those caps, one visitor could use up the shared budget for everyone.
+- Workers AI spend is metered by a shared daily budget. A Turnstile check is required before any AI path. Each network (IPv4 address or IPv6 /64) can use at most 15% of the day's budget, and each desk is capped at 60 turns per UTC day. Without those caps, one visitor could use up the shared budget for everyone.
 - Vector recall is cosine similarity over embeddings stored in the Durable Object, not Vectorize.
 
 ![The desk after a turn](./artifacts/01-desk-turn.png)
@@ -123,4 +123,4 @@ The hub registry keeps a fallback Dynamic Worker. The fallback sends the visitor
 Production still needs, and this PR does not create:
 
 - Turnstile widget hostnames `tech-demos.theserverless.dev` and `apollo-desk.tech-demos.theserverless.dev`, then `TURNSTILE_SITE_KEY` and `wrangler secret put TURNSTILE_SECRET`
-- Rate-limit namespaces `7465` (`VISITOR_LIMIT`, 8/min per desk) and `7466` (`READ_LIMIT`, 60/min). `7311` (`TURN_LIMIT`) already exists
+- Rate-limit namespaces `7465` (`DESK_LIMIT`, 8/min per desk) and `7466` (`READ_LIMIT`, 60/min). `7311` (`TURN_LIMIT`) already exists

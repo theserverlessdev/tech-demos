@@ -1,4 +1,4 @@
-import { DESK_PATH, PAGE_CSP, clampDeviceLevel, formatBudgetUsd, ipSpendKey, isStaticAssetPath, MAX_DESK_TURNS_PER_DAY, MAX_REMINDER_SCHEDULES, MAX_TOOL_CALLS_PER_ROUND, utcDayKey, visitorCapUsd, VISITOR_BUDGET_SHARE } from "../src/worker/gates";
+import { DESK_PATH, PAGE_CSP, clampDeviceLevel, expandIpv6, formatBudgetUsd, ipSpendKey, isScopedGuardCode, isStaticAssetPath, MAX_DESK_TURNS_PER_DAY, MAX_HELLO_FAILS, MAX_REMINDER_SCHEDULES, MAX_TOOL_CALLS_PER_ROUND, networkKey, nextHelloFails, utcDayKey, visitorCapUsd, VISITOR_BUDGET_SHARE } from "../src/worker/gates";
 import { isLocalHost, isLocalRequest, isTestSiteKey, resolveTurnstileSecret, TURNSTILE_TEST_SECRET, TURNSTILE_TEST_SITE_KEY } from "../src/worker/turnstile";
 
 function check(ok: unknown, label: string) {
@@ -31,6 +31,30 @@ check(visitorCapUsd(0.1) === 0.015, "a visitor may spend 15% of $0.10");
 check(VISITOR_BUDGET_SHARE === 0.15, "visitor share is 15%");
 check(ipSpendKey("203.0.113.8", "2026-10-14") === "ip:2026-10-14:203.0.113.8", "IP spend key includes the UTC day");
 check(utcDayKey(new Date("2026-10-14T23:00:00.000Z")) === "2026-10-14", "day key is UTC");
+
+check(networkKey("203.0.113.8") === "203.0.113.8", "IPv4 network key is the address");
+check(networkKey("2001:db8::1") === "2001:db8:0:0", "compressed IPv6 collapses to /64");
+check(networkKey("2001:0db8:0000:0000:0000:0000:0000:0001") === "2001:db8:0:0", "expanded IPv6 collapses to the same /64");
+check(networkKey("2001:db8:1:2:3:4:5:6") === "2001:db8:1:2", "IPv6 /64 keeps the first four hextets");
+check(networkKey("2001:db8:0:0:aaaa:bbbb:cccc:dddd") === networkKey("2001:db8::1"), "addresses in one /64 share a key");
+check(networkKey("2001:db8:0:1::") !== networkKey("2001:db8:0:0::"), "a different /64 gets a different key");
+check(networkKey("[2001:db8::1]") === "2001:db8:0:0", "bracketed IPv6 collapses to /64");
+check(networkKey("fe80::1%eth0") === "fe80:0:0:0", "IPv6 zone id is stripped before /64");
+check(networkKey("::ffff:203.0.113.8") === "203.0.113.8", "IPv4-mapped IPv6 uses the IPv4 address");
+check(networkKey("desk:abc123def456") === "desk:abc123def456", "desk spend keys are not treated as IPv6");
+check(networkKey("local") === "local", "local spend key stays local");
+check(expandIpv6("not-an-ip") === null, "expandIpv6 rejects a hostname");
+check(ipSpendKey("2001:db8::aa", "2026-10-14") === "ip:2026-10-14:2001:db8:0:0", "IP spend key uses the IPv6 /64");
+
+check(isScopedGuardCode("turnstile_required"), "turnstile errors stay on the requesting tab");
+check(isScopedGuardCode("rate_limited"), "rate-limit errors stay on the requesting tab");
+check(isScopedGuardCode("desk_limited"), "desk-limit errors stay on the requesting tab");
+check(isScopedGuardCode("budget"), "budget errors stay on the requesting tab");
+check(!isScopedGuardCode("turn_failed"), "unexpected turn failures still broadcast");
+
+check(MAX_HELLO_FAILS === 5, "a connection gets five failed hellos");
+check(nextHelloFails(0).fails === 1 && !nextHelloFails(0).close, "the first failed hello stays open");
+check(nextHelloFails(4).fails === 5 && nextHelloFails(4).close, "the fifth failed hello closes the socket");
 
 const llmIn = 0.15 / 1_000_000;
 const llmOut = 0.5 / 1_000_000;
