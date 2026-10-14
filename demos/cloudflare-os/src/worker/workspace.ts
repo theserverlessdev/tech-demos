@@ -17,7 +17,7 @@ import type {
 } from "../shared/types";
 import { runAgent, type AgentHost } from "./agent";
 import { BLUEPRINT_INFOS, getBlueprint } from "./blueprints";
-import { idleErrorMessage, idleReason, nextIdleAlarmAt, SESSION_IDLE_MS } from "./idle";
+import { decidePing, decideUserRpc, idleErrorMessage, idleReason, nextIdleAlarmAt, SESSION_IDLE_MS } from "./idle";
 import { assertBudget, meter } from "./meter";
 import { APPROVAL_TIMEOUT_MS, GADGET_CALL_TIMEOUT_MS, GADGET_METHOD_TIMEOUT_MS } from "./timeouts";
 
@@ -280,21 +280,24 @@ export class Workspace extends DurableObject<Env> {
     void this.ctx.storage.setAlarm(nextIdleAlarmAt(Date.now(), this.#lastActivity));
   }
 
+  /** Keepalive only. Never resets the idle window. */
   assertNotIdle() {
-    const reason = idleReason(Date.now(), this.#lastActivity);
-    if (!reason) return;
-    if (this.#listeners.size > 0) this.#reap(reason);
-    throw new Error(idleErrorMessage(reason));
+    const decision = decidePing(Date.now(), this.#lastActivity, this.#listeners.size);
+    if (decision === "ok") return;
+    if (decision === "reap") this.#reap("idle");
+    throw new Error(idleErrorMessage("idle"));
   }
 
-  /** A new browser session after an idle close starts a fresh idle window. */
+  /**
+   * Any user RPC. After a reap, nobody is subscribed, so this starts a fresh idle window.
+   * That is what makes Refresh work: the shell calls listBlueprints before subscribe.
+   */
   beginSession() {
-    const reason = idleReason(Date.now(), this.#lastActivity);
-    if (reason && this.#listeners.size === 0) {
-      this.touchActivity();
-      return;
+    const decision = decideUserRpc(Date.now(), this.#lastActivity, this.#listeners.size);
+    if (decision === "reap") {
+      this.#reap("idle");
+      throw new Error(idleErrorMessage("idle"));
     }
-    this.assertNotIdle();
     this.touchActivity();
   }
 
@@ -679,6 +682,7 @@ export class Workspace extends DurableObject<Env> {
   }
 
   async #callGadget(id: string, method: string, args: unknown, via: RpcEvent["via"], who: string) {
+    this.touchActivity();
     const g = this.#gadget(id);
     if (!/^[A-Za-z_$][\w$]*$/.test(method) || method.startsWith("__") || ["constructor", "fetch", "alarm", "subscribe"].includes(method)) {
       throw new Error(`"${method}" is not a callable gadget method.`);
@@ -711,6 +715,7 @@ export class Workspace extends DurableObject<Env> {
         if (typeof method !== "function") return method;
         if (prop.startsWith("__")) return undefined;
         return (...args: unknown[]) => {
+          self.touchActivity();
           const started = Date.now();
           return (Reflect.apply(method, target, args) as Promise<unknown>).then(
             (value) => {
@@ -832,8 +837,7 @@ export class WorkspaceClient extends RpcTarget {
   }
 
   #live() {
-    this.#ws.assertNotIdle();
-    this.#ws.touchActivity();
+    this.#ws.beginSession();
   }
 
   subscribe(listener: Listener) {

@@ -10,7 +10,7 @@ import {
   PRICE_OUT,
   usageCost,
 } from "../src/worker/cost";
-import { idleErrorMessage, idleReason, nextIdleAlarmAt, SESSION_IDLE_MS } from "../src/worker/idle";
+import { decidePing, decideUserRpc, idleErrorMessage, idleReason, nextIdleAlarmAt, SESSION_IDLE_MS } from "../src/worker/idle";
 import { isAllowedOrigin } from "../src/worker/origin";
 import {
   APPROVAL_TIMEOUT_MS,
@@ -67,6 +67,8 @@ test("idle policy ignores ping-scale gaps and trips after 20 minutes", () => {
   expect(idleReason(t0 + SESSION_IDLE_MS, t0)).toBe("idle");
   expect(nextIdleAlarmAt(t0, t0)).toBe(t0 + SESSION_IDLE_MS);
   expect(idleErrorMessage()).toMatch(/20 minutes idle/);
+  expect(decideUserRpc(t0 + SESSION_IDLE_MS, t0, 0)).toBe("wake");
+  expect(decidePing(t0 + SESSION_IDLE_MS, t0, 0)).toBe("reject");
 });
 
 test("origin allowlist is defense-in-depth: no Origin and localhost pass", () => {

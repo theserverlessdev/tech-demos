@@ -89,8 +89,9 @@ sandboxed iframe (client.js) ◀───── Workspace DO (SQLite: gadgets, f
 - The `Meter` DO holds a global daily AI budget (`AI_DAILY_BUDGET_USD`, default `0.15`). The worst case is
   less than $5 each month. When a model response omits `usage`, the meter keeps the reserved worst-case
   amount instead of treating the call as free.
-- A Workspace DO idle-reaps after 20 minutes with no user RPC (keepalive pings do not count), so an
-  abandoned tab cannot bill 128MB wall-clock indefinitely.
+- A Workspace DO idle-reaps after 20 minutes with no user RPC (keepalive pings do not count). Any later
+  user RPC — including gadget UI calls — starts a fresh idle window, so Refresh can reconnect. The shell
+  closes the old socket and stops retrying on idle instead of leaking WebSockets.
 - The rate limit is 6 agent turns per minute per IP. Each workspace can have 8 gadgets or fewer.
 - Blueprint gadgets share Dynamic Workers by content hash.
 - Visitors can save gadget code, and each new code version is a new Dynamic Worker ID. The `Meter` DO
@@ -111,7 +112,7 @@ The hub registry entry keeps a fallback Dynamic Worker source. That source redir
 ## Testing
 
 - `bun run typecheck` for the Worker and the client.
-- `bun test test` for budget fail-closed, gadget-call vs approval timeouts, iframe sandbox, idle policy, origin allowlist, and mobile CSS.
+- `bun test test` for budget fail-closed, gadget-call vs approval timeouts, iframe sandbox, idle wake-after-reap, gadget activity, reconnect dispose/backoff, origin allowlist, and mobile CSS.
 - A smoke script that connects over Cap'n Web, creates each blueprint, and calls one method on each.
 - A manual pass with Playwright for the screenshot and the video.
 

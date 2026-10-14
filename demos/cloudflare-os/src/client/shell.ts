@@ -16,6 +16,14 @@ import { clock, h, icon, logoMark, renderMarkdown, timeAgo } from "./dom";
 import { GADGET_IFRAME_SANDBOX } from "./gadget-isolation";
 import { FrameBridge, sandboxHtml } from "./gadget-frame";
 import { safeGadgetOpenUrl } from "./open-url";
+import {
+  RECONNECT_INITIAL_MS,
+  connectFailureAction,
+  disposeRpcRoot,
+  errMsg,
+  isIdleError,
+  nextReconnectDelay,
+} from "./reconnect";
 
 // Cap'n Web stubs are dynamic. Typing them as `any` avoids deep type instantiation in the checker.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -104,11 +112,6 @@ function gadgetById(id: string | null): GadgetInfo | undefined {
 
 function pendingActions(): ActionRecord[] {
   return (state.snap?.actions ?? []).filter((a) => a.status === "pending");
-}
-
-function errMsg(err: unknown): string {
-  const text = err instanceof Error ? err.message : String(err);
-  return text.replace(/^Error:\s*/, "");
 }
 
 const toasts = h("div", { class: "toasts", role: "status", "aria-live": "polite" });
@@ -247,7 +250,8 @@ class WorkspaceListener extends RpcTarget {
 }
 
 let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
-let reconnectDelay = 800;
+let reconnectDelay = RECONNECT_INITIAL_MS;
+let reconnectAttempts = 0;
 let heartbeat: ReturnType<typeof setInterval> | undefined;
 let allowReconnect = true;
 
@@ -268,27 +272,27 @@ function pauseForIdle(message: string) {
   heartbeat = undefined;
   clearTimeout(reconnectTimer);
   session = null;
-  try {
-    rootStub?.[Symbol.dispose]();
-  } catch {}
+  disposeRpcRoot(rootStub);
   rootStub = null;
   setConn("paused");
   toast(message, "error");
-}
-
-function isIdleError(err: unknown): boolean {
-  return /paused after .* idle/i.test(errMsg(err));
 }
 
 async function connect() {
   if (!allowReconnect) return;
   clearTimeout(reconnectTimer);
   setConn("connecting");
+  const previous = rootStub;
+  rootStub = null;
+  session = null;
+  disposeRpcRoot(previous);
   const root: Stub = newWebSocketRpcSession(wsUrl());
   rootStub = root;
   root.onRpcBroken(() => {
     if (rootStub !== root) return;
     session = null;
+    disposeRpcRoot(root);
+    if (rootStub === root) rootStub = null;
     if (!allowReconnect) {
       setConn("paused");
       return;
@@ -301,7 +305,8 @@ async function connect() {
     state.blueprints = await ws.listBlueprints();
     session = ws;
     await ws.subscribe(new WorkspaceListener());
-    reconnectDelay = 800;
+    reconnectDelay = RECONNECT_INITIAL_MS;
+    reconnectAttempts = 0;
     setConn("live");
     // Frame sessions belonged to the old socket. Mount them again.
     for (const id of [...frames.keys()]) {
@@ -319,18 +324,30 @@ async function connect() {
     render();
   } catch (err) {
     console.error("connect failed", err);
-    if (rootStub === root) {
-      setConn("offline");
-      scheduleReconnect();
+    disposeRpcRoot(root);
+    if (rootStub === root) rootStub = null;
+    session = null;
+    const action = connectFailureAction(err, reconnectAttempts + 1);
+    if (action === "pause-idle") {
+      pauseForIdle(errMsg(err));
+      return;
     }
+    if (action === "give-up") {
+      allowReconnect = false;
+      setConn("offline");
+      return;
+    }
+    setConn("offline");
+    scheduleReconnect();
   }
 }
 
 function scheduleReconnect() {
   if (!allowReconnect) return;
+  reconnectAttempts += 1;
   clearTimeout(reconnectTimer);
   reconnectTimer = setTimeout(() => void connect(), reconnectDelay);
-  reconnectDelay = Math.min(reconnectDelay * 1.8, 10_000);
+  reconnectDelay = nextReconnectDelay(reconnectDelay);
 }
 
 // ===================================================================== events
