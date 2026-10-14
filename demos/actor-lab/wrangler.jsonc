@@ -30,7 +30,8 @@
     "TURNSTILE_SITE_KEY": "0x4AAAAAAFRgqW3QGH0PGoRv"
   },
   "routes": [
-    { "pattern": "tech-demos.theserverless.dev/demos/actor-lab*", "zone_name": "theserverless.dev" },
+    { "pattern": "tech-demos.theserverless.dev/demos/actor-lab", "zone_name": "theserverless.dev" },
+    { "pattern": "tech-demos.theserverless.dev/demos/actor-lab/*", "zone_name": "theserverless.dev" },
     { "pattern": "actor-lab.tech-demos.theserverless.dev/*", "zone_name": "theserverless.dev" }
   ],
   "workers_dev": true,

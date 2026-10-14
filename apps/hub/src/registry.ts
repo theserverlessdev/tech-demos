@@ -481,9 +481,9 @@ export const demos: DemoEntry[] = [
     title: "Actor lab",
     description: "A counter race and a chat that show how one Durable Object lines up work.",
     demonstrates:
-      "A SQLite-backed actor persists fields through a state proxy, and mailbox handlers run one at a time. An await on Workers AI opens the input gate, so interleaved updates lose increments. The chat actor hibernates; a simulated eviction drops isolate memory and reloads the transcript from SQLite.",
+      "A SQLite-backed actor persists fields through a state proxy, and mailbox handlers run one at a time. An await on Workers AI opens the input gate, so interleaved updates lose increments. The chat actor hibernates; a simulated eviction clears the in-memory scratch note and reloads the transcript from SQLite.",
     capabilities: [
-      "Arm a race after Turnstile and fire Interleaved: the counter ends below the number of updates",
+      "Arm a race after Turnstile and fire Interleaved: the counter usually ends below the number of updates",
       "Fire Serialized mailbox: the counter reaches the number of updates",
       "Chat in a room over a hibernating WebSocket",
       "Simulate evict: the scratch note disappears and the SQLite transcript remains",

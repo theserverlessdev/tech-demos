@@ -7,18 +7,26 @@ export { ChatActor } from "./chat";
 /** The hub serves this demo under a path. The subdomain serves it at the root. */
 const BASE_PATH = "/demos/actor-lab";
 
-const PAGE_CSP = [
-  "default-src 'self'",
-  "script-src 'self' https://challenges.cloudflare.com https://static.cloudflareinsights.com",
-  "style-src 'self' https://fonts.googleapis.com",
-  "font-src https://fonts.gstatic.com",
-  "img-src 'self' data:",
-  "connect-src 'self' https://challenges.cloudflare.com https://cloudflareinsights.com",
-  "frame-src https://challenges.cloudflare.com",
-  "base-uri 'none'",
-  "form-action 'self'",
-  "frame-ancestors 'none'",
-].join("; ");
+function pageCsp(nonce: string): string {
+  return [
+    "default-src 'self'",
+    `script-src 'self' 'nonce-${nonce}' 'wasm-unsafe-eval' https://challenges.cloudflare.com https://static.cloudflareinsights.com`,
+    "style-src 'self' https://fonts.googleapis.com",
+    "font-src https://fonts.gstatic.com",
+    "img-src 'self' data:",
+    "connect-src 'self' https://challenges.cloudflare.com https://cloudflareinsights.com",
+    "frame-src https://challenges.cloudflare.com",
+    "child-src https://challenges.cloudflare.com",
+    "base-uri 'none'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+  ].join("; ");
+}
+
+function nonce(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
 
 function errorResponse(err: unknown): Response {
   if (err instanceof HttpError) {
@@ -34,17 +42,22 @@ function errorResponse(err: unknown): Response {
 async function serveAsset(request: Request, env: Env, path: string): Promise<Response> {
   if (request.method !== "GET" && request.method !== "HEAD") return new Response("Method not allowed", { status: 405 });
   const assetUrl = new URL(request.url);
-  assetUrl.pathname = path === "/" ? "/index.html" : path;
-  let res = await env.ASSETS.fetch(new Request(assetUrl, { method: request.method, headers: request.headers }));
-  if (res.status === 404 && !path.startsWith("/assets/")) {
-    assetUrl.pathname = "/index.html";
-    res = await env.ASSETS.fetch(new Request(assetUrl, { method: request.method, headers: request.headers }));
+  const want = path === "/" || path === "/index.html" ? "/index.html" : path;
+  assetUrl.pathname = want;
+  const res = await env.ASSETS.fetch(new Request(assetUrl, { method: request.method, headers: request.headers }));
+  if (res.status === 404) {
+    return new Response("Not found", { status: 404, headers: { "cache-control": "no-store", "content-type": "text/plain; charset=utf-8" } });
   }
   const headers = new Headers(res.headers);
   headers.set("x-content-type-options", "nosniff");
   headers.set("referrer-policy", "no-referrer");
-  if ((headers.get("content-type") ?? "").startsWith("text/html")) headers.set("content-security-policy", PAGE_CSP);
-  return new Response(res.body, { status: res.status, headers });
+  const type = headers.get("content-type") ?? "";
+  if (!type.startsWith("text/html")) return new Response(res.body, { status: res.status, headers });
+  const token = nonce();
+  headers.set("content-security-policy", pageCsp(token));
+  if (request.method === "HEAD") return new Response(null, { status: res.status, headers });
+  const html = (await res.text()).replaceAll("<script", `<script nonce="${token}"`);
+  return new Response(html, { status: res.status, headers });
 }
 
 export default {

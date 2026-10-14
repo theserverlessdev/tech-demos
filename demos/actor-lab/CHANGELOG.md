@@ -39,6 +39,17 @@ This demo is an inspired-by slice of [TerseAI/durable-actors](https://github.com
 
 Hub Graphite & Ember. Ember accent `#c2410c`, background `#0e0e11`, Bricolage Grotesque and Hanken Grotesk. Contact links to theserverless.dev. No purple-to-cyan gradient.
 
+## 2026-10-14
+
+Opus audit of `192a789`:
+
+- `#turnstile` no longer shadows `window.turnstile`. `?room=` joins before the widget mounts. Same id fix in personal-agent.
+- GET `/api/rooms/:code` and GET `/api/race/result` are rate-limited. A minted cookie does not create a race actor. Tables and alarms are lazy. Expiry calls `deleteAll()`.
+- WebSocket say/scratch use `CHAT_LIMIT` per IP. More than 20 frames in 10s closes with 1008. Scratch broadcasts coalesce. The per-room say window is SQLite. `AI_LIMIT` runs before every model call.
+- Turnstile actions are `race-arm` and `chat-unlock`. Hosts are exact. The widget resets after every send.
+- Peers count uses `livePeers()` (OPEN sockets only).
+- Copy, 44px targets, scoped inputs, CSP nonce + WebKit `child-src`/`wasm-unsafe-eval`, reconnect with backoff, reserved name `Actor`.
+
 ## 2026-10-09
 
 Phone layout: 16px fields, 44px race buttons, a wrapping composer, and safe-area padding. The trace table scrolls inside its own box.

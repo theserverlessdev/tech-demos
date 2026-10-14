@@ -1,3 +1,4 @@
+import { BODY_MAX, contentLengthTooLarge, TURNSTILE_RACE, TURNSTILE_UNLOCK } from "../shared/guards";
 import { AI_UNLOCK_MS, MESSAGE_MAX, NAME_MAX, RACE_MAX, RACE_MIN, ROOM_ALPHABET, ROOM_MESSAGES, ROOM_SOCKETS, SCRATCH_MAX, ACTOR_TTL_MS } from "../shared/types";
 import type { LabConfig, RaceMode, RoomResponse } from "../shared/types";
 import { isRecord } from "./actor";
@@ -24,8 +25,9 @@ async function limit(binding: RateLimit, request: Request, label: string): Promi
 }
 
 async function readJson(request: Request): Promise<Record<string, unknown>> {
+  if (contentLengthTooLarge(request, BODY_MAX)) throw new HttpError(413, "too_large", "The request body is too large.");
   const text = await request.text();
-  if (text.length > 32_000) throw new HttpError(413, "too_large", "The request body is too large.");
+  if (text.length > BODY_MAX) throw new HttpError(413, "too_large", "The request body is too large.");
   if (!text.trim()) return {};
   try {
     const parsed = JSON.parse(text) as unknown;
@@ -69,6 +71,10 @@ function config(env: Env, request: Request): LabConfig {
   };
 }
 
+function hasVisitorCookie(request: Request): boolean {
+  return /(?:^|;\s*)actor_lab=[a-f0-9]{32}(?:;|$)/.test(request.headers.get("cookie") ?? "");
+}
+
 export function visitor(request: Request): { id: string; cookie: string | null } {
   const header = request.headers.get("cookie") ?? "";
   const match = header.match(/(?:^|;\s*)actor_lab=([a-f0-9]{32})(?:;|$)/);
@@ -105,7 +111,7 @@ export async function handleApi(request: Request, env: Env, pathname: string, vi
   if (pathname === "/api/race/arm" && method === "POST") {
     await limit(env.RACE_LIMIT, request, "race runs");
     const body = await readJson(request);
-    await assertTurnstile(env, request, body.token);
+    await assertTurnstile(env, request, body.token, TURNSTILE_RACE);
     const mode = body.mode === "serialized" || body.mode === "interleaved" ? body.mode : null;
     const n = typeof body.n === "number" ? body.n : Number.NaN;
     if (!mode) throw new HttpError(400, "invalid", "Mode must be serialized or interleaved.");
@@ -123,11 +129,13 @@ export async function handleApi(request: Request, env: Env, pathname: string, vi
     const runId = typeof body.runId === "string" ? body.runId : "";
     const racer = typeof body.racer === "number" ? body.racer : Number.NaN;
     if (!/^[0-9a-f-]{36}$/i.test(runId)) throw new HttpError(400, "invalid", "Missing run id.");
-    const stepped = unwrap(await race().step({ runId, racer }));
+    const stepped = unwrap(await race().step({ runId, racer, ip: clientKey(request) }));
     return json(stepped);
   }
 
   if (pathname === "/api/race/result" && method === "GET") {
+    await limit(env.RACE_LIMIT, request, "race runs");
+    if (!hasVisitorCookie(request)) throw new HttpError(404, "unknown_run", "That run is not on this actor.");
     const runId = new URL(request.url).searchParams.get("runId") ?? "";
     if (!/^[0-9a-f-]{36}$/i.test(runId)) throw new HttpError(400, "invalid", "Missing run id.");
     return json(unwrap(await race().result(runId)));
@@ -156,6 +164,7 @@ export async function handleApi(request: Request, env: Env, pathname: string, vi
   }
 
   if (action === "" && method === "GET") {
+    await limit(env.CHAT_LIMIT, request, "chat");
     const view = unwrap(await chat.view());
     return json({ ...view, code } satisfies RoomResponse);
   }
@@ -163,7 +172,7 @@ export async function handleApi(request: Request, env: Env, pathname: string, vi
   if (action === "unlock" && method === "POST") {
     await limit(env.CHAT_LIMIT, request, "chat");
     const body = await readJson(request);
-    await assertTurnstile(env, request, body.token);
+    await assertTurnstile(env, request, body.token, TURNSTILE_UNLOCK);
     const view = unwrap(await chat.grantAi(Date.now() + AI_UNLOCK_MS));
     return json({ ...view, code } satisfies RoomResponse);
   }
@@ -189,7 +198,7 @@ export async function handleApi(request: Request, env: Env, pathname: string, vi
     const text = cleanText(body.text, MESSAGE_MAX + 1);
     if (!text) throw new HttpError(400, "invalid", "Write a message first.");
     if (text.length > MESSAGE_MAX) throw new HttpError(413, "too_large", "Messages must be 500 characters or fewer.");
-    const said = unwrap(await chat.say({ name: cleanName(body.name), text, ask: body.ask === true }));
+    const said = unwrap(await chat.say({ name: cleanName(body.name), text, ask: body.ask === true, ip: clientKey(request) }));
     return json({ ...said, code }, 201);
   }
 

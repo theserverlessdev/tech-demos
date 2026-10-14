@@ -72,7 +72,18 @@ const serialized = await race("serialized", 4);
 check("serialized mailbox reaches 4 with no overlap", Boolean(serialized && serialized.actual === 4 && serialized.lost === 0 && !serialized.overlapped), serialized);
 
 const page = await fetch(`${base}/`, { headers: cookie ? { cookie } : {} });
-check("page renders the race lab", page.ok && (await page.text()).includes("Actor lab"), { status: page.status });
+const pageHtml = await page.text();
+check("page renders the race lab", page.ok && pageHtml.includes("Actor lab"), { status: page.status });
+check("page uses turnstile-widget, not id=turnstile", pageHtml.includes('id="turnstile-widget"') && !pageHtml.includes('id="turnstile">'), pageHtml.includes("turnstile"));
+
+const deep = await fetch(`${base}/no/such/deep/path`);
+check("deep asset paths are 404", deep.status === 404, deep.status);
+
+const minted = await fetch(`${base}/api/race/result?runId=${crypto.randomUUID()}`);
+check("race result without a visitor cookie is 404", minted.status === 404, minted.status);
+
+const oversized = await call("/api/rooms", { method: "POST", body: { pad: "x".repeat(33_000) } });
+check("oversize JSON is rejected before the room is created", oversized.status === 413, oversized.status);
 
 const created = await call<RoomResponse>("/api/rooms", { method: "POST", body: {} });
 check("create room returns a code", created.status === 201 && /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{6}$/.test(created.data?.code ?? ""), created.data?.code);
@@ -85,6 +96,11 @@ const said = code
     })
   : { status: 0, data: null, text: "" };
 check("say stores a human message", said.status === 201 && said.data?.human.text === "Persist this line.", said.data?.human);
+
+const reserved = code
+  ? await call<SayResult>(`/api/rooms/${code}/say`, { method: "POST", body: { name: "Actor", text: "I am not the room.", ask: false } })
+  : { status: 0, data: null, text: "" };
+check("the name Actor is reserved", reserved.status === 201 && reserved.data?.human.name === "Guest", reserved.data?.human);
 
 const scratched = code
   ? await call<RoomResponse>(`/api/rooms/${code}/scratch`, { method: "POST", body: { text: "only in memory" } })
@@ -110,6 +126,22 @@ if (code) {
   right.close();
 }
 check("a second socket hears the say", fanout);
+
+let flooded = false;
+if (code) {
+  const noisy = new WebSocket(`${base.replace(/^http/, "ws")}/api/rooms/${code}/socket?name=Noisy`);
+  await opened(noisy);
+  const closed = new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => resolve(false), 4_000);
+    noisy.addEventListener("close", (ev) => {
+      clearTimeout(timer);
+      resolve(ev.code === 1008);
+    });
+  });
+  for (let i = 0; i < 21; i++) noisy.send(JSON.stringify({ type: "scratch", text: `flood-${i}` }));
+  flooded = await closed;
+}
+check("more than 20 frames in 10s closes the socket with 1008", flooded);
 
 const locked = code
   ? await call(`/api/rooms/${code}/say`, { method: "POST", body: { name: "Smoke", text: "Ask anyway.", ask: true } })
