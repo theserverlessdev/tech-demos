@@ -9,6 +9,7 @@ type Picked =
 declare const turnstile: {
   render: (el: HTMLElement, opts: Record<string, unknown>) => string;
   reset: (id?: string) => void;
+  remove: (id?: string) => void;
   getResponse: (id?: string) => string;
 };
 
@@ -30,6 +31,7 @@ const testNote = $("test-note");
 
 let draft: Draft[] = fromPreset(PRESETS[0]!);
 let picked: Picked | null = null;
+let historyPick = 0;
 let previewUrl: string | null = null;
 let widgetId = "";
 let session: SessionPayload | null = null;
@@ -93,7 +95,13 @@ function enableJudge(): void {
   $<HTMLButtonElement>("judge").disabled = false;
 }
 
+function claimPick(): number {
+  historyPick += 1;
+  return historyPick;
+}
+
 function selectSample(id: SampleId): void {
+  claimPick();
   stopTracks();
   picked = { source: "sample", sampleId: id };
   enableJudge();
@@ -141,9 +149,9 @@ async function downscaleImage(file: File): Promise<File> {
     }
     const stem = stemName(file.name);
     if (hasAlpha) {
-      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/webp", 0.9));
       if (!blob) throw new Error("blob");
-      return new File([blob], `${stem}.png`, { type: "image/png" });
+      return new File([blob], `${stem}.webp`, { type: "image/webp" });
     }
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, width, height);
@@ -157,6 +165,7 @@ async function downscaleImage(file: File): Promise<File> {
 }
 
 async function selectFile(file: File): Promise<void> {
+  const token = claimPick();
   const kind = guessKind(file);
   if (!kind) {
     showError("Use a PNG, JPEG, WebP, WAV, MP3, MP4, or WebM file.");
@@ -167,10 +176,12 @@ async function selectFile(file: File): Promise<void> {
     try {
       chosen = await downscaleImage(file);
     } catch {
+      if (token !== historyPick) return;
       showError("That image could not be resized. Use a PNG, JPEG, or WebP.");
       return;
     }
   }
+  if (token !== historyPick) return;
   picked = { source: "file", file: chosen, note: chosen.name || "Upload" };
   enableJudge();
   showPreview(URL.createObjectURL(chosen), kind);
@@ -435,14 +446,15 @@ function renderHistory(items: JudgmentView[]): void {
       renderOutcome(item, compare ?? null);
       picked = null;
       $<HTMLButtonElement>("judge").disabled = true;
-      void restoreHistoryPick(item);
+      void restoreHistoryPick(item, claimPick());
     });
     li.append(button);
     historyEl.append(li);
   }
 }
 
-async function restoreHistoryPick(item: JudgmentView): Promise<void> {
+async function restoreHistoryPick(item: JudgmentView, token: number): Promise<void> {
+  if (token !== historyPick) return;
   if (item.sampleId && Object.hasOwn(SAMPLES, item.sampleId)) {
     selectSample(item.sampleId as SampleId);
     return;
@@ -450,8 +462,10 @@ async function restoreHistoryPick(item: JudgmentView): Promise<void> {
   if (!item.mediaId) return;
   try {
     const res = await fetch(api(`api/media/${item.mediaId}`));
+    if (token !== historyPick) return;
     if (!res.ok) throw new Error("media");
     const blob = await res.blob();
+    if (token !== historyPick) return;
     const type = blob.type || (item.modality === "image" ? "image/jpeg" : item.modality === "audio" ? "audio/wav" : "video/webm");
     const ext = type.includes("png") ? "png" : type.includes("webp") ? "webp" : type.includes("wav") ? "wav" : type.includes("mpeg") ? "mp3" : type.includes("mp4") ? "mp4" : "webm";
     const file = new File([blob], `${stemName(item.label || "upload")}.${ext}`, { type });
@@ -462,6 +476,7 @@ async function restoreHistoryPick(item: JudgmentView): Promise<void> {
     markSamples(null);
     showError("");
   } catch {
+    if (token !== historyPick) return;
     picked = null;
     $<HTMLButtonElement>("judge").disabled = true;
     showError("That file is no longer available. Choose a sample or a file before judging.");
@@ -723,6 +738,11 @@ async function finishRecording(kind: "audio" | "video", mime: string): Promise<v
 }
 
 let turnstileTimer = 0;
+let turnstileErrors = 0;
+
+function turnstileCode(code: unknown): string {
+  return typeof code === "number" || typeof code === "string" ? String(code) : "";
+}
 
 function reinjectTurnstile(force = false): void {
   if (typeof turnstile !== "undefined") return;
@@ -742,7 +762,16 @@ function reinjectTurnstile(force = false): void {
 function showTurnstileFailure(host: HTMLElement): void {
   if (turnstileTimer) window.clearInterval(turnstileTimer);
   turnstileTimer = 0;
+  turnstileErrors = 0;
+  const id = widgetId;
   widgetId = "";
+  if (id && typeof turnstile !== "undefined") {
+    try {
+      turnstile.remove(id);
+    } catch {
+      /* The widget is already gone. */
+    }
+  }
   host.replaceChildren();
   const note = document.createElement("p");
   note.className = "hint";
@@ -791,7 +820,13 @@ async function mountTurnstile(): Promise<void> {
         action: "judge",
         size: window.innerWidth < 360 ? "compact" : "flexible",
         theme: document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark",
-        "error-callback": () => showTurnstileFailure(host),
+        "error-callback": (code?: unknown) => {
+          const text = turnstileCode(code);
+          turnstileErrors += 1;
+          const fatal = text === "110100" || text === "110110" || text === "110200";
+          if (!fatal && turnstileErrors < 3) return;
+          showTurnstileFailure(host);
+        },
         "expired-callback": () => {
           try {
             if (widgetId && typeof turnstile !== "undefined") turnstile.reset(widgetId);
@@ -800,6 +835,7 @@ async function mountTurnstile(): Promise<void> {
           }
         },
       });
+      turnstileErrors = 0;
     } catch {
       showTurnstileFailure(host);
     }

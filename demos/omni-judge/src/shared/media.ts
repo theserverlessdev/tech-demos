@@ -29,18 +29,21 @@ function readWav(bytes: Uint8Array): { durationMs: number } | null {
   let rate = 0;
   let bits = 0;
   let dataBytes = 0;
+  let sawFmt = false;
   let offset = 12;
   while (offset + 8 <= bytes.length) {
     const id = String.fromCharCode(bytes[offset] ?? 0, bytes[offset + 1] ?? 0, bytes[offset + 2] ?? 0, bytes[offset + 3] ?? 0);
     const size = u32(bytes, offset + 4);
     const start = offset + 8;
     if (size < 0 || start + size > bytes.length + 1) break;
-    if (id === "fmt " && size >= 16) {
+    if (id === "fmt " && size >= 16 && !sawFmt) {
       format = u16(bytes, start);
       channels = u16(bytes, start + 2);
       rate = u32(bytes, start + 4);
       bits = u16(bytes, start + 14);
+      sawFmt = true;
     } else if (id === "data") {
+      if (!sawFmt) return null;
       const next = dataBytes + size;
       if (!Number.isFinite(next) || next < dataBytes) return null;
       dataBytes = next;
@@ -135,10 +138,12 @@ function readMp3(bytes: Uint8Array): { durationMs: number } | null {
     frames += 1;
     cursor += next.size;
     guard += 1;
-    if (durationMs > LIMITS.maxAudioMs) break;
+    if (durationMs > LIMITS.maxAudioMs) {
+      return { durationMs: Math.max(LIMITS.maxAudioMs + 1, Math.ceil(durationMs)) };
+    }
   }
-  if (frames < 1) return null;
-  return { durationMs: Math.round(durationMs) };
+  if (frames < 1 || !Number.isFinite(durationMs) || durationMs <= 0) return null;
+  return { durationMs: Math.ceil(durationMs) };
 }
 
 function u32be(bytes: Uint8Array, o: number): number {
@@ -196,21 +201,21 @@ const ID_SEGMENT = 0x18538067;
 const ID_INFO = 0x1549a966;
 const ID_TIMECODE_SCALE = 0x2ad7b1;
 const ID_CLUSTER = 0x1f43b675;
+const ID_CUES = 0x1c53bb6b;
+const ID_TAGS = 0x1254c367;
+const ID_CHAPTERS = 0x1043a770;
+const ID_ATTACHMENTS = 0x1941a469;
+const ID_SEEK_HEAD = 0x114d9b74;
+const ID_TRACKS = 0x1654ae6b;
+/** Segment-level elements. An unknown-size cluster ends when one of these begins. */
+const SEGMENT_LEVEL = new Set<number>([ID_CLUSTER, ID_CUES, ID_TAGS, ID_CHAPTERS, ID_ATTACHMENTS, ID_SEEK_HEAD, ID_INFO, ID_TRACKS]);
+const MAX_STTS_ENTRIES = 100_000;
+const MAX_TRUN_SAMPLES = 200_000;
 const ID_TIMECODE = 0xe7;
 const ID_SIMPLE_BLOCK = 0xa3;
 const ID_BLOCK = 0xa1;
 const ID_BLOCK_GROUP = 0xa0;
-const CLUSTER_ID = Uint8Array.of(0x1f, 0x43, 0xb6, 0x75);
 const MAX_BOXES = 50_000;
-
-function indexOfBytes(bytes: Uint8Array, needle: Uint8Array, from: number): number {
-  const start = Math.max(0, from);
-  outer: for (let i = start; i <= bytes.length - needle.length; i++) {
-    for (let j = 0; j < needle.length; j++) if (bytes[i + j] !== needle[j]) continue outer;
-    return i;
-  }
-  return -1;
-}
 
 /** Relative timecode is a signed int16 after the track-number vint. */
 function blockRel(bytes: Uint8Array, start: number, end: number): number | null {
@@ -255,31 +260,31 @@ function infoScale(bytes: Uint8Array, start: number, end: number): number | "abs
   return scale === null ? "absent" : scale;
 }
 
-function readCluster(bytes: Uint8Array, start: number, end: number, span: Span): void {
+function readCluster(bytes: Uint8Array, start: number, end: number, span: Span): boolean {
   let clusterTc = 0;
   let offset = start;
   while (offset + 2 <= end) {
     const id = readId(bytes, offset);
-    if (!id || id.next > end) break;
+    if (!id || id.next > end) return false;
     const child = readSize(bytes, id.next);
-    if (!child) break;
-    const childEnd = child.unknown ? end : child.next + child.value;
-    if (childEnd < child.next || childEnd > end) break;
+    if (!child || child.unknown || child.next > end) return false;
+    const childEnd = child.next + child.value;
+    if (childEnd < child.next || childEnd > end) return false;
     if (id.id === ID_TIMECODE) {
       const value = readUint(bytes, child.next, childEnd);
       if (value !== null) clusterTc = value;
     } else if (id.id === ID_SIMPLE_BLOCK || id.id === ID_BLOCK) {
       const rel = blockRel(bytes, child.next, childEnd);
       if (rel !== null) noteTimestamp(span, clusterTc + rel);
-    } else if (id.id === ID_BLOCK_GROUP && !child.unknown) {
+    } else if (id.id === ID_BLOCK_GROUP) {
       let inner = child.next;
       while (inner + 2 <= childEnd) {
         const blockId = readId(bytes, inner);
-        if (!blockId || blockId.next > childEnd) break;
+        if (!blockId || blockId.next > childEnd) return false;
         const blockSize = readSize(bytes, blockId.next);
-        if (!blockSize || blockSize.unknown) break;
+        if (!blockSize || blockSize.unknown) return false;
         const blockEnd = blockSize.next + blockSize.value;
-        if (blockEnd > childEnd) break;
+        if (blockEnd < blockSize.next || blockEnd > childEnd) return false;
         if (blockId.id === ID_BLOCK || blockId.id === ID_SIMPLE_BLOCK) {
           const rel = blockRel(bytes, blockSize.next, blockEnd);
           if (rel !== null) noteTimestamp(span, clusterTc + rel);
@@ -287,9 +292,29 @@ function readCluster(bytes: Uint8Array, start: number, end: number, span: Span):
         inner = blockEnd;
       }
     }
-    if (child.unknown) break;
     offset = childEnd;
   }
+  return true;
+}
+
+/**
+ * An unknown-size cluster is walked element by element. A raw Cluster id inside
+ * a Void does not end it. The cluster ends at the next segment-level element.
+ * A child whose size runs past the segment fails closed.
+ */
+function unknownClusterEnd(bytes: Uint8Array, start: number, limit: number): number | null {
+  let offset = start;
+  while (offset + 2 <= limit) {
+    const id = readId(bytes, offset);
+    if (!id || id.next > limit) return null;
+    if (SEGMENT_LEVEL.has(id.id)) return offset;
+    const size = readSize(bytes, id.next);
+    if (!size || size.unknown || size.next > limit) return null;
+    const childEnd = size.next + size.value;
+    if (childEnd < size.next || childEnd > limit) return null;
+    offset = childEnd;
+  }
+  return offset;
 }
 
 /**
@@ -332,13 +357,14 @@ function readWebm(bytes: Uint8Array): { durationMs: number } | null {
     if (id.id === ID_CLUSTER) {
       let dataEnd: number;
       if (size.unknown) {
-        const next = indexOfBytes(bytes, CLUSTER_ID, size.next);
-        dataEnd = next < 0 ? segmentEnd : Math.min(segmentEnd, next);
+        const end = unknownClusterEnd(bytes, size.next, segmentEnd);
+        if (end === null) return null;
+        dataEnd = end;
       } else {
         dataEnd = size.next + size.value;
-        if (dataEnd < size.next || dataEnd > segmentEnd) break;
+        if (dataEnd < size.next || dataEnd > segmentEnd) return null;
       }
-      readCluster(bytes, size.next, dataEnd, span);
+      if (!readCluster(bytes, size.next, dataEnd, span)) return null;
       offset = Math.max(dataEnd, size.next);
       continue;
     }
@@ -402,8 +428,9 @@ type RawTrun = { track: number; samples: number; ticks: number; needsTrex: boole
 /**
  * mvhd.duration is not used. Each trak keeps its own id, timescale, and sample
  * table, in whatever child order the file uses. A second moov, a repeated
- * track id, or samples with no duration fail closed. fMP4 sample duration
- * comes from the trun, then tfhd, then that track's trex default.
+ * track id, or samples with no duration fail closed. A track's duration is
+ * its stts ticks plus every trun on that track (tfhd, else trex). The file
+ * duration is the longest track, and mehd if that is longer.
  */
 function readMp4(bytes: Uint8Array): { durationMs: number } | null {
   if (!FTYP(bytes)) return null;
@@ -438,6 +465,7 @@ function readMp4(bytes: Uint8Array): { durationMs: number } | null {
     let scale = 0;
     let ticks = 0;
     let samples = 0;
+    let stszSamples: number | null = null;
     const level = (from: number, to: number, depth: number): void => {
       walk(from, to, depth, (box) => {
         const version = bytes[box.start] ?? 0;
@@ -449,9 +477,13 @@ function readMp4(bytes: Uint8Array): { durationMs: number } | null {
           if (box.start + scaleAt + 4 <= box.end) scale = u32be(bytes, box.start + scaleAt);
         } else if (box.type === "stts") {
           const count = u32be(bytes, box.start + 4);
+          const payload = box.end - (box.start + 8);
+          if (payload < 0 || count > MAX_STTS_ENTRIES || count > Math.floor(payload / 8)) {
+            failed = true;
+            return;
+          }
           let cursor = box.start + 8;
-          const entries = Math.min(count, 100_000);
-          for (let i = 0; i < entries && cursor + 8 <= box.end; i++) {
+          for (let i = 0; i < count; i++) {
             const sampleCount = u32be(bytes, cursor);
             const delta = u32be(bytes, cursor + 4);
             cursor += 8;
@@ -464,6 +496,22 @@ function readMp4(bytes: Uint8Array): { durationMs: number } | null {
             samples = nextSamples;
             ticks = nextTicks;
           }
+        } else if (box.type === "stsz") {
+          if (box.start + 12 > box.end) {
+            failed = true;
+            return;
+          }
+          const sampleSize = u32be(bytes, box.start + 4);
+          const sampleCount = u32be(bytes, box.start + 8);
+          if (sampleSize === 0 && sampleCount > Math.floor((box.end - (box.start + 12)) / 4)) {
+            failed = true;
+            return;
+          }
+          if (stszSamples !== null && stszSamples !== sampleCount) {
+            failed = true;
+            return;
+          }
+          stszSamples = sampleCount;
         } else if (box.type === "mdia" || box.type === "minf" || box.type === "stbl" || box.type === "edts") {
           level(box.start, box.end, depth + 1);
         }
@@ -471,6 +519,10 @@ function readMp4(bytes: Uint8Array): { durationMs: number } | null {
     };
     level(start, end, 0);
     if (failed) return;
+    if (stszSamples !== null && stszSamples !== samples) {
+      failed = true;
+      return;
+    }
     if (samples > 0 && (ticks <= 0 || scale <= 0 || id <= 0)) {
       failed = true;
       return;
@@ -481,7 +533,7 @@ function readMp4(bytes: Uint8Array): { durationMs: number } | null {
   const readTrun = (box: Atom, track: number, tfhdPresent: boolean, tfhdDuration: number): void => {
     const flags = u32be(bytes, box.start) & 0xffffff;
     const samples = u32be(bytes, box.start + 4);
-    if (!Number.isFinite(samples) || samples < 0 || track <= 0) {
+    if (!Number.isFinite(samples) || samples < 0 || samples > MAX_TRUN_SAMPLES || track <= 0) {
       if (samples > 0) failed = true;
       return;
     }
@@ -492,15 +544,19 @@ function readMp4(bytes: Uint8Array): { durationMs: number } | null {
       if (flags & 0x000001) cursor += 4;
       if (flags & 0x000004) cursor += 4;
       const sampleBytes = (flags & 0x100 ? 4 : 0) + (flags & 0x200 ? 4 : 0) + (flags & 0x400 ? 4 : 0) + (flags & 0x800 ? 4 : 0);
-      const n = Math.min(samples, 200_000);
-      for (let i = 0; i < n && cursor + 4 <= box.end; i++) {
+      const stride = sampleBytes || 4;
+      if (samples > Math.floor((box.end - cursor) / stride)) {
+        failed = true;
+        return;
+      }
+      for (let i = 0; i < samples; i++) {
         const next = addFinite(ticks, u32be(bytes, cursor));
         if (next === null) {
           failed = true;
           return;
         }
         ticks = next;
-        cursor += sampleBytes || 4;
+        cursor += stride;
       }
       resolved = true;
     } else if (tfhdPresent) {
@@ -581,22 +637,12 @@ function readMp4(bytes: Uint8Array): { durationMs: number } | null {
   });
 
   if (failed || moovCount > 1) return null;
-  const seen = new Set<number>();
-  let best = 0;
-  if (mehdTicks > 0) {
-    const ms = ticksToMs(mehdTicks, movieScale);
-    if (ms === null || ms <= 0) return null;
-    best = ms;
-  }
+  const trackById = new Map<number, Trak>();
   for (const trak of traks) {
-    if (seen.has(trak.id)) return null;
-    seen.add(trak.id);
-    if (trak.samples > 0) {
-      const ms = ticksToMs(trak.ticks, trak.scale);
-      if (ms === null || ms <= 0) return null;
-      best = Math.max(best, ms);
-    }
+    if (trackById.has(trak.id)) return null;
+    trackById.set(trak.id, trak);
   }
+  const trunTicks = new Map<number, number>();
   for (const trun of truns) {
     let ticks = trun.ticks;
     if (trun.needsTrex) {
@@ -605,8 +651,24 @@ function readMp4(bytes: Uint8Array): { durationMs: number } | null {
       if (next === null || next <= 0) return null;
       ticks = next;
     }
-    const scale = traks.find((trak) => trak.id === trun.track)?.scale || movieScale;
-    const ms = ticksToMs(ticks, scale);
+    const sum = addFinite(trunTicks.get(trun.track) ?? 0, ticks);
+    if (sum === null) return null;
+    trunTicks.set(trun.track, sum);
+  }
+  let best = 0;
+  if (mehdTicks > 0) {
+    const ms = ticksToMs(mehdTicks, movieScale);
+    if (ms === null || ms <= 0) return null;
+    best = ms;
+  }
+  const trackIds = new Set<number>([...trackById.keys(), ...trunTicks.keys()]);
+  for (const id of trackIds) {
+    const trak = trackById.get(id);
+    const total = addFinite(trak?.ticks ?? 0, trunTicks.get(id) ?? 0);
+    if (total === null) return null;
+    if (total <= 0) continue;
+    const scale = trak && trak.scale > 0 ? trak.scale : movieScale;
+    const ms = ticksToMs(total, scale);
     if (ms === null || ms <= 0) return null;
     best = Math.max(best, ms);
   }

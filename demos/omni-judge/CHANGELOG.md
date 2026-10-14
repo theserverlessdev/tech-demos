@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.3
+
+- Fragmented MP4 duration sums every `trun` on a track, then adds that track's `stts` ticks. A 9.5 second Chrome-style file stays inside the cap, and a 50 second file does not.
+- MP3 duration rounds up, so a file past 15 seconds cannot report exactly 15. WAV keeps the first `fmt ` and requires it before the data.
+- An unknown-size WebM cluster ends at the next segment element. A sample count that does not fit in the box is rejected.
+
 ## 0.1.2
 
 - The MP4 box walk stays inside the parent box, treats a zero size as that end, and stops after 50,000 boxes. `limits.cpu_ms` is 2000.
