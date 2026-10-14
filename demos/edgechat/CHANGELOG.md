@@ -37,6 +37,10 @@ This demo is **inspired by** [aozorae/Edgechat](https://github.com/aozorae/Edgec
 
 Hub Graphite & Ember. Ember accent `#c2410c`, background `#0e0e11`. Real LogoMark SVG (cloud + lightning + streaks). No purple-to-cyan logo.
 
+## 2026-10-14 (follow-up)
+
+`secrets.required` for `TURNSTILE_SECRET` so deploy fails closed. Writes also limited per session (`s:<publicId>`). Legacy KV records without `publicId` are rejected (Turnstile re-mint). Per-socket tokens are serialized before any await; strikes decay and apply only to junk/oversize frames. Migration `0003` redacts leftover `messages.session_id` values.
+
 ## 2026-10-14
 
 Opus audit of the live demo. Session cookie values no longer appear in messages (`author_key` / `publicId`). `loadSession` is cookie-only; incoming `x-edgechat-*` is stripped. WebSocket sends share `WRITE_LIMIT` and a per-socket bucket. GETs are read-only. Presence drops on leave. Hourly prune + Turnstile on session mint. Message list scrolls; 390px rooms are chips. Unicode room slugs. Origin check on upgrade. Copy says what the demo proves.

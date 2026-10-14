@@ -44,9 +44,13 @@
     "TURNSTILE_SITE_KEY": "",
     "TURNSTILE_LOCAL": "0"
   },
+  "secrets": {
+    "required": ["TURNSTILE_SECRET"]
+  },
   // Secrets, never commit: TURNSTILE_SECRET (wrangler secret put).
   // Local `bun run dev` writes .dev.vars with Cloudflare's always-pass test pair
   // and TURNSTILE_LOCAL=1. wrangler dev rewrites Host to the zone route.
+  // wrangler deploy fails closed if TURNSTILE_SECRET is missing.
   "routes": [
     { "pattern": "tech-demos.theserverless.dev/demos/edgechat*", "zone_name": "theserverless.dev" },
     { "pattern": "edgechat.tech-demos.theserverless.dev/*", "zone_name": "theserverless.dev" }

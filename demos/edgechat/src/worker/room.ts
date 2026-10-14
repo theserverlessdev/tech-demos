@@ -2,7 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import type { ChatMessage, ClientEvent, Presence, RoomSummary, ServerEvent, Session } from "../shared/types";
 import { MAX_BODY, MAX_FRAME } from "../shared/types";
 import { insertMessage, listMessages } from "./db";
-import { newBucket, takeToken, type TokenBucket } from "./limits";
+import { newBucket, noteStrike, sessionWriteKey, STRIKE_LIMIT, takeToken, type TokenBucket } from "./limits";
 import { sanitizeName } from "./session";
 
 type SocketState = {
@@ -121,14 +121,22 @@ export class ChatRoom extends DurableObject<Env> {
       return;
     }
 
-    if (!takeToken(state.bucket)) {
-      this.strike(ws, state, "Too many messages from this socket. Wait a few seconds.");
+    const allowed = takeToken(state.bucket);
+    // Persist before any await so overlapping frames cannot refill from a stale bucket.
+    ws.serializeAttachment(state);
+    if (!allowed) {
+      ws.send(jsonEvent({ type: "error", message: "Too many messages from this socket. Wait a few seconds." }));
       return;
     }
 
-    const { success } = await this.env.WRITE_LIMIT.limit({ key: state.ip });
-    if (!success) {
+    const ip = await this.env.WRITE_LIMIT.limit({ key: state.ip });
+    if (!ip.success) {
       ws.send(jsonEvent({ type: "error", message: "Too many writes from this address. Wait a minute." }));
+      return;
+    }
+    const session = await this.env.WRITE_LIMIT.limit({ key: sessionWriteKey(state.publicId) });
+    if (!session.success) {
+      ws.send(jsonEvent({ type: "error", message: "Too many writes from this session. Wait a minute." }));
       return;
     }
 
@@ -137,8 +145,6 @@ export class ChatRoom extends DurableObject<Env> {
       ws.send(jsonEvent({ type: "error", message: "Type a message first." }));
       return;
     }
-
-    ws.serializeAttachment(state);
     const saved = await insertMessage(this.env, {
       roomId: state.roomId,
       author: state.displayName,
@@ -157,10 +163,10 @@ export class ChatRoom extends DurableObject<Env> {
   }
 
   private strike(ws: WebSocket, state: SocketState, message: string): void {
-    state.bucket.strikes += 1;
+    noteStrike(state.bucket);
     ws.serializeAttachment(state);
     ws.send(jsonEvent({ type: "error", message }));
-    if (state.bucket.strikes >= 3) {
+    if (state.bucket.strikes >= STRIKE_LIMIT) {
       try {
         ws.close(1008, "policy");
       } catch {

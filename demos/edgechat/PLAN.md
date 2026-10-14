@@ -37,8 +37,8 @@ Upstream is a self-hosted team chat on the Cloudflare stack: Workers (Hono) + Du
 
 ## Tasks
 
-1. D1 schema + lobby seed; R2 seed object on first boot; `author_key` + denormalized room columns (migration `0002`).
-2. KV session cookie (display name + `publicId`). Cookie-only `loadSession`. No header override.
+1. D1 schema + lobby seed; R2 seed object on first boot; `author_key` + denormalized room columns (migration `0002`). Migration `0003` redacts leftover `messages.session_id` cookie values.
+2. KV session cookie (display name + `publicId`). Cookie-only `loadSession`. Records without `publicId` are rejected.
 3. `ChatRoom` Durable Object: hibernation WebSocket, persist+broadcast, presence excluding the leaving socket, write rate limit, frame cap, auto ping/pong.
 4. HTTP API: health, rooms (GET read-only), history, send, upload, file GET. Rooms created only on rate-limited writes.
 5. Turnstile on `POST /api/session`. Persisted session required for upload, room create, WS upgrade.
@@ -80,7 +80,7 @@ Worker `tech-demos-edgechat`:
 ## Cost
 
 - One SQLite-backed DO class, one D1, one KV namespace, one R2 bucket.
-- REST and WebSocket **writes share `WRITE_LIMIT` (40 / 60s per IP)**. Upgrades use `CONNECT_LIMIT` (`7468`, 40 / 60s). Uploads capped at 1 MB and a global daily byte budget.
+- REST and WebSocket **writes share `WRITE_LIMIT` (40 / 60s per IP and per session)**. Upgrades use `CONNECT_LIMIT` (`7468`, 40 / 60s). Uploads capped at 1 MB and a global daily byte budget. `wrangler deploy` requires `TURNSTILE_SECRET`.
 - Hourly prune: drop non-seed messages/attachments older than 7 days, keep the newest 500 per room, delete their R2 keys, drop empty non-lobby rooms. Owner should add an R2 lifecycle rule on `uploads/` (7 days).
 - No Containers, Browser Rendering, Vectorize, WFP.
 

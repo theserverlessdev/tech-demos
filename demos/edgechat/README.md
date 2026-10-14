@@ -34,7 +34,7 @@ Upstream is **GPL-3.0**. This folder is original code under the same license as 
 - Room ids are slugs of letters and numbers (any script). Punctuation-only names are rejected.
 - Messages and `uploads/` objects older than 7 days are pruned (newest 500 per room are kept). Seed lobby rows stay.
 - The socket reconnects with backoff after a drop, a deploy, or when the tab becomes visible again.
-- Writes (REST and WebSocket) share a per-IP limit. Uploads are 1 MB and sit under a daily byte budget. Turnstile gates minting a session.
+- Writes (REST and WebSocket) share a per-IP and per-session limit. Uploads are 1 MB and sit under a daily byte budget. Turnstile gates minting a session.
 
 ## What it proves
 
@@ -45,7 +45,7 @@ Upstream is **GPL-3.0**. This folder is original code under the same license as 
 | **KV** | Display-name session cookie plus a non-secret `publicId`. |
 | **R2** | Attach a file in a room under `uploads/`; the message shows a link (PNG/JPEG/GIF/WebP preview). |
 | **Turnstile** | One solve mints a KV session. Upload, room create, and WS upgrade need that session. |
-| **Rate Limit** | `WRITE_LIMIT` (40/60s) on REST and socket sends. `CONNECT_LIMIT` (7468, 40/60s) on upgrades. |
+| **Rate Limit** | `WRITE_LIMIT` (40/60s) on REST and socket sends, per IP **and** per session. `CONNECT_LIMIT` (7468, 40/60s) on upgrades. |
 
 The UI is a room picker, a scrolling message list, a composer, and an upload control. Graphite & Ember branding matches the hub (ember `#c2410c`, background `#0e0e11`, LogoMark SVG). Mobile-fluid at 390px.
 
@@ -97,8 +97,8 @@ This pass does **not** create Cloudflare resources or deploy. Existing ids stay 
 
 Owner steps after merge:
 
-1. `wrangler d1 migrations apply DB --remote` (or `bun run deploy`) so migration `0002` lands.
-2. Create a Turnstile widget for `tech-demos.theserverless.dev` and `edgechat.tech-demos.theserverless.dev`. Put the site key in `wrangler.jsonc` `vars.TURNSTILE_SITE_KEY` (or `wrangler secret`/`vars`) and `wrangler secret put TURNSTILE_SECRET`.
+1. `wrangler d1 migrations apply DB --remote` (or `bun run deploy`) so migrations `0002` and `0003` land.
+2. Create a Turnstile widget for `tech-demos.theserverless.dev` and `edgechat.tech-demos.theserverless.dev`. Put the site key in `wrangler.jsonc` `vars.TURNSTILE_SITE_KEY` and run `wrangler secret put TURNSTILE_SECRET`. `wrangler deploy` fails if that secret is missing (`secrets.required`).
 3. Optional but recommended: R2 lifecycle on bucket `tech-demos-edgechat`, prefix `uploads/`, expire after 7 days. That leaves `seed/welcome.txt` alone. Dashboard or `wrangler r2 bucket lifecycle` — this agent does not change Cloudflare account config.
 4. Confirm `CONNECT_LIMIT` namespace `7468` is unused by another Worker on the same account.
 

@@ -65,12 +65,8 @@ export async function loadSession(env: Env, request: Request): Promise<SessionRe
   if (!raw || typeof raw !== "object") return null;
   const data = raw as { publicId?: unknown; displayName?: unknown; createdAt?: unknown };
   if (typeof data.displayName !== "string" || typeof data.createdAt !== "number") return null;
-  const publicId = typeof data.publicId === "string" && data.publicId ? data.publicId : crypto.randomUUID();
-  const record: SessionRecord = { id, publicId, displayName: data.displayName, createdAt: data.createdAt };
-  if (typeof data.publicId !== "string" || !data.publicId) {
-    await env.SESSIONS.put(kvKey(id), JSON.stringify(record), { expirationTtl: SESSION_TTL });
-  }
-  return record;
+  if (typeof data.publicId !== "string" || !data.publicId) return null;
+  return { id, publicId: data.publicId, displayName: data.displayName, createdAt: data.createdAt };
 }
 
 export async function saveSession(env: Env, record: SessionRecord): Promise<SessionRecord> {

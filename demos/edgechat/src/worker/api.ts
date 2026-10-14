@@ -13,6 +13,7 @@ import {
 } from "./db";
 import { fileResponseHeaders } from "./files";
 import { assertContentLength, clientIp, HttpError, json, safeDecode } from "./http";
+import { sessionWriteKey } from "./limits";
 import { fanout } from "./room";
 import {
   ephemeralSession,
@@ -28,9 +29,12 @@ import { turnstileSiteKey, verifyTurnstile, writesOpen } from "./turnstile";
 
 const ALLOWED_FILE = /^[\w .\-()[\]]+$/;
 
-async function limitWrite(env: Env, request: Request): Promise<void> {
-  const { success } = await env.WRITE_LIMIT.limit({ key: clientIp(request) });
-  if (!success) throw new HttpError(429, "rate_limited", "Too many writes from this address. Wait a minute.");
+async function limitWrite(env: Env, request: Request, publicId?: string): Promise<void> {
+  const ip = await env.WRITE_LIMIT.limit({ key: clientIp(request) });
+  if (!ip.success) throw new HttpError(429, "rate_limited", "Too many writes from this address. Wait a minute.");
+  if (!publicId) return;
+  const session = await env.WRITE_LIMIT.limit({ key: sessionWriteKey(publicId) });
+  if (!session.success) throw new HttpError(429, "rate_limited", "Too many writes from this session. Wait a minute.");
 }
 
 async function readJson(request: Request): Promise<Record<string, unknown>> {
@@ -94,8 +98,8 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
   await ensureSeedFiles(env);
 
   if (path === "/api/session" && request.method === "POST") {
-    await limitWrite(env, request);
     const existing = await loadSession(env, request);
+    await limitWrite(env, request, existing?.publicId);
     const body = await readJson(request);
     if (!existing) {
       if (!writesOpen(env, request)) {
@@ -121,8 +125,8 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
   }
 
   if (path === "/api/rooms" && request.method === "POST") {
-    await limitWrite(env, request);
-    await requirePersistedSession(env, request);
+    const session = await requirePersistedSession(env, request);
+    await limitWrite(env, request, session.publicId);
     const body = await readJson(request);
     const name = typeof body.name === "string" ? body.name : "";
     const room = await ensureRoom(env, name);
@@ -153,8 +157,8 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
       return json({ room, messages });
     }
     if (roomPath.rest === "messages" && request.method === "POST") {
-      await limitWrite(env, request);
       const session = await requirePersistedSession(env, request);
+      await limitWrite(env, request, session.publicId);
       const body = await readJson(request);
       const text = typeof body.body === "string" ? body.body.replace(/\s+/g, " ").trim().slice(0, MAX_BODY) : "";
       if (!text) throw new HttpError(400, "empty", "Type a message first.");
@@ -169,8 +173,8 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
       return withSession(session, request, json({ message: saved.message, room: saved.room }, 201));
     }
     if (roomPath.rest === "upload" && request.method === "POST") {
-      await limitWrite(env, request);
       const session = await requirePersistedSession(env, request);
+      await limitWrite(env, request, session.publicId);
       assertContentLength(request, MAX_UPLOAD_BODY);
       const form = await request.formData();
       const file = form.get("file");
