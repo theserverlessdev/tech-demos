@@ -42,31 +42,38 @@ const page = await context.newPage();
 page.on("pageerror", (err) => console.error(err.message));
 
 await page.addInitScript(() => localStorage.setItem("theme", "dark"));
-await page.goto(url, { waitUntil: "networkidle" });
+await page.goto(url, { waitUntil: "load" });
+await page.waitForFunction(() => (document.getElementById("session-note")?.textContent ?? "").includes("Signed session"), null, { timeout: 15_000 });
 await stampMock(page);
 await fillEndpoint(page);
 await page.locator("#list-models").click();
-await page.waitForFunction(() => (document.getElementById("models-note")?.textContent ?? "").includes("models"), null, { timeout: 15_000 });
+await page.waitForFunction(() => /\d+ models/.test(document.getElementById("models-note")?.textContent ?? ""), null, { timeout: 15_000 });
 await page.locator("#prompt").fill("Say hello in one short sentence.");
 await page.locator("#send").click();
 await page.waitForFunction(() => {
   const last = document.querySelector(".bubble.assistant div");
-  return Boolean(last && last.textContent && last.textContent.length > 8);
+  return Boolean(last && last.textContent && last.textContent.length > 8 && !(document.getElementById("send") as HTMLButtonElement | null)?.disabled);
 }, null, { timeout: 20_000 });
+await page.waitForTimeout(600);
 await page.screenshot({ path: `${out}desktop-chat.png`, fullPage: true });
 
 await page.getByRole("tab", { name: "Compare" }).click();
+await page.waitForTimeout(400);
 await page.locator("#compare").click();
 await page.waitForFunction(() => {
   const yours = document.getElementById("yours-out")?.textContent ?? "";
   const ours = document.getElementById("ours-out")?.textContent ?? "";
-  return yours.length > 4 && ours.length > 4;
+  const idle = !(document.getElementById("compare") as HTMLButtonElement | null)?.disabled;
+  return yours.length > 4 && ours.length > 4 && idle;
 }, null, { timeout: 20_000 });
+await page.waitForTimeout(600);
 await page.screenshot({ path: `${out}desktop-compare.png`, fullPage: true });
 
 await page.getByRole("tab", { name: "Capabilities" }).click();
+await page.waitForTimeout(400);
 await page.locator("#run-caps").click();
-await page.waitForFunction(() => document.querySelectorAll(".cap").length >= 4, null, { timeout: 25_000 });
+await page.waitForFunction(() => document.querySelectorAll(".cap").length >= 4 && !(document.getElementById("run-caps") as HTMLButtonElement | null)?.disabled, null, { timeout: 25_000 });
+await page.waitForTimeout(600);
 await page.screenshot({ path: `${out}desktop-capabilities.png`, fullPage: true });
 
 const video = page.video();
@@ -87,7 +94,8 @@ if (raw) {
 const mobile = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
 const phone = await mobile.newPage();
 await phone.addInitScript(() => localStorage.setItem("theme", "dark"));
-await phone.goto(url, { waitUntil: "networkidle" });
+await phone.goto(url, { waitUntil: "load" });
+await phone.waitForFunction(() => (document.getElementById("session-note")?.textContent ?? "").includes("Signed session"), null, { timeout: 15_000 });
 await stampMock(phone);
 await fillEndpoint(phone);
 await phone.locator("#prompt").fill("Hello from a 390px phone layout.");

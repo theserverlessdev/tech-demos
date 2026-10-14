@@ -680,8 +680,10 @@ async function refreshConfig() {
     compareOff = data.ai === "off" || proxyOff;
     compareBtn.disabled = compareOff;
     listModels.disabled = proxyOff;
-    send.disabled = proxyOff || busy;
-    runCaps.disabled = proxyOff || busy;
+    if (!busy) {
+      send.disabled = proxyOff;
+      runCaps.disabled = proxyOff;
+    }
     if (proxyOff) {
       budgetNote.textContent = "Proxy is off until Turnstile is configured.";
       sessionNote.textContent = "Proxy is off until Turnstile is configured.";
