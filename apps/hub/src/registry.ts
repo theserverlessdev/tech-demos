@@ -188,6 +188,18 @@ const memoryRepoFallbackSource = `export default {
 };
 `;
 
+// omni-judge is a standalone Worker (Workers AI, D1, R2, cron). The zone route wins.
+// If the request is already on the target host, return 503 instead of redirecting to itself.
+const omniJudgeFallbackSource = `export default {
+  fetch(request) {
+    const url = new URL(request.url);
+    if (url.hostname === "omni-judge.tech-demos.theserverless.dev") return new Response("This demo is unavailable.", { status: 503, headers: { "content-type": "text/plain; charset=utf-8" } });
+    const rest = url.pathname.replace(/^\\/demos\\/omni-judge/, "") || "/";
+    return Response.redirect("https://omni-judge.tech-demos.theserverless.dev" + rest + url.search, 302);
+  },
+};
+`;
+
 // edgechat is a standalone Worker (Durable Objects, D1, KV, R2). Same pattern as resolve-hq:
 // the zone route wins, and this source only redirects if that route is missing.
 const edgechatFallbackSource = `export default {
@@ -537,6 +549,29 @@ export const demos: DemoEntry[] = [
     ],
     tags: ["artifacts", "agents-sdk", "workers-ai", "d1", "turnstile"],
     source: memoryRepoFallbackSource,
+  },
+  {
+    slug: "omni-judge",
+    title: "Omni Judge",
+    description: "One Clef-omni call scores a photo, a voice note, or a short video.",
+    demonstrates:
+      "A single Workers AI call to Clef-omni reads the media and returns a probability for every allowed answer. Upload bytes are sniffed for type, size, and duration, stored in R2 under an unguessable id, and deleted after 24 hours. Judgments live in D1. A comparison can time Whisper or a vision model plus Clef on the same image or audio.",
+    capabilities: [
+      "Snap a photo, record a voice note, or film up to 10 seconds",
+      "Start from a bundled sample",
+      "Pick a preset checklist or write up to five questions",
+      "Read the probability for every option, the top answer, and the latency",
+      "Compare with the classic chain on an image or a voice note",
+      "Review recent judgments from this browser",
+    ],
+    useCases: [
+      "Voicemail triage",
+      "Upload moderation",
+      "Field-inspection checklists",
+      "Support-call routing",
+    ],
+    tags: ["workers-ai", "d1", "r2", "turnstile", "cron"],
+    source: omniJudgeFallbackSource,
   },
 ];
 

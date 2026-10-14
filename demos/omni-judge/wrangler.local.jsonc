@@ -1,0 +1,42 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tech-demos-omni-judge",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "tech-demos-omni-judge",
+      "database_id": "00000000-0000-4000-8000-000000007451",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "BUCKET",
+      "bucket_name": "tech-demos-omni-judge"
+    }
+  ],
+  "ratelimits": [
+    { "name": "JUDGE_LIMIT", "namespace_id": "7451", "simple": { "limit": 6, "period": 60 } },
+    { "name": "COMPARE_LIMIT", "namespace_id": "7452", "simple": { "limit": 4, "period": 60 } },
+    { "name": "READ_LIMIT", "namespace_id": "7453", "simple": { "limit": 60, "period": 60 } }
+  ],
+  "vars": {
+    "OMNI_MODEL": "@cf/cloudflare/clef-omni",
+    "CLEF_MODEL": "@cf/cloudflare/clef",
+    "WHISPER_MODEL": "@cf/openai/whisper-large-v3-turbo",
+    "VISION_MODEL": "@cf/meta/llama-3.2-11b-vision-instruct",
+    "ENVIRONMENT": "local",
+    "TURNSTILE_SITE_KEY": "1x00000000000000000000AA"
+  },
+  "secrets": { "required": ["TURNSTILE_SECRET", "IP_HASH_SECRET"] },
+  "workers_dev": true
+}

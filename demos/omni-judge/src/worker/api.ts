@@ -1,0 +1,443 @@
+import { LIMITS } from "../shared/limits";
+import { sniffMedia } from "../shared/media";
+import { SAMPLES, validateQuestions } from "../shared/questions";
+import type { JudgmentView, SampleId, SessionPayload } from "../shared/types";
+import { runCompare, VIDEO_COMPARE_REASON } from "./compare";
+import {
+  countRecentIp,
+  countRecentVisitor,
+  countSince,
+  failJudgment,
+  finishJudgment,
+  getJudgment,
+  getMedia,
+  insertJudgment,
+  insertMedia,
+  listJudgments,
+  mediaKey,
+  toView,
+  type JudgmentRow,
+  type MediaRow,
+} from "./db";
+import { runOmni } from "./judge";
+import { budgetDecision, hashIpKey, networkKey } from "./policy";
+import { environmentName, isLocalRequest, isTestSiteKey, resolveTurnstileSecret, verifyTurnstile } from "./turnstile";
+
+export class HttpError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+const COOKIE = "oj_vid";
+const VISITOR = /^[a-f0-9]{32}$/;
+const ID = /^[a-f0-9]{32}$/;
+
+function json(data: unknown, status = 200, extra?: Headers): Response {
+  const headers = extra ?? new Headers();
+  headers.set("content-type", "application/json; charset=utf-8");
+  headers.set("cache-control", "no-store");
+  headers.set("x-content-type-options", "nosniff");
+  return new Response(JSON.stringify(data), { status, headers });
+}
+
+export function errorResponse(err: unknown): Response {
+  if (err instanceof HttpError) return json({ error: { code: err.code, message: err.message } }, err.status);
+  console.error(JSON.stringify({ event: "api_error", error: err instanceof Error ? err.name : "error" }));
+  return json({ error: { code: "internal", message: "The server failed. Try again." } }, 500);
+}
+
+function clientIp(request: Request): string {
+  return request.headers.get("cf-connecting-ip") || "local";
+}
+
+function readVisitor(request: Request): string | null {
+  const header = request.headers.get("cookie") ?? "";
+  for (const part of header.split(";")) {
+    const [name, ...rest] = part.trim().split("=");
+    if (name === COOKIE) {
+      let value = "";
+      try {
+        value = decodeURIComponent(rest.join("="));
+      } catch {
+        return null;
+      }
+      return VISITOR.test(value) ? value : null;
+    }
+  }
+  return null;
+}
+
+function cookiePath(url: URL): string {
+  return url.pathname.startsWith("/demos/omni-judge") ? "/demos/omni-judge" : "/";
+}
+
+function visitorCookie(url: URL, visitorId: string): string {
+  const secure = url.protocol === "https:" ? "; Secure" : "";
+  return `${COOKIE}=${visitorId}; HttpOnly; SameSite=Lax; Path=${cookiePath(url)}; Max-Age=604800${secure}`;
+}
+
+function ensureVisitor(request: Request): { id: string; fresh: boolean } {
+  const existing = readVisitor(request);
+  if (existing) return { id: existing, fresh: false };
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return { id: [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join(""), fresh: true };
+}
+
+function withVisitor(request: Request, response: Response, visitor: { id: string; fresh: boolean }): Response {
+  if (!visitor.fresh) return response;
+  const headers = new Headers(response.headers);
+  headers.append("set-cookie", visitorCookie(new URL(request.url), visitor.id));
+  return new Response(response.body, { status: response.status, headers });
+}
+
+function assertSameOrigin(request: Request): void {
+  const origin = request.headers.get("origin");
+  if (!origin) return;
+  if (origin !== new URL(request.url).origin) throw new HttpError(403, "origin", "Origin not allowed.");
+}
+
+async function limit(binding: RateLimit, request: Request, message: string): Promise<void> {
+  try {
+    const { success } = await binding.limit({ key: networkKey(clientIp(request)) });
+    if (!success) throw new HttpError(429, "rate_limited", message);
+  } catch (err) {
+    if (err instanceof HttpError) throw err;
+    console.error(JSON.stringify({ event: "rate_limit_failed", error: err instanceof Error ? err.name : "error" }));
+    throw new HttpError(503, "rate_limit_unavailable", "Rate limiting is unavailable. Try again shortly.");
+  }
+}
+
+function newId(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function publicSiteKey(env: Env): string | null {
+  const key = env.TURNSTILE_SITE_KEY?.trim() ?? "";
+  if (!key || key === "REPLACE_ME") return null;
+  return key;
+}
+
+function ipSecret(env: Env): string {
+  const secret = env.IP_HASH_SECRET?.trim() ?? "";
+  if (!secret) throw new HttpError(503, "unconfigured", "IP_HASH_SECRET is not set.");
+  return secret;
+}
+
+function isSample(value: string): value is SampleId {
+  return value in SAMPLES;
+}
+
+async function readJson(request: Request): Promise<unknown> {
+  const declared = request.headers.get("content-length");
+  if (declared !== null) {
+    const size = Number(declared);
+    if (!Number.isFinite(size) || size < 0 || size > 32_000) throw new HttpError(413, "too_large", "The request body is too large.");
+  }
+  const text = await request.text();
+  if (text.length > 32_000) throw new HttpError(413, "too_large", "The request body is too large.");
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    throw new HttpError(400, "bad_json", "The request body must be JSON.");
+  }
+}
+
+function field(body: unknown, key: string): unknown {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return undefined;
+  return (body as Record<string, unknown>)[key];
+}
+
+async function readUpload(request: Request): Promise<{ token: string; questions: unknown; compare: boolean; sampleId: string | null; file: Uint8Array | null; filename: string }> {
+  const type = request.headers.get("content-type") ?? "";
+  if (type.includes("multipart/form-data")) {
+    const declared = request.headers.get("content-length");
+    if (declared !== null) {
+      const size = Number(declared);
+      if (!Number.isFinite(size) || size < 0 || size > LIMITS.maxBodyBytes) throw new HttpError(413, "too_large", "That file is too large.");
+    }
+    const form = await request.formData();
+    const token = form.get("turnstileToken");
+    const questionsRaw = form.get("questions");
+    const sample = form.get("sampleId");
+    const compare = form.get("compare");
+    const file = form.get("file");
+    let questions: unknown = [];
+    if (typeof questionsRaw === "string") {
+      try {
+        questions = JSON.parse(questionsRaw) as unknown;
+      } catch {
+        throw new HttpError(400, "questions", "Questions must be JSON.");
+      }
+    }
+    let bytes: Uint8Array | null = null;
+    let filename = "";
+    if (file instanceof File && file.size > 0) {
+      if (file.size > LIMITS.maxVideoBytes) throw new HttpError(413, "too_large", "That file is too large.");
+      bytes = new Uint8Array(await file.arrayBuffer());
+      filename = file.name.slice(0, 80);
+    }
+    return {
+      token: typeof token === "string" ? token : "",
+      questions,
+      compare: compare === "1" || compare === "true",
+      sampleId: typeof sample === "string" && sample ? sample : null,
+      file: bytes,
+      filename,
+    };
+  }
+  const body = await readJson(request);
+  return {
+    token: typeof field(body, "turnstileToken") === "string" ? (field(body, "turnstileToken") as string) : "",
+    questions: field(body, "questions"),
+    compare: field(body, "compare") === true,
+    sampleId: typeof field(body, "sampleId") === "string" ? (field(body, "sampleId") as string) : null,
+    file: null,
+    filename: "",
+  };
+}
+
+async function loadSample(request: Request, env: Env, sampleId: SampleId): Promise<Uint8Array> {
+  const sample = SAMPLES[sampleId];
+  const url = new URL(request.url);
+  url.pathname = `/samples/${sample.file}`;
+  url.search = "";
+  const res = await env.ASSETS.fetch(new Request(url, { method: "GET" }));
+  if (!res.ok) throw new HttpError(500, "sample", "That sample is missing.");
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  if (bytes.length > LIMITS.maxVideoBytes) throw new HttpError(500, "sample", "That sample is too large.");
+  return bytes;
+}
+
+function ownedMedia(row: MediaRow | null, visitorId: string): MediaRow {
+  if (!row || row.visitor_id !== visitorId) throw new HttpError(404, "not_found", "That file does not exist.");
+  return row;
+}
+
+function ownedJudgment(row: JudgmentRow | null, visitorId: string): JudgmentRow {
+  if (!row || row.visitor_id !== visitorId) throw new HttpError(404, "not_found", "That judgment does not exist.");
+  return row;
+}
+
+function fileResponse(bytes: Uint8Array, contentType: string): Response {
+  const headers = new Headers();
+  headers.set("content-type", contentType);
+  headers.set("cache-control", "private, max-age=3600");
+  headers.set("x-content-type-options", "nosniff");
+  headers.set("cross-origin-resource-policy", "same-origin");
+  headers.set("x-robots-tag", "noindex");
+  headers.set("content-security-policy", "sandbox; default-src 'none'");
+  return new Response(bytes, { headers });
+}
+
+async function spend(env: Env, visitorId: string, ipKey: string, now: number): Promise<[number, number, number]> {
+  const sinceHour = now - 60 * 60 * 1000;
+  const sinceDay = now - LIMITS.retentionMs;
+  return Promise.all([countRecentVisitor(env, visitorId, sinceHour), countRecentIp(env, ipKey, sinceHour), countSince(env, sinceDay)]);
+}
+
+export async function handleApi(request: Request, env: Env, path: string): Promise<Response> {
+  const url = new URL(request.url);
+  const visitor = ensureVisitor(request);
+
+  if (request.method === "GET" && path === "/api/health") {
+    let d1 = false;
+    try {
+      await env.DB.prepare("SELECT 1 AS ok").first();
+      d1 = true;
+    } catch (err) {
+      console.error(JSON.stringify({ event: "d1_unavailable", error: err instanceof Error ? err.name : "error" }));
+    }
+    const environment = environmentName(env);
+    return withVisitor(request, json({ ok: d1, d1, turnstile: resolveTurnstileSecret(isLocalRequest(request, environment), env.TURNSTILE_SECRET).ok, ai: environment === "local" ? "stub" : "binding" }), visitor);
+  }
+
+  if (request.method === "GET" && path === "/api/session") {
+    await limit(env.READ_LIMIT, request, "Too many reads from this address. Wait a minute.");
+    const secret = ipSecret(env);
+    const ipKey = await hashIpKey(clientIp(request), secret);
+    const since = Date.now() - 60 * 60 * 1000;
+    const [visitorUsed, networkUsed] = await Promise.all([countRecentVisitor(env, visitor.id, since), countRecentIp(env, ipKey, since)]);
+    const siteKey = publicSiteKey(env);
+    const payload: SessionPayload = {
+      siteKey,
+      testWidget: isTestSiteKey(siteKey ?? undefined),
+      stub: environmentName(env) === "local",
+      perVisitorHour: LIMITS.perVisitorHour,
+      visitorUsed,
+      networkUsed,
+      dailyCap: LIMITS.dailyCap,
+      retentionHours: 24,
+    };
+    return withVisitor(request, json(payload), visitor);
+  }
+
+  if (request.method === "GET" && path === "/api/judgments") {
+    await limit(env.READ_LIMIT, request, "Too many reads from this address. Wait a minute.");
+    const rows = await listJudgments(env, visitor.id);
+    return withVisitor(request, json({ judgments: rows.map(toView) }), visitor);
+  }
+
+  const mediaMatch = /^\/api\/media\/([a-f0-9]{32})$/.exec(path);
+  if (request.method === "GET" && mediaMatch) {
+    await limit(env.READ_LIMIT, request, "Too many reads from this address. Wait a minute.");
+    const id = mediaMatch[1] ?? "";
+    const row = ownedMedia(await getMedia(env, id), visitor.id);
+    const object = await env.BUCKET.get(row.r2_key);
+    if (!object) throw new HttpError(404, "not_found", "That file does not exist.");
+    const bytes = new Uint8Array(await object.arrayBuffer());
+    const sniffed = sniffMedia(bytes);
+    const type = sniffed.ok ? sniffed.contentType : "application/octet-stream";
+    return withVisitor(request, fileResponse(bytes, type), visitor);
+  }
+
+  const judgmentMatch = /^\/api\/judgments\/([a-f0-9]{32})$/.exec(path);
+  if (request.method === "GET" && judgmentMatch) {
+    await limit(env.READ_LIMIT, request, "Too many reads from this address. Wait a minute.");
+    const id = judgmentMatch[1] ?? "";
+    const row = ownedJudgment(await getJudgment(env, id), visitor.id);
+    return withVisitor(request, json(toView(row)), visitor);
+  }
+
+  if (request.method === "POST" && path === "/api/judge") {
+    assertSameOrigin(request);
+    const local = isLocalRequest(request, environmentName(env));
+    const secret = resolveTurnstileSecret(local, env.TURNSTILE_SECRET);
+    if (!secret.ok) throw new HttpError(503, "turnstile_unconfigured", "Turnstile is not configured. Set TURNSTILE_SECRET.");
+    const upload = await readUpload(request);
+    if (!upload.token.trim()) throw new HttpError(400, "turnstile_required", "Complete the Turnstile check first.");
+    const validated = validateQuestions(upload.questions);
+    if (!validated.ok) throw new HttpError(400, "questions", validated.message);
+    if (!(await verifyTurnstile(secret.secret, upload.token.trim(), clientIp(request), url.hostname))) {
+      throw new HttpError(403, "turnstile_failed", "Turnstile did not pass. Try the check again.");
+    }
+
+    let bytes: Uint8Array;
+    let sampleId: SampleId | null = null;
+    let label = "Upload";
+    if (upload.sampleId) {
+      if (!isSample(upload.sampleId)) throw new HttpError(400, "sample", "That sample does not exist.");
+      sampleId = upload.sampleId;
+      bytes = await loadSample(request, env, sampleId);
+      label = SAMPLES[sampleId].label;
+    } else if (upload.file) {
+      bytes = upload.file;
+      label = upload.filename || "Upload";
+    } else {
+      throw new HttpError(400, "media", "Choose a sample or a file.");
+    }
+    const sniffed = sniffMedia(bytes);
+    if (!sniffed.ok) throw new HttpError(400, "media", sniffed.message);
+
+    const wantCompare = upload.compare && sniffed.kind !== "video";
+    await limit(env.JUDGE_LIMIT, request, "Too many judgments from this network. Wait a minute.");
+    if (upload.compare && sniffed.kind !== "video") await limit(env.COMPARE_LIMIT, request, "Too many comparisons from this network. Wait a minute.");
+
+    const now = Date.now();
+    const ipKey = await hashIpKey(clientIp(request), ipSecret(env));
+    const [visitorUsed, networkUsed, dailyUsed] = await spend(env, visitor.id, ipKey, now);
+    const budget = budgetDecision({ visitor: visitorUsed, network: networkUsed, daily: dailyUsed });
+    if (!budget.ok) throw new HttpError(budget.status, budget.code, budget.message);
+
+    let mediaId: string | null = null;
+    if (!sampleId) {
+      mediaId = newId();
+      const key = mediaKey(mediaId);
+      try {
+        await env.BUCKET.put(key, bytes, { httpMetadata: { contentType: sniffed.contentType } });
+      } catch (err) {
+        console.error(JSON.stringify({ event: "r2_put_failed", error: err instanceof Error ? err.name : "error" }));
+        throw new HttpError(503, "storage", "The file could not be stored.");
+      }
+      await insertMedia(env, {
+        id: mediaId,
+        visitor_id: visitor.id,
+        kind: sniffed.kind,
+        content_type: sniffed.contentType,
+        bytes: bytes.length,
+        duration_ms: sniffed.durationMs,
+        r2_key: key,
+        now,
+      });
+    }
+
+    const questionsJson = JSON.stringify(validated.questions);
+    const omniId = newId();
+    if (!ID.test(omniId)) throw new HttpError(500, "internal", "The server failed. Try again.");
+    const inserted = await insertJudgment(env, {
+      id: omniId,
+      visitorId: visitor.id,
+      mediaId,
+      sampleId,
+      kind: "omni",
+      modality: sniffed.kind,
+      label,
+      ipKey,
+      questionsJson,
+      now,
+    });
+    if (!inserted) {
+      const [againVisitor, againNetwork, againDaily] = await spend(env, visitor.id, ipKey, now);
+      const again = budgetDecision({ visitor: againVisitor, network: againNetwork, daily: againDaily });
+      if (!again.ok) throw new HttpError(again.status, again.code, again.message);
+      throw new HttpError(429, "hourly", "This network has used its judgments for this hour.");
+    }
+
+    const media = { kind: sniffed.kind, contentType: sniffed.contentType, bytes, durationMs: sniffed.durationMs };
+    const omni = await runOmni(env, media, validated.questions, omniId);
+    if (!omni.ok) {
+      await failJudgment(env, omniId, omni.message);
+    } else {
+      await finishJudgment(env, omniId, omni.result, omni.result.cost.usd);
+    }
+    const omniRow = ownedJudgment(await getJudgment(env, omniId), visitor.id);
+
+    let comparison: JudgmentView | { available: false; reason: string } | { error: { code: string; message: string } } | null = null;
+    if (!omni.ok) {
+      comparison = null;
+    } else if (sniffed.kind === "video" && upload.compare) {
+      comparison = { available: false, reason: VIDEO_COMPARE_REASON };
+    } else if (wantCompare) {
+      const compareNow = Date.now();
+      const [cVisitor, cNetwork, cDaily] = await spend(env, visitor.id, ipKey, compareNow);
+      const compareBudget = budgetDecision({ visitor: cVisitor, network: cNetwork, daily: cDaily });
+      if (!compareBudget.ok) {
+        comparison = { error: { code: compareBudget.code, message: compareBudget.message } };
+      } else {
+        const compareId = newId();
+        const compareInserted = await insertJudgment(env, {
+          id: compareId,
+          visitorId: visitor.id,
+          mediaId,
+          sampleId,
+          kind: "compare",
+          modality: sniffed.kind,
+          label,
+          ipKey,
+          questionsJson,
+          now: compareNow,
+        });
+        if (!compareInserted) {
+          comparison = { error: { code: "hourly", message: "This network has used its judgments for this hour." } };
+        } else {
+          const chain = await runCompare(env, media, validated.questions, compareId);
+          if (!chain.ok) await failJudgment(env, compareId, chain.message);
+          else await finishJudgment(env, compareId, chain.result, chain.result.cost.usd);
+          comparison = toView(ownedJudgment(await getJudgment(env, compareId), visitor.id));
+        }
+      }
+    }
+
+    const body = { judgment: toView(omniRow), comparison };
+    return withVisitor(request, json(body, omni.ok ? 201 : 502), visitor);
+  }
+
+  throw new HttpError(404, "not_found", "That API path does not exist.");
+}
