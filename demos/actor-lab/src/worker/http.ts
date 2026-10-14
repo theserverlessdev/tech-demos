@@ -101,6 +101,9 @@ export function finish(response: Response, cookie: string | null): Response {
 
 export async function handleApi(request: Request, env: Env, pathname: string, visitorId: string): Promise<Response> {
   const method = request.method;
+  if ((method === "POST" || method === "PUT" || method === "PATCH") && contentLengthTooLarge(request, BODY_MAX)) {
+    throw new HttpError(413, "too_large", "The request body is too large.");
+  }
   const race = () => env.RACE.getByName(visitorId);
 
   if (pathname === "/api/health" && method === "GET") {

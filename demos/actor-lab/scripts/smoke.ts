@@ -82,8 +82,8 @@ check("deep asset paths are 404", deep.status === 404, deep.status);
 const minted = await fetch(`${base}/api/race/result?runId=${crypto.randomUUID()}`);
 check("race result without a visitor cookie is 404", minted.status === 404, minted.status);
 
-const oversized = await call("/api/rooms", { method: "POST", body: { pad: "x".repeat(33_000) } });
-check("oversize JSON is rejected before the room is created", oversized.status === 413, oversized.status);
+const oversized = await call("/api/race/arm", { method: "POST", body: { n: 4, mode: "interleaved", token: TOKEN, pad: "x".repeat(33_000) } });
+check("oversize JSON is rejected before buffering a race arm", oversized.status === 413, oversized.status);
 
 const created = await call<RoomResponse>("/api/rooms", { method: "POST", body: {} });
 check("create room returns a code", created.status === 201 && /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{6}$/.test(created.data?.code ?? ""), created.data?.code);
@@ -138,7 +138,7 @@ if (code) {
       resolve(ev.code === 1008);
     });
   });
-  for (let i = 0; i < 21; i++) noisy.send(JSON.stringify({ type: "scratch", text: `flood-${i}` }));
+  for (let i = 0; i < 21; i++) noisy.send(JSON.stringify({ type: "flood", n: i }));
   flooded = await closed;
 }
 check("more than 20 frames in 10s closes the socket with 1008", flooded);
