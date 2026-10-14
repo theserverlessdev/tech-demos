@@ -399,7 +399,7 @@ async function mintTicket(room: string): Promise<JoinTicket | null> {
     setStatus("Could not reach the Worker.", "warn");
     return null;
   }
-  let data: { room?: { id: string }; ticket?: string; expiresAt?: number; error?: { message: string } };
+  let data: { room?: { id: string; name?: string }; ticket?: string; expiresAt?: number; error?: { message: string } };
   try {
     data = (await res.json()) as typeof data;
   } catch {
@@ -412,7 +412,7 @@ async function mintTicket(room: string): Promise<JoinTicket | null> {
     state.widget?.reset();
     return null;
   }
-  return { room: data.room, ticket: data.ticket, expiresAt: data.expiresAt ?? 0 };
+  return { room: { id: data.room.id, name: data.room.name ?? data.room.id }, ticket: data.ticket, expiresAt: data.expiresAt ?? 0 };
 }
 
 async function joinRoom(raw?: string): Promise<void> {
