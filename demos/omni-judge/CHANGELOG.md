@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.4
+
+- A broken WebM element, a second Info, or an unknown-size Info is rejected instead of keeping a short prefix. A cut-off cluster keeps the last complete block.
+- MP4 duration includes the edit list and the `tfdt` timeline, so a repeated edit or a decode-time jump cannot hide a long file. A stock `frag_every_frame` file still passes.
+- MP3 duration no longer adds a millisecond to an exact whole number. Photos with alpha fall back to PNG when the browser cannot encode WebP.
+
 ## 0.1.3
 
 - Fragmented MP4 duration sums every `trun` on a track, then adds that track's `stts` ticks. A 9.5 second Chrome-style file stays inside the cap, and a 50 second file does not.

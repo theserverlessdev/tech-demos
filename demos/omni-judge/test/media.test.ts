@@ -44,6 +44,12 @@ function atom(type: string, payload: Uint8Array): Uint8Array {
   return concat(head, payload);
 }
 
+function u16be(value: number): Uint8Array {
+  const bytes = new Uint8Array(2);
+  new DataView(bytes.buffer).setUint16(0, value, false);
+  return bytes;
+}
+
 function u32be(value: number): Uint8Array {
   const bytes = new Uint8Array(4);
   new DataView(bytes.buffer).setUint32(0, value, false);
@@ -487,6 +493,114 @@ describe("media caps", () => {
     const long = sniffMedia(concat(ascii("RIFF"), u32le(4 + longBody.length), ascii("WAVE"), longBody));
     expect(long.ok).toBe(false);
     if (!long.ok) expect(long.message).toContain("15 seconds");
+  });
+
+  test("a junk byte, an unknown-size void, or a second info does not shorten webm", () => {
+    const scale = element([0x2a, 0xd7, 0xb1], Uint8Array.of(0x0f, 0x42, 0x40));
+    const info = element([0x15, 0x49, 0xa9, 0x66], scale);
+    const header = element([0x1a, 0x45, 0xdf, 0xa3], element([0x42, 0x86], Uint8Array.of(1)));
+    const cluster = (tc: number, rel: number[]) => {
+      const time = new Uint8Array(3);
+      time[0] = (tc >> 16) & 0xff;
+      time[1] = (tc >> 8) & 0xff;
+      time[2] = tc & 0xff;
+      return element([0x1f, 0x43, 0xb6, 0x75], concat(element([0xe7], time), ...rel.map((value) => simpleBlock(value))));
+    };
+    const early = cluster(0, [0, 5000]);
+    const late = cluster(50_000, [0]);
+    const wrap = (...parts: Uint8Array[]) => concat(header, Uint8Array.of(0x18, 0x53, 0x80, 0x67), ebmlUnknown(), info, ...parts);
+    const rejected = (file: Uint8Array) => {
+      const sniffed = sniffMedia(file);
+      expect(sniffed.ok).toBe(false);
+      if (!sniffed.ok) expect(sniffed.message).toContain("no readable duration");
+    };
+    rejected(wrap(early, Uint8Array.of(0x00), late));
+    rejected(wrap(early, concat(Uint8Array.of(0xec), unknown8()), late));
+    rejected(wrap(early, concat(Uint8Array.of(0x15, 0x49, 0xa9, 0x66), unknown8()), late));
+    const small = element([0x2a, 0xd7, 0xb1], Uint8Array.of(0x01, 0x86, 0xa0));
+    const second = element([0x15, 0x49, 0xa9, 0x66], small);
+    rejected(wrap(early, late, second));
+    rejected(wrap(early, second, late));
+    const padded = sniffMedia(concat(wrap(cluster(0, [0, 1000])), new Uint8Array(16)));
+    expect(padded).toMatchObject({ ok: true, contentType: "video/webm" });
+    if (padded.ok) expect(padded.durationMs).toBe(1000);
+  });
+
+  test("a chrome timeslice webm keeps trailing zeros and a cut tail", () => {
+    const zeros = sniffMedia(concat(chromeWebm([{ tc: 0, rel: [0, 1000] }]), new Uint8Array(32)));
+    expect(zeros).toMatchObject({ ok: true, contentType: "video/webm" });
+    if (zeros.ok) expect(zeros.durationMs).toBe(1000);
+    const full = chromeWebm([{ tc: 0, rel: [0, 4000, 8000] }]);
+    const cut = sniffMedia(full.subarray(0, full.length - 3));
+    expect(cut).toMatchObject({ ok: true, contentType: "video/webm" });
+    if (cut.ok) expect(cut.durationMs).toBe(4000);
+  });
+
+  test("an edit list can repeat a short track out past the cap", () => {
+    const ftyp = atom("ftyp", concat(ascii("isom"), u32be(0), ascii("isom")));
+    const mvhd = new Uint8Array(100);
+    new DataView(mvhd.buffer).setUint32(12, 1000);
+    const tkhd = new Uint8Array(84);
+    new DataView(tkhd.buffer).setUint32(12, 1);
+    const mdhd = new Uint8Array(24);
+    new DataView(mdhd.buffer).setUint32(12, 1000);
+    const stts = concat(u32be(0), u32be(1), u32be(1), u32be(5000));
+    const entry = (duration: number) => concat(u32be(duration), u32be(0), u16be(1), u16be(0));
+    const entries = Array.from({ length: 10 }, () => entry(5000));
+    const elst = concat(u32be(0), u32be(10), ...entries);
+    const trak = atom(
+      "trak",
+      concat(atom("tkhd", tkhd), atom("edts", atom("elst", elst)), atom("mdia", concat(atom("mdhd", mdhd), atom("minf", atom("stbl", atom("stts", stts)))))),
+    );
+    const repeated = sniffMedia(concat(ftyp, atom("moov", concat(atom("mvhd", mvhd), trak))));
+    expect(repeated.ok).toBe(false);
+    if (!repeated.ok) expect(repeated.message).toContain("10 seconds");
+    const once = concat(u32be(0), u32be(1), entry(5000));
+    const matching = atom(
+      "trak",
+      concat(atom("tkhd", tkhd), atom("edts", atom("elst", once)), atom("mdia", concat(atom("mdhd", mdhd), atom("minf", atom("stbl", atom("stts", stts)))))),
+    );
+    const kept = sniffMedia(concat(ftyp, atom("moov", concat(atom("mvhd", mvhd), matching))));
+    expect(kept).toMatchObject({ ok: true, kind: "video" });
+    if (kept.ok) expect(kept.durationMs).toBe(5000);
+  });
+
+  test("tfdt jumps place 1-tick fragments on a long timeline", () => {
+    const pieces = [safariFmp4({})];
+    for (let i = 0; i < 50; i++) {
+      const tfhd = concat(u32be(0x000008), u32be(1), u32be(1));
+      const tfdt = concat(u32be(0), u32be(i * 1000));
+      const trun = concat(u32be(0), u32be(1));
+      const traf = atom("traf", concat(atom("tfhd", tfhd), atom("tfdt", tfdt), atom("trun", trun)));
+      pieces.push(atom("moof", traf));
+    }
+    const jumped = sniffMedia(concat(...pieces));
+    expect(jumped.ok).toBe(false);
+    if (!jumped.ok) expect(jumped.message).toContain("10 seconds");
+    const short = [safariFmp4({})];
+    for (let i = 0; i < 3; i++) {
+      const tfhd = concat(u32be(0x000008), u32be(1), u32be(1));
+      const tfdt = concat(u32be(0), u32be(i * 1000));
+      const trun = concat(u32be(0), u32be(1));
+      short.push(atom("moof", atom("traf", concat(atom("tfhd", tfhd), atom("tfdt", tfdt), atom("trun", trun)))));
+    }
+    const placed = sniffMedia(concat(...short));
+    expect(placed).toMatchObject({ ok: true, kind: "video" });
+    if (placed.ok) expect(placed.durationMs).toBe(2001);
+  });
+
+  test("a stock ffmpeg frag_every_frame file stays inside the cap", () => {
+    const file = new Uint8Array(readFileSync(new URL("./fixtures/frag-every-frame.mp4", import.meta.url)));
+    const sniffed = sniffMedia(file);
+    expect(sniffed).toMatchObject({ ok: true, contentType: "video/mp4" });
+    if (sniffed.ok) expect(Math.abs((sniffed.durationMs ?? 0) - 2000)).toBeLessThanOrEqual(200);
+  });
+
+  test("an exact mp3 duration does not gain a millisecond", () => {
+    const frames = Array.from({ length: 196 }, () => mp3Frame());
+    const sniffed = sniffMedia(concat(...frames));
+    expect(sniffed).toMatchObject({ ok: true, kind: "audio" });
+    if (sniffed.ok) expect(sniffed.durationMs).toBe(5120);
   });
 
   test("comparison images stop at 512 KB or 2 megapixels", () => {

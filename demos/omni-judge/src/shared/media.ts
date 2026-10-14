@@ -138,12 +138,19 @@ function readMp3(bytes: Uint8Array): { durationMs: number } | null {
     frames += 1;
     cursor += next.size;
     guard += 1;
-    if (durationMs > LIMITS.maxAudioMs) {
-      return { durationMs: Math.max(LIMITS.maxAudioMs + 1, Math.ceil(durationMs)) };
+    if (durationMs > LIMITS.maxAudioMs + 1e-6) {
+      return { durationMs: Math.max(LIMITS.maxAudioMs + 1, durationCeil(durationMs)) };
     }
   }
   if (frames < 1 || !Number.isFinite(durationMs) || durationMs <= 0) return null;
-  return { durationMs: Math.ceil(durationMs) };
+  return { durationMs: durationCeil(durationMs) };
+}
+
+/** Ceil only a fraction above an epsilon, so an exact whole millisecond stays exact. */
+function durationCeil(ms: number): number {
+  const whole = Math.floor(ms);
+  if (ms - whole <= 1e-6) return whole;
+  return whole + 1;
 }
 
 function u32be(bytes: Uint8Array, o: number): number {
@@ -297,24 +304,39 @@ function readCluster(bytes: Uint8Array, start: number, end: number, span: Span):
   return true;
 }
 
+function restIsZero(bytes: Uint8Array, offset: number, end: number): boolean {
+  for (let i = offset; i < end; i++) if ((bytes[i] ?? 0) !== 0) return false;
+  return true;
+}
+
 /**
  * An unknown-size cluster is walked element by element. A raw Cluster id inside
  * a Void does not end it. The cluster ends at the next segment-level element.
- * A child whose size runs past the segment fails closed.
+ * An unknown-size child fails closed. A child cut off at the end of the file,
+ * or trailing zero bytes, ends the cluster at the last complete element.
  */
-function unknownClusterEnd(bytes: Uint8Array, start: number, limit: number): number | null {
+function unknownClusterEnd(bytes: Uint8Array, start: number, limit: number): { at: number; sibling: boolean } | null {
   let offset = start;
   while (offset + 2 <= limit) {
+    if ((bytes[offset] ?? 0) === 0) {
+      if (!restIsZero(bytes, offset, limit)) return null;
+      return { at: offset, sibling: false };
+    }
     const id = readId(bytes, offset);
-    if (!id || id.next > limit) return null;
-    if (SEGMENT_LEVEL.has(id.id)) return offset;
+    if (!id || id.next > limit) {
+      if (limit - offset < 16) return { at: offset, sibling: false };
+      return null;
+    }
+    if (SEGMENT_LEVEL.has(id.id)) return { at: offset, sibling: true };
     const size = readSize(bytes, id.next);
-    if (!size || size.unknown || size.next > limit) return null;
+    if (!size || size.next > limit) return { at: offset, sibling: false };
+    if (size.unknown) return null;
     const childEnd = size.next + size.value;
-    if (childEnd < size.next || childEnd > limit) return null;
+    if (childEnd < size.next) return null;
+    if (childEnd > limit) return { at: offset, sibling: false };
     offset = childEnd;
   }
-  return offset;
+  return { at: offset, sibling: false };
 }
 
 /**
@@ -338,16 +360,23 @@ function readWebm(bytes: Uint8Array): { durationMs: number } | null {
   if (segmentEnd < segmentSize.next || segmentEnd > bytes.length) return null;
 
   let scale = 1_000_000;
+  let sawInfo = false;
   const span: Span = { min: 0, max: 0, found: false };
   let offset = segmentSize.next;
   while (offset + 2 <= segmentEnd) {
+    if ((bytes[offset] ?? 0) === 0) {
+      if (!restIsZero(bytes, offset, segmentEnd)) return null;
+      break;
+    }
     const id = readId(bytes, offset);
-    if (!id || id.next > segmentEnd) break;
+    if (!id || id.next > segmentEnd) return null;
     const size = readSize(bytes, id.next);
-    if (!size || size.next > segmentEnd) break;
-    if (id.id === ID_INFO && !size.unknown) {
+    if (!size || size.next > segmentEnd) return null;
+    if (id.id === ID_INFO) {
+      if (sawInfo || size.unknown) return null;
+      sawInfo = true;
       const infoEnd = size.next + size.value;
-      if (infoEnd < size.next || infoEnd > segmentEnd) break;
+      if (infoEnd < size.next || infoEnd > segmentEnd) return null;
       const found = infoScale(bytes, size.next, infoEnd);
       if (found === "bad") return null;
       if (found !== "absent") scale = found;
@@ -356,21 +385,24 @@ function readWebm(bytes: Uint8Array): { durationMs: number } | null {
     }
     if (id.id === ID_CLUSTER) {
       let dataEnd: number;
+      let resume: number;
       if (size.unknown) {
-        const end = unknownClusterEnd(bytes, size.next, segmentEnd);
-        if (end === null) return null;
-        dataEnd = end;
+        const bound = unknownClusterEnd(bytes, size.next, segmentEnd);
+        if (!bound) return null;
+        dataEnd = bound.at;
+        resume = bound.sibling ? bound.at : segmentEnd;
       } else {
         dataEnd = size.next + size.value;
         if (dataEnd < size.next || dataEnd > segmentEnd) return null;
+        resume = dataEnd;
       }
       if (!readCluster(bytes, size.next, dataEnd, span)) return null;
-      offset = Math.max(dataEnd, size.next);
+      offset = Math.max(resume, size.next);
       continue;
     }
-    if (size.unknown) break;
+    if (size.unknown) return null;
     const childEnd = size.next + size.value;
-    if (childEnd < size.next || childEnd > segmentEnd) break;
+    if (childEnd < size.next || childEnd > segmentEnd) return null;
     offset = childEnd;
   }
   if (!span.found) return null;
@@ -422,14 +454,17 @@ function addFinite(total: number, extra: number): number | null {
   return next;
 }
 
-type Trak = { id: number; scale: number; ticks: number; samples: number };
-type RawTrun = { track: number; samples: number; ticks: number; needsTrex: boolean };
+type Trak = { id: number; scale: number; ticks: number; samples: number; elstTicks: number };
+type RawTrun = { track: number; samples: number; ticks: number; needsTrex: boolean; tfdt: number | null };
+type TrunAgg = { sum: number; timeline: number; timed: boolean };
 
 /**
  * mvhd.duration is not used. Each trak keeps its own id, timescale, and sample
  * table, in whatever child order the file uses. A second moov, a repeated
- * track id, or samples with no duration fail closed. A track's duration is
- * its stts ticks plus every trun on that track (tfhd, else trex). The file
+ * track id, or samples with no duration fail closed. A track's media timeline
+ * is its stts ticks plus every trun (tfhd, else trex), and the latest
+ * tfdt + fragment duration when that reaches further. An edit list is measured
+ * in the movie timescale and the track takes the longer of the two. The file
  * duration is the longest track, and mehd if that is longer.
  */
 function readMp4(bytes: Uint8Array): { durationMs: number } | null {
@@ -466,6 +501,8 @@ function readMp4(bytes: Uint8Array): { durationMs: number } | null {
     let ticks = 0;
     let samples = 0;
     let stszSamples: number | null = null;
+    let elstTicks = 0;
+    let sawElst = false;
     const level = (from: number, to: number, depth: number): void => {
       walk(from, to, depth, (box) => {
         const version = bytes[box.start] ?? 0;
@@ -512,6 +549,14 @@ function readMp4(bytes: Uint8Array): { durationMs: number } | null {
             return;
           }
           stszSamples = sampleCount;
+        } else if (box.type === "elst") {
+          const total = readElst(box);
+          if (total === null || sawElst) {
+            failed = true;
+            return;
+          }
+          sawElst = true;
+          elstTicks = total;
         } else if (box.type === "mdia" || box.type === "minf" || box.type === "stbl" || box.type === "edts") {
           level(box.start, box.end, depth + 1);
         }
@@ -527,10 +572,36 @@ function readMp4(bytes: Uint8Array): { durationMs: number } | null {
       failed = true;
       return;
     }
-    if (id > 0) traks.push({ id, scale, ticks, samples });
+    if (id > 0) traks.push({ id, scale, ticks, samples, elstTicks });
   };
 
-  const readTrun = (box: Atom, track: number, tfhdPresent: boolean, tfhdDuration: number): void => {
+  const readElst = (box: Atom): number | null => {
+    if (box.start + 8 > box.end) return null;
+    const version = bytes[box.start] ?? 0;
+    const count = u32be(bytes, box.start + 4);
+    const stride = version === 1 ? 20 : 12;
+    const payload = box.end - (box.start + 8);
+    if (payload < 0 || count > 10_000 || count > Math.floor(payload / stride)) return null;
+    let total = 0;
+    let cursor = box.start + 8;
+    for (let i = 0; i < count; i++) {
+      let segment = 0;
+      if (version === 1) {
+        const wide = u32be(bytes, cursor) * 2 ** 32 + u32be(bytes, cursor + 4);
+        if (!Number.isFinite(wide) || wide < 0) return null;
+        segment = wide;
+      } else {
+        segment = u32be(bytes, cursor);
+      }
+      const next = addFinite(total, segment);
+      if (next === null) return null;
+      total = next;
+      cursor += stride;
+    }
+    return total;
+  };
+
+  const readTrun = (box: Atom, track: number, tfhdPresent: boolean, tfhdDuration: number, tfdt: number | null): void => {
     const flags = u32be(bytes, box.start) & 0xffffff;
     const samples = u32be(bytes, box.start + 4);
     if (!Number.isFinite(samples) || samples < 0 || samples > MAX_TRUN_SAMPLES || track <= 0) {
@@ -568,14 +639,19 @@ function readMp4(bytes: Uint8Array): { durationMs: number } | null {
       ticks = next;
       resolved = true;
     } else {
-      if (samples > 0) truns.push({ track, samples, ticks: 0, needsTrex: true });
+      if (samples > 0) truns.push({ track, samples, ticks: 0, needsTrex: true, tfdt });
       return;
     }
-    if (samples > 0 && (!resolved || ticks <= 0)) {
+    if (samples > 0 && !resolved) {
       failed = true;
       return;
     }
-    if (samples > 0) truns.push({ track, samples, ticks, needsTrex: false });
+    // A zero sample duration is still a placed fragment when tfdt says where it starts.
+    if (samples > 0 && ticks <= 0 && tfdt === null) {
+      failed = true;
+      return;
+    }
+    if (samples > 0) truns.push({ track, samples, ticks, needsTrex: false, tfdt });
   };
 
   walk(0, bytes.length, 0, (box) => {
@@ -615,6 +691,7 @@ function readMp4(bytes: Uint8Array): { durationMs: number } | null {
         let track = 0;
         let tfhdDuration = 0;
         let tfhdPresent = false;
+        let tfdt: number | null = null;
         const pending: Atom[] = [];
         walk(child.start, child.end, 2, (inner) => {
           if (inner.type === "tfhd") {
@@ -627,11 +704,29 @@ function readMp4(bytes: Uint8Array): { durationMs: number } | null {
               tfhdDuration = u32be(bytes, cursor);
               tfhdPresent = true;
             }
+          } else if (inner.type === "tfdt") {
+            const version = bytes[inner.start] ?? 0;
+            if (version === 1) {
+              if (inner.start + 12 > inner.end) {
+                failed = true;
+                return;
+              }
+              const wide = u32be(bytes, inner.start + 4) * 2 ** 32 + u32be(bytes, inner.start + 8);
+              if (!Number.isFinite(wide) || wide < 0) {
+                failed = true;
+                return;
+              }
+              tfdt = wide;
+            } else if (inner.start + 8 <= inner.end) {
+              tfdt = u32be(bytes, inner.start + 4);
+            } else {
+              failed = true;
+            }
           } else if (inner.type === "trun") {
             pending.push(inner);
           }
         });
-        for (const trun of pending) readTrun(trun, track, tfhdPresent, tfhdDuration);
+        for (const trun of pending) readTrun(trun, track, tfhdPresent, tfhdDuration, tfdt);
       });
     }
   });
@@ -642,18 +737,27 @@ function readMp4(bytes: Uint8Array): { durationMs: number } | null {
     if (trackById.has(trak.id)) return null;
     trackById.set(trak.id, trak);
   }
-  const trunTicks = new Map<number, number>();
+  const trunTicks = new Map<number, TrunAgg>();
   for (const trun of truns) {
     let ticks = trun.ticks;
     if (trun.needsTrex) {
       const fallback = trexDuration.get(trun.track) ?? 0;
       const next = addFinite(0, trun.samples * fallback);
-      if (next === null || next <= 0) return null;
-      ticks = next;
+      if (next === null || (next <= 0 && trun.tfdt === null)) return null;
+      ticks = next !== null && next > 0 ? next : 0;
     }
-    const sum = addFinite(trunTicks.get(trun.track) ?? 0, ticks);
+    const agg = trunTicks.get(trun.track) ?? { sum: 0, timeline: 0, timed: false };
+    const sum = addFinite(agg.sum, ticks);
     if (sum === null) return null;
-    trunTicks.set(trun.track, sum);
+    let timeline = agg.timeline;
+    let timed = agg.timed;
+    if (trun.tfdt !== null) {
+      const end = addFinite(trun.tfdt, ticks);
+      if (end === null) return null;
+      timeline = Math.max(timeline, end);
+      timed = true;
+    }
+    trunTicks.set(trun.track, { sum, timeline, timed });
   }
   let best = 0;
   if (mehdTicks > 0) {
@@ -664,12 +768,26 @@ function readMp4(bytes: Uint8Array): { durationMs: number } | null {
   const trackIds = new Set<number>([...trackById.keys(), ...trunTicks.keys()]);
   for (const id of trackIds) {
     const trak = trackById.get(id);
-    const total = addFinite(trak?.ticks ?? 0, trunTicks.get(id) ?? 0);
-    if (total === null) return null;
-    if (total <= 0) continue;
+    const frag = trunTicks.get(id);
+    const summed = addFinite(trak?.ticks ?? 0, frag?.sum ?? 0);
+    if (summed === null) return null;
+    const timeline = frag?.timed ? Math.max(trak?.ticks ?? 0, frag.timeline) : summed;
+    const total = Math.max(summed, timeline);
     const scale = trak && trak.scale > 0 ? trak.scale : movieScale;
-    const ms = ticksToMs(total, scale);
-    if (ms === null || ms <= 0) return null;
+    let mediaMs = 0;
+    if (total > 0) {
+      const ms = ticksToMs(total, scale);
+      if (ms === null || ms <= 0) return null;
+      mediaMs = ms;
+    }
+    let elstMs = 0;
+    if (trak && trak.elstTicks > 0) {
+      const ms = ticksToMs(trak.elstTicks, movieScale);
+      if (ms === null || ms <= 0) return null;
+      elstMs = ms;
+    }
+    const ms = Math.max(mediaMs, elstMs);
+    if (ms <= 0) continue;
     best = Math.max(best, ms);
   }
   return best > 0 ? { durationMs: best } : null;

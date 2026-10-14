@@ -149,9 +149,11 @@ async function downscaleImage(file: File): Promise<File> {
     }
     const stem = stemName(file.name);
     if (hasAlpha) {
-      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/webp", 0.9));
-      if (!blob) throw new Error("blob");
-      return new File([blob], `${stem}.webp`, { type: "image/webp" });
+      const webp = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/webp", 0.9));
+      if (webp && webp.type !== "image/png") return new File([webp], `${stem}.webp`, { type: "image/webp" });
+      const png = webp?.type === "image/png" ? webp : await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+      if (!png) throw new Error("blob");
+      return new File([png], `${stem}.png`, { type: "image/png" });
     }
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, width, height);
@@ -820,10 +822,13 @@ async function mountTurnstile(): Promise<void> {
         action: "judge",
         size: window.innerWidth < 360 ? "compact" : "flexible",
         theme: document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark",
+        callback: () => {
+          turnstileErrors = 0;
+        },
         "error-callback": (code?: unknown) => {
           const text = turnstileCode(code);
           turnstileErrors += 1;
-          const fatal = text === "110100" || text === "110110" || text === "110200";
+          const fatal = text === "110100" || text === "110110" || text === "110200" || text === "200100";
           if (!fatal && turnstileErrors < 3) return;
           showTurnstileFailure(host);
         },
@@ -835,7 +840,6 @@ async function mountTurnstile(): Promise<void> {
           }
         },
       });
-      turnstileErrors = 0;
     } catch {
       showTurnstileFailure(host);
     }
