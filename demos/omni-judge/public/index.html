@@ -65,10 +65,12 @@
           <input id="file" type="file" accept="image/png,image/jpeg,image/webp,audio/wav,audio/mpeg,audio/mp3,video/mp4,video/webm" />
         </label>
         <label class="btn btn-ghost file">Use the camera roll
-          <input id="capture" type="file" accept="image/*,audio/*,video/*" capture="environment" />
+          <input id="capture" type="file" accept="image/*,video/*" />
         </label>
       </div>
+      <p class="hint" id="roll-hint">On an iPhone, the camera roll can return HEVC or a file over the size limit. Photos are resized here. Video must be MP4 or WebM, within 10 seconds and 6 MB.</p>
       <p class="hint" id="perm" hidden></p>
+      <input id="snap-cam" type="file" accept="image/*" capture="environment" hidden />
       <div class="samples" role="group" aria-label="Samples">
         <button class="chip" type="button" data-sample="voicemail">Voicemail tone</button>
         <button class="chip" type="button" data-sample="machine">Machine tone</button>
@@ -112,8 +114,10 @@
   <div class="overlay" id="overlay" hidden>
     <div class="overlay__card" role="dialog" aria-modal="true" aria-labelledby="count-label">
       <p class="eyebrow" id="count-label">Recording</p>
+      <video id="finder" class="finder" muted playsinline autoplay hidden></video>
       <p class="count" id="count">0:10</p>
       <p class="hint" id="count-hint">Stops on its own at the limit.</p>
+      <button class="btn btn-primary shutter" id="shutter" type="button" hidden>Take photo</button>
       <div class="overlay__actions">
         <button class="btn" id="cancel-rec" type="button">Cancel</button>
         <button class="btn btn-primary" id="stop-rec" type="button">Stop</button>

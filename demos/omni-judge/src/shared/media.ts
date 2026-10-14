@@ -114,15 +114,8 @@ function readMp3(bytes: Uint8Array): { durationMs: number } | null {
     }
   }
   if (!frame) return null;
-  const head = bytes.subarray(offset, Math.min(bytes.length, offset + frame.size));
-  const xingAt = indexOfAscii(head, "Xing") >= 0 ? indexOfAscii(head, "Xing") : indexOfAscii(head, "Info");
-  if (xingAt >= 0 && xingAt + 8 < head.length) {
-    const flags = u32be(head, xingAt + 4);
-    if ((flags & 1) === 1 && xingAt + 12 <= head.length) {
-      const frames = u32be(head, xingAt + 8);
-      if (frames > 0) return { durationMs: Math.round((frames * frame.samples * 1000) / frame.rate) };
-    }
-  }
+  // Xing/Info and a bitrate-times-length guess are both header fields a caller can set.
+  // The cap uses the frames that are actually in the file.
   let frames = 0;
   let cursor = offset;
   let guard = 0;
@@ -134,20 +127,7 @@ function readMp3(bytes: Uint8Array): { durationMs: number } | null {
     guard += 1;
   }
   if (frames < 1) return null;
-  if (cursor < bytes.length - 128 && frame.bitrate > 0) {
-    const seconds = ((bytes.length - offset) * 8) / frame.bitrate;
-    return { durationMs: Math.round(seconds * 1000) };
-  }
   return { durationMs: Math.round((frames * frame.samples * 1000) / frame.rate) };
-}
-
-function indexOfAscii(bytes: Uint8Array, text: string): number {
-  const needle = [...text].map((ch) => ch.charCodeAt(0));
-  outer: for (let i = 0; i <= bytes.length - needle.length; i++) {
-    for (let j = 0; j < needle.length; j++) if (bytes[i + j] !== needle[j]) continue outer;
-    return i;
-  }
-  return -1;
 }
 
 function u32be(bytes: Uint8Array, o: number): number {
@@ -197,58 +177,113 @@ function readUint(bytes: Uint8Array, start: number, end: number): number | null 
   return value;
 }
 
-function readFloat(bytes: Uint8Array, start: number, end: number): number | null {
-  const size = end - start;
-  if (size !== 4 && size !== 8) return null;
-  const view = new DataView(bytes.buffer, bytes.byteOffset + start, size);
-  const value = size === 4 ? view.getFloat32(0, false) : view.getFloat64(0, false);
-  return Number.isFinite(value) ? value : null;
+const ID_TIMECODE = 0xe7;
+const ID_SIMPLE_BLOCK = 0xa3;
+const ID_BLOCK = 0xa1;
+const ID_BLOCK_GROUP = 0xa0;
+const CLUSTER_ID = Uint8Array.of(0x1f, 0x43, 0xb6, 0x75);
+
+function indexOfBytes(bytes: Uint8Array, needle: Uint8Array, from: number): number {
+  const start = Math.max(0, from);
+  outer: for (let i = start; i <= bytes.length - needle.length; i++) {
+    for (let j = 0; j < needle.length; j++) if (bytes[i + j] !== needle[j]) continue outer;
+    return i;
+  }
+  return -1;
 }
 
-const ID_SEGMENT = 0x18538067;
-const ID_INFO = 0x1549a966;
-const ID_TIMECODE_SCALE = 0x2ad7b1;
-const ID_DURATION = 0x4489;
-const ID_CLUSTER = 0x1f43b675;
-const ID_TIMECODE = 0xe7;
+function readTimecodeScale(bytes: Uint8Array): number {
+  const at = indexOfBytes(bytes, Uint8Array.of(0x2a, 0xd7, 0xb1), 0);
+  if (at < 0) return 1_000_000;
+  const size = readSize(bytes, at + 3);
+  if (!size || size.unknown) return 1_000_000;
+  const value = readUint(bytes, size.next, size.next + size.value);
+  return value && value > 0 ? value : 1_000_000;
+}
 
+/** Relative timecode is a signed int16 after the track-number vint. */
+function blockRel(bytes: Uint8Array, start: number, end: number): number | null {
+  const track = readSize(bytes, start);
+  if (!track || track.next + 2 > end) return null;
+  const view = new DataView(bytes.buffer, bytes.byteOffset + track.next, 2);
+  return view.getInt16(0, false);
+}
+
+/**
+ * Chrome MediaRecorder writes Cluster at segment depth with an unknown size.
+ * Timecode lives in that cluster (depth >= 2 from the file root). The Duration
+ * element is ignored: the cap is the last block timecode.
+ */
 function readWebm(bytes: Uint8Array): { durationMs: number } | null {
   if (!EBML(bytes)) return null;
-  let scale = 1_000_000;
-  let duration: number | null = null;
-  let maxTimecode = 0;
-  const visit = (start: number, end: number, depth: number) => {
-    let offset = start;
-    while (offset + 2 <= end && depth < 6) {
-      const id = readId(bytes, offset);
-      if (!id) break;
-      const size = readSize(bytes, id.next);
-      if (!size) break;
-      const dataEnd = size.unknown ? end : size.next + size.value;
-      if (dataEnd < size.next || dataEnd > end) break;
-      if (id.id === ID_TIMECODE_SCALE) {
-        const value = readUint(bytes, size.next, dataEnd);
-        if (value && value > 0) scale = value;
-      } else if (id.id === ID_DURATION) {
-        const value = readFloat(bytes, size.next, dataEnd);
-        if (value !== null && value > 0) duration = value;
-      } else if (id.id === ID_TIMECODE && depth > 2) {
-        const value = readUint(bytes, size.next, dataEnd);
-        if (value !== null) maxTimecode = Math.max(maxTimecode, value);
-      } else if (id.id === ID_CLUSTER) {
-        const headEnd = Math.min(dataEnd, size.next + 32);
-        visit(size.next, headEnd, depth + 1);
-      } else if (id.id === ID_SEGMENT || id.id === ID_INFO || size.value < 64) {
-        visit(size.next, dataEnd, depth + 1);
-      }
-      if (size.unknown) break;
-      offset = dataEnd;
+  const scale = readTimecodeScale(bytes);
+  let maxTs = 0;
+  let found = false;
+  let cursor = 0;
+  while (cursor < bytes.length) {
+    const at = indexOfBytes(bytes, CLUSTER_ID, cursor);
+    if (at < 0) break;
+    const size = readSize(bytes, at + CLUSTER_ID.length);
+    if (!size) {
+      cursor = at + CLUSTER_ID.length;
+      continue;
     }
-  };
-  visit(0, bytes.length, 0);
-  if (duration !== null) return { durationMs: Math.round((duration * scale) / 1_000_000) };
-  if (maxTimecode > 0) return { durationMs: Math.round((maxTimecode * scale) / 1_000_000) };
-  return null;
+    let dataEnd: number;
+    if (size.unknown) {
+      const next = indexOfBytes(bytes, CLUSTER_ID, size.next);
+      dataEnd = next < 0 ? bytes.length : next;
+    } else {
+      dataEnd = Math.min(bytes.length, size.next + size.value);
+    }
+    if (dataEnd < size.next) {
+      cursor = at + CLUSTER_ID.length;
+      continue;
+    }
+    let clusterTc = 0;
+    let offset = size.next;
+    while (offset + 2 <= dataEnd) {
+      const id = readId(bytes, offset);
+      if (!id || id.next > dataEnd) break;
+      const child = readSize(bytes, id.next);
+      if (!child) break;
+      const childEnd = child.unknown ? dataEnd : child.next + child.value;
+      if (childEnd < child.next || childEnd > dataEnd) break;
+      if (id.id === ID_TIMECODE) {
+        const value = readUint(bytes, child.next, childEnd);
+        if (value !== null) clusterTc = value;
+      } else if (id.id === ID_SIMPLE_BLOCK || id.id === ID_BLOCK) {
+        const rel = blockRel(bytes, child.next, childEnd);
+        if (rel !== null) {
+          found = true;
+          maxTs = Math.max(maxTs, clusterTc + rel);
+        }
+      } else if (id.id === ID_BLOCK_GROUP && !child.unknown) {
+        let inner = child.next;
+        while (inner + 2 <= childEnd) {
+          const blockId = readId(bytes, inner);
+          if (!blockId || blockId.next > childEnd) break;
+          const blockSize = readSize(bytes, blockId.next);
+          if (!blockSize || blockSize.unknown) break;
+          const blockEnd = blockSize.next + blockSize.value;
+          if (blockEnd > childEnd) break;
+          if (blockId.id === ID_BLOCK || blockId.id === ID_SIMPLE_BLOCK) {
+            const rel = blockRel(bytes, blockSize.next, blockEnd);
+            if (rel !== null) {
+              found = true;
+              maxTs = Math.max(maxTs, clusterTc + rel);
+            }
+          }
+          inner = blockEnd;
+        }
+      }
+      if (child.unknown) break;
+      offset = childEnd;
+    }
+    cursor = Math.max(dataEnd, at + CLUSTER_ID.length);
+  }
+  if (!found || maxTs <= 0) return null;
+  const durationMs = Math.round((maxTs * scale) / 1_000_000);
+  return durationMs > 0 ? { durationMs } : null;
 }
 
 function readAtom(bytes: Uint8Array, offset: number): { type: string; start: number; end: number; header: number } | null {
@@ -269,39 +304,96 @@ function readAtom(bytes: Uint8Array, offset: number): { type: string; start: num
   return { type, start: offset + header, end: offset + size, header };
 }
 
+const MP4_CONTAINERS = new Set(["moov", "trak", "mdia", "minf", "stbl", "mvex", "moof", "traf"]);
+
+function ticksToMs(ticks: number, scale: number): number {
+  if (ticks <= 0 || scale <= 0) return 0;
+  return Math.round((ticks * 1000) / scale);
+}
+
+/**
+ * mvhd.duration is not used. Safari's fMP4 leaves it at 0.
+ * The cap is the longest of mehd (movie timescale), the stts sample table,
+ * and the trun sample durations (mdhd timescale).
+ */
 function readMp4(bytes: Uint8Array): { durationMs: number } | null {
   if (!FTYP(bytes)) return null;
-  let offset = 0;
-  while (offset + 8 <= bytes.length) {
-    const atom = readAtom(bytes, offset);
-    if (!atom) break;
-    if (atom.type === "moov") {
-      let child = atom.start;
-      while (child + 8 <= atom.end) {
-        const inner = readAtom(bytes, child);
-        if (!inner) break;
-        if (inner.type === "mvhd") {
-          const version = bytes[inner.start] ?? 0;
-          if (version === 0 && inner.start + 20 <= inner.end) {
-            const timescale = u32be(bytes, inner.start + 12);
-            const duration = u32be(bytes, inner.start + 16);
-            if (timescale > 0) return { durationMs: Math.round((duration * 1000) / timescale) };
-          }
-          if (version === 1 && inner.start + 32 <= inner.end) {
-            const timescale = u32be(bytes, inner.start + 20);
-            const hi = u32be(bytes, inner.start + 24);
-            const lo = u32be(bytes, inner.start + 28);
-            const duration = hi * 2 ** 32 + lo;
-            if (timescale > 0) return { durationMs: Math.round((duration * 1000) / timescale) };
-          }
-          return null;
+  let movieScale = 0;
+  let mehdTicks = 0;
+  let currentTrack = 0;
+  const trackScale = new Map<number, number>();
+  const sttsTicks = new Map<number, number>();
+  const trunTicks = new Map<number, number>();
+
+  const walk = (start: number, end: number, depth: number): void => {
+    let offset = start;
+    let trafTrack = 0;
+    let defaultDuration = 0;
+    while (offset + 8 <= end && depth < 8) {
+      const box = readAtom(bytes, offset);
+      if (!box) break;
+      const version = bytes[box.start] ?? 0;
+      if (box.type === "mvhd") {
+        const scaleAt = version === 1 ? 20 : 12;
+        if (box.start + scaleAt + 4 <= box.end) movieScale = u32be(bytes, box.start + scaleAt);
+      } else if (box.type === "tkhd") {
+        const idAt = version === 1 ? 20 : 12;
+        if (box.start + idAt + 4 <= box.end) currentTrack = u32be(bytes, box.start + idAt);
+      } else if (box.type === "mdhd" && currentTrack > 0) {
+        const scaleAt = version === 1 ? 20 : 12;
+        if (box.start + scaleAt + 4 <= box.end) trackScale.set(currentTrack, u32be(bytes, box.start + scaleAt));
+      } else if (box.type === "stts" && currentTrack > 0) {
+        const count = u32be(bytes, box.start + 4);
+        let ticks = 0;
+        let cursor = box.start + 8;
+        const entries = Math.min(count, 100_000);
+        for (let i = 0; i < entries && cursor + 8 <= box.end; i++) {
+          ticks += u32be(bytes, cursor) * u32be(bytes, cursor + 4);
+          cursor += 8;
         }
-        child = inner.end;
+        sttsTicks.set(currentTrack, (sttsTicks.get(currentTrack) ?? 0) + ticks);
+      } else if (box.type === "mehd") {
+        if (version === 1 && box.start + 12 <= box.end) mehdTicks = u32be(bytes, box.start + 4) * 2 ** 32 + u32be(bytes, box.start + 8);
+        else if (box.start + 8 <= box.end) mehdTicks = u32be(bytes, box.start + 4);
+      } else if (box.type === "tfhd") {
+        const flags = u32be(bytes, box.start) & 0xffffff;
+        if (box.start + 8 <= box.end) trafTrack = u32be(bytes, box.start + 4);
+        let cursor = box.start + 8;
+        if (flags & 0x000001) cursor += 8;
+        if (flags & 0x000002) cursor += 4;
+        if ((flags & 0x000008) !== 0 && cursor + 4 <= box.end) defaultDuration = u32be(bytes, cursor);
+      } else if (box.type === "trun" && trafTrack > 0) {
+        const flags = u32be(bytes, box.start) & 0xffffff;
+        const samples = u32be(bytes, box.start + 4);
+        let cursor = box.start + 8;
+        if (flags & 0x000001) cursor += 4;
+        if (flags & 0x000004) cursor += 4;
+        const sampleBytes = (flags & 0x100 ? 4 : 0) + (flags & 0x200 ? 4 : 0) + (flags & 0x400 ? 4 : 0) + (flags & 0x800 ? 4 : 0);
+        let ticks = 0;
+        if ((flags & 0x100) !== 0) {
+          const n = Math.min(samples, 200_000);
+          for (let i = 0; i < n && cursor + 4 <= box.end; i++) {
+            ticks += u32be(bytes, cursor);
+            cursor += sampleBytes || 4;
+          }
+        } else if (defaultDuration > 0) {
+          ticks = samples * defaultDuration;
+        }
+        trunTicks.set(trafTrack, (trunTicks.get(trafTrack) ?? 0) + ticks);
+      } else if (MP4_CONTAINERS.has(box.type)) {
+        const trackBefore = currentTrack;
+        walk(box.start, box.end, depth + 1);
+        if (box.type === "trak") currentTrack = trackBefore;
       }
+      offset = box.end;
     }
-    offset = atom.end;
-  }
-  return null;
+  };
+  walk(0, bytes.length, 0);
+
+  let best = ticksToMs(mehdTicks, movieScale);
+  for (const [id, ticks] of sttsTicks) best = Math.max(best, ticksToMs(ticks, trackScale.get(id) ?? 0));
+  for (const [id, ticks] of trunTicks) best = Math.max(best, ticksToMs(ticks, trackScale.get(id) ?? movieScale));
+  return best > 0 ? { durationMs: best } : null;
 }
 
 function capped(kind: Modality, bytes: number, durationMs: number | null): Sniffed | null {
@@ -318,8 +410,87 @@ function capped(kind: Modality, bytes: number, durationMs: number | null): Sniff
   }
   if (kind === "video") {
     if (bytes > LIMITS.maxVideoBytes) return { ok: false, message: "Video must be 6 MB or smaller." };
-    if (durationMs > LIMITS.maxVideoMs) return { ok: false, message: "Video must be 10 seconds or shorter." };
+    if (durationMs > LIMITS.maxVideoMs + LIMITS.videoSlackMs) return { ok: false, message: "Video must be 10 seconds or shorter." };
   }
+  return null;
+}
+
+const MAX_PIXELS = LIMITS.maxImagePixels;
+
+function pngPixels(bytes: Uint8Array): number | null {
+  if (bytes.length < 24) return null;
+  const width = u32be(bytes, 16);
+  const height = u32be(bytes, 20);
+  if (width < 1 || height < 1) return null;
+  const pixels = width * height;
+  return Number.isSafeInteger(pixels) ? pixels : null;
+}
+
+function jpegPixels(bytes: Uint8Array): number | null {
+  let offset = 2;
+  while (offset + 3 < bytes.length) {
+    if (bytes[offset] !== 0xff) {
+      offset += 1;
+      continue;
+    }
+    while (offset < bytes.length && bytes[offset] === 0xff) offset += 1;
+    const marker = bytes[offset] ?? 0;
+    offset += 1;
+    if (marker === 0x00 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd9)) continue;
+    if (offset + 1 >= bytes.length) return null;
+    const length = ((bytes[offset] ?? 0) << 8) | (bytes[offset + 1] ?? 0);
+    const sof = (marker >= 0xc0 && marker <= 0xc3) || (marker >= 0xc5 && marker <= 0xc7) || (marker >= 0xc9 && marker <= 0xcb) || (marker >= 0xcd && marker <= 0xcf);
+    if (sof) {
+      if (offset + 7 >= bytes.length) return null;
+      const height = ((bytes[offset + 3] ?? 0) << 8) | (bytes[offset + 4] ?? 0);
+      const width = ((bytes[offset + 5] ?? 0) << 8) | (bytes[offset + 6] ?? 0);
+      if (width < 1 || height < 1) return null;
+      const pixels = width * height;
+      return Number.isSafeInteger(pixels) ? pixels : null;
+    }
+    if (marker === 0xda) return null;
+    if (length < 2 || offset + length > bytes.length) return null;
+    offset += length;
+  }
+  return null;
+}
+
+function webpPixels(bytes: Uint8Array): number | null {
+  let offset = 12;
+  while (offset + 8 <= bytes.length) {
+    const tag = String.fromCharCode(bytes[offset] ?? 0, bytes[offset + 1] ?? 0, bytes[offset + 2] ?? 0, bytes[offset + 3] ?? 0);
+    const size = u32(bytes, offset + 4);
+    const data = offset + 8;
+    if (size < 0 || data + size > bytes.length + 1) return null;
+    if (tag === "VP8X" && size >= 10) {
+      const width = 1 + ((bytes[data + 4] ?? 0) | ((bytes[data + 5] ?? 0) << 8) | ((bytes[data + 6] ?? 0) << 16));
+      const height = 1 + ((bytes[data + 7] ?? 0) | ((bytes[data + 8] ?? 0) << 8) | ((bytes[data + 9] ?? 0) << 16));
+      const pixels = width * height;
+      return Number.isSafeInteger(pixels) ? pixels : null;
+    }
+    if (tag === "VP8 " && size >= 10 && bytes[data + 3] === 0x9d && bytes[data + 4] === 0x01 && bytes[data + 5] === 0x2a) {
+      const width = u16(bytes, data + 6) & 0x3fff;
+      const height = u16(bytes, data + 8) & 0x3fff;
+      if (width < 1 || height < 1) return null;
+      return width * height;
+    }
+    if (tag === "VP8L" && size >= 5 && bytes[data] === 0x2f) {
+      const b1 = bytes[data + 1] ?? 0;
+      const b2 = bytes[data + 2] ?? 0;
+      const b3 = bytes[data + 3] ?? 0;
+      const b4 = bytes[data + 4] ?? 0;
+      const width = 1 + (((b2 & 0x3f) << 8) | b1);
+      const height = 1 + (((b4 & 0x0f) << 10) | (b3 << 2) | ((b2 & 0xc0) >> 6));
+      return width * height;
+    }
+    offset = data + size + (size % 2);
+  }
+  return null;
+}
+
+function imageTooBig(pixels: number | null): Sniffed | null {
+  if (pixels === null) return { ok: false, message: "This image has no readable size." };
+  if (pixels > MAX_PIXELS) return { ok: false, message: "Images must be 16 megapixels or smaller." };
   return null;
 }
 
@@ -327,14 +498,20 @@ function capped(kind: Modality, bytes: number, durationMs: number | null): Sniff
 export function sniffMedia(bytes: Uint8Array): Sniffed {
   if (bytes.length > LIMITS.maxVideoBytes) return { ok: false, message: "That file is larger than 6 MB." };
   if (PNG(bytes)) {
+    const pixels = imageTooBig(pngPixels(bytes));
+    if (pixels) return pixels;
     const over = capped("image", bytes.length, null);
     return over ?? { ok: true, kind: "image", contentType: "image/png", durationMs: null };
   }
   if (JPEG(bytes)) {
+    const pixels = imageTooBig(jpegPixels(bytes));
+    if (pixels) return pixels;
     const over = capped("image", bytes.length, null);
     return over ?? { ok: true, kind: "image", contentType: "image/jpeg", durationMs: null };
   }
   if (WEBP(bytes)) {
+    const pixels = imageTooBig(webpPixels(bytes));
+    if (pixels) return pixels;
     const over = capped("image", bytes.length, null);
     return over ?? { ok: true, kind: "image", contentType: "image/webp", durationMs: null };
   }

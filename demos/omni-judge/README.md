@@ -1,6 +1,6 @@
 # Omni Judge
 
-Live at [tech-demos.theserverless.dev/demos/omni-judge](https://tech-demos.theserverless.dev/demos/omni-judge/) after deploy.
+Live at [omni-judge.tech-demos.theserverless.dev](https://omni-judge.tech-demos.theserverless.dev/) after deploy. `tech-demos.theserverless.dev/demos/omni-judge` redirects there. The API answers only on the demo host.
 
 One Workers AI call decides a photo, a voice note, or a short video. Clef-omni returns a probability for every allowed answer. The page can also time the older chain on the same image or audio.
 
@@ -10,7 +10,7 @@ One Workers AI call decides a photo, a voice note, or a short video. Clef-omni r
 
 **What you can do**
 
-- Snap a photo, record a voice note, or film up to 10 seconds. A voice note is converted to WAV in the browser, because Clef-omni accepts WAV and MP3, not a MediaRecorder WebM audio blob.
+- Snap a photo, record a voice note, or film up to 10 seconds. A voice note is converted to 16 kHz WAV in the browser before upload. The model docs describe audio as WAV or MP3.
 - Start from a bundled self-made sample.
 - Pick a preset checklist, or write up to five questions with two to six options.
 - Read the top answer, a bar for every option, and the latency.
@@ -26,8 +26,8 @@ One Workers AI call decides a photo, a voice note, or a short video. Clef-omni r
 
 **Limits**
 
-- Image ≤ 2 MB (PNG, JPEG, or WebP). Audio ≤ 15 seconds and ≤ 1.5 MB (WAV or MP3). Video ≤ 10 seconds and ≤ 6 MB (MP4 or WebM). The server sniffs the bytes. The declared Content-Type is ignored.
-- 8 model actions per browser per hour, 8 per network per hour, and 80 per rolling 24 hours. The network key is an HMAC of the IPv4 address or the IPv6 /64. The address is not stored.
+- Image ≤ 2 MB and ≤ 16 megapixels (PNG, JPEG, or WebP). Audio ≤ 15 seconds and ≤ 1.5 MB (WAV or MP3). Video ≤ 10 seconds and ≤ 6 MB (MP4 or WebM), with about 500 ms of slack so a clip stopped near 9.5 seconds still passes. The server sniffs the bytes. The declared Content-Type is ignored. Duration comes from MP3 frames, WebM block timecodes, and MP4 `mehd` / `stts` / `trun` sums.
+- 8 model actions per browser per hour, 8 per network per hour, and 80 per rolling 24 hours. The network key is an HMAC of the IPv4 address or the IPv6 /56. The address is not stored. The visitor cookie is `__Host-oj_vid` (Secure, Path=/, no Domain).
 - Burst limits use Workers rate-limit namespaces `7451` (judge), `7452` (compare), and `7453` (read).
 - Turnstile runs before any model call. A missing secret, or the test secret on a public host, fails closed.
 
@@ -40,13 +40,11 @@ One Workers AI call decides a photo, a voice note, or a short video. Clef-omni r
 
 ### Deletion backstop
 
-After the bucket exists:
+The lifecycle rule is required. It is not a field in `wrangler.jsonc`. The cron is the path that also deletes the D1 rows. If an insert fails after the object is written, the Worker deletes that object.
 
 ```bash
 wrangler r2 bucket lifecycle add tech-demos-omni-judge media-expiry media/ --expire-days 1
 ```
-
-That lifecycle rule is not a field in `wrangler.jsonc`. The cron is the path that also deletes the D1 rows.
 
 ## Run locally
 
@@ -63,6 +61,13 @@ bun run dev
 
 `bun run typecheck` runs `wrangler types` before `tsc`. `bun test` covers sniffing, the budget insert, owner-only reads, and the Clef-omni request and response fixture.
 
+### Smoke checklist
+
+- `bun test` and `bun run typecheck`.
+- `bun run dev`, then `bun run smoke` against the local stub. Results must say the local stub was used.
+- A judge POST with no `Content-Length` returns 411, and the judge rate limit runs before the body is parsed or Turnstile is checked.
+- Uploads are base64-encoded once, in 3-byte chunks, and that string is reused if comparison also needs it. A 6 MB video should not encode the bytes twice.
+
 ## Deploy
 
 Do not deploy from this PR until the resources below exist. From this folder, with the owner account (unset any other API token):
@@ -71,8 +76,15 @@ Do not deploy from this PR until the resources below exist. From this folder, wi
 bunx wrangler d1 create tech-demos-omni-judge
 # paste the database_id over the placeholder in wrangler.jsonc
 bunx wrangler r2 bucket create tech-demos-omni-judge
+# required backstop, not a wrangler.jsonc field
+bunx wrangler r2 bucket lifecycle add tech-demos-omni-judge media-expiry media/ --expire-days 1
 bunx wrangler secret put TURNSTILE_SECRET
 bunx wrangler secret put IP_HASH_SECRET
+# one-time, before image comparison. The owner runs this. It agrees to Meta's license.
+curl "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/ai/run/@cf/meta/llama-3.2-11b-vision-instruct" \
+  -X POST \
+  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+  -d '{ "prompt": "agree" }'
 env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bunx wrangler deploy
 ```
 
@@ -82,9 +94,9 @@ A brand-new Worker with `secrets.required` needs a first deploy before `wrangler
 
 | Resource | Name | Notes |
 | --- | --- | --- |
-| D1 database | `tech-demos-omni-judge` | Placeholder `database_id` is `00000000-0000-4000-8000-000000007451`. Create the database and paste the real id into `wrangler.jsonc`. Apply `migrations/0001_init.sql`. |
-| R2 bucket | `tech-demos-omni-judge` | Create the bucket, then add the lifecycle rule above. |
-| Turnstile widget | `tech-demos-omni-judge` | Hostnames: `tech-demos.theserverless.dev`, `omni-judge.tech-demos.theserverless.dev`. Site key replaces `REPLACE_ME`. Secret via `wrangler secret put TURNSTILE_SECRET`. |
+| D1 database | `tech-demos-omni-judge` | Placeholder `database_id` is `00000000-0000-4000-8000-000000007451`. Create the database and paste the real id into `wrangler.jsonc`. Apply `migrations/0001_init.sql` and `migrations/0002_pair.sql`. |
+| R2 bucket | `tech-demos-omni-judge` | Create the bucket, then add the lifecycle rule above. Deploy is not complete without that rule. |
+| Turnstile widget | `tech-demos-omni-judge` | Hostname `omni-judge.tech-demos.theserverless.dev`. The hub path redirects before the widget loads. Site key replaces `REPLACE_ME`. Secret via `wrangler secret put TURNSTILE_SECRET`. |
 | Secret | `IP_HASH_SECRET` | HMAC key for the network cap. Not a Turnstile value. |
 | Rate-limit namespaces | `7451` judge, `7452` compare, `7453` read | Created when this Worker is deployed. They are not used elsewhere in this repo. |
 | Routes | `tech-demos.theserverless.dev/demos/omni-judge*` and `omni-judge.tech-demos.theserverless.dev/*` | Zone `theserverless.dev`. Applied on deploy. |

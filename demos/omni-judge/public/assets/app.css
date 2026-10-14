@@ -149,7 +149,7 @@ input, textarea, select { font-size: 16px; }
 .captures, .files, .samples, .q-actions, .overlay__actions, .submit-row { display: flex; flex-wrap: wrap; gap: 0.45rem; }
 .captures { display: grid; gap: 0.45rem; }
 .files { margin-top: 0.45rem; }
-.file { position: relative; overflow: hidden; }
+.file { position: relative; overflow: hidden; min-height: 48px; }
 .file input {
   position: absolute;
   inset: 0;
@@ -250,6 +250,16 @@ input, textarea, select { font-size: 16px; }
   margin: 0.3rem 0;
 }
 .overlay__actions .btn { flex: 1; min-height: 52px; font-size: 1.05rem; }
+.finder {
+  width: 100%;
+  max-height: 42vh;
+  margin: 0.4rem 0;
+  border-radius: 12px;
+  background: #111;
+  object-fit: cover;
+}
+.shutter { width: 100%; min-height: 52px; margin: 0.4rem 0 0.6rem; }
+#roll-hint { overflow-wrap: anywhere; }
 
 .foot { padding: 0 1rem 1.4rem; }
 .foot p { overflow-wrap: anywhere; }

@@ -106,15 +106,45 @@ function selectSample(id: SampleId): void {
   }
 }
 
-function selectFile(file: File): void {
+async function downscaleImage(file: File): Promise<File> {
+  const bitmap = await createImageBitmap(file);
+  try {
+    const maxEdge = 1024;
+    const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
+    const width = Math.max(1, Math.round(bitmap.width * scale));
+    const height = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("canvas");
+    ctx.drawImage(bitmap, 0, 0, width, height);
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85));
+    if (!blob) throw new Error("blob");
+    return new File([blob], "photo.jpg", { type: "image/jpeg" });
+  } finally {
+    bitmap.close();
+  }
+}
+
+async function selectFile(file: File): Promise<void> {
   const kind = guessKind(file);
   if (!kind) {
     showError("Use a PNG, JPEG, WebP, WAV, MP3, MP4, or WebM file.");
     return;
   }
-  picked = { source: "file", file, note: file.name || "Upload" };
-  showPreview(URL.createObjectURL(file), kind);
-  setText(mediaNote, `${file.name || "Upload"} · ${(file.size / 1024).toFixed(0)} KB. The server checks the bytes.`);
+  let chosen = file;
+  if (kind === "image") {
+    try {
+      chosen = await downscaleImage(file);
+    } catch {
+      showError("That image could not be resized. Use a PNG, JPEG, or WebP.");
+      return;
+    }
+  }
+  picked = { source: "file", file: chosen, note: chosen.name || "Upload" };
+  showPreview(URL.createObjectURL(chosen), kind);
+  setText(mediaNote, `${chosen.name || "Upload"} · ${(chosen.size / 1024).toFixed(0)} KB. The server checks the bytes.`);
   permEl.hidden = true;
   markSamples(null);
   showError("");
@@ -371,10 +401,10 @@ function renderHistory(items: JudgmentView[]): void {
     const top = item.result?.answers[0]?.topLabel ?? item.status;
     setText(button, `${item.label} · ${top} · ${when}`);
     button.addEventListener("click", () => {
-      const compare = items.find((other) => other.kind === "compare" && other.mediaId === item.mediaId && other.sampleId === item.sampleId && Math.abs(other.createdAt - item.createdAt) < 120_000);
+      const compare = items.find((other) => other.kind === "compare" && other.pairId !== null && other.pairId === item.pairId);
       renderOutcome(item, compare ?? null);
       if (item.mediaId) showPreview(api(`api/media/${item.mediaId}`), item.modality);
-      else if (item.sampleId && item.sampleId in SAMPLES) selectSample(item.sampleId as SampleId);
+      else if (item.sampleId && Object.hasOwn(SAMPLES, item.sampleId)) selectSample(item.sampleId as SampleId);
     });
     li.append(button);
     historyEl.append(li);
@@ -399,15 +429,41 @@ function permissionMessage(kind: "audio" | "video" | "photo", err: unknown): str
   return "Recording did not start. Upload a file or use a sample.";
 }
 
+let photoResolver: ((take: boolean) => void) | null = null;
+
+function detachFinder(): void {
+  const finder = $<HTMLVideoElement>("finder");
+  finder.pause();
+  finder.srcObject = null;
+  finder.hidden = true;
+}
+
+function attachFinder(local: MediaStream): void {
+  const finder = $<HTMLVideoElement>("finder");
+  finder.srcObject = local;
+  finder.muted = true;
+  finder.playsInline = true;
+  finder.hidden = false;
+  void finder.play().catch(() => undefined);
+}
+
 function stopTracks(): void {
+  cancelled = true;
   window.clearInterval(ticker);
   ticker = 0;
   recording = false;
+  if (photoResolver) {
+    const resolve = photoResolver;
+    photoResolver = null;
+    resolve(false);
+  }
   if (recorder && recorder.state !== "inactive") recorder.stop();
   recorder = null;
   stream?.getTracks().forEach((track) => track.stop());
   stream = null;
+  detachFinder();
   overlay.hidden = true;
+  $<HTMLButtonElement>("shutter").hidden = true;
 }
 
 function formatLeft(seconds: number): string {
@@ -462,85 +518,127 @@ function pickMime(kind: "audio" | "video"): string {
   return candidates.find((type) => typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(type)) ?? "";
 }
 
+function showCaptureChrome(kind: "audio" | "video" | "photo"): void {
+  const photo = kind === "photo";
+  $<HTMLButtonElement>("shutter").hidden = !photo;
+  $<HTMLButtonElement>("stop-rec").hidden = photo;
+  countEl.hidden = photo;
+  countHint.hidden = photo;
+  overlay.hidden = false;
+}
+
+async function grabFrame(video: HTMLVideoElement): Promise<Blob | null> {
+  const sourceW = video.videoWidth || 640;
+  const sourceH = video.videoHeight || 480;
+  const scale = Math.min(1, 1024 / Math.max(sourceW, sourceH));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(sourceW * scale));
+  canvas.height = Math.max(1, Math.round(sourceH * scale));
+  canvas.getContext("2d")?.drawImage(video, 0, 0, canvas.width, canvas.height);
+  return new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85));
+}
+
 async function startCapture(kind: "audio" | "video" | "photo"): Promise<void> {
   showError("");
   permEl.hidden = true;
+  if (kind === "photo" && navigator.maxTouchPoints > 0) {
+    $<HTMLInputElement>("snap-cam").click();
+    return;
+  }
   if (!navigator.mediaDevices?.getUserMedia) {
     permEl.hidden = false;
     setText(permEl, "This browser has no media capture. Choose a file or a sample.");
     return;
   }
-  if (kind === "photo") {
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
-    } catch (err) {
+  let local: MediaStream | null = null;
+  try {
+    local = await navigator.mediaDevices.getUserMedia(
+      kind === "audio" ? { audio: true } : kind === "photo" ? { video: { facingMode: "environment" }, audio: false } : { audio: true, video: { facingMode: "environment" } },
+    );
+    stream = local;
+    if (kind !== "audio") attachFinder(local);
+    cancelled = false;
+    showCaptureChrome(kind);
+    if (kind === "photo") {
+      const take = await new Promise<boolean>((resolve) => {
+        photoResolver = resolve;
+      });
+      photoResolver = null;
+      if (!take) {
+        setText(mediaNote, "Recording cancelled.");
+        return;
+      }
+      const blob = await grabFrame($<HTMLVideoElement>("finder"));
+      if (!blob) {
+        showError("The photo could not be saved. Choose a file instead.");
+        return;
+      }
+      await selectFile(new File([blob], "photo.jpg", { type: "image/jpeg" }));
+      return;
+    }
+    const mime = pickMime(kind);
+    const options: MediaRecorderOptions = { audioBitsPerSecond: 128_000 };
+    if (mime) options.mimeType = mime;
+    if (kind === "video") options.videoBitsPerSecond = 1_500_000;
+    recorder = new MediaRecorder(local, options);
+    chunks = [];
+    recording = true;
+    const limitMs = kind === "audio" ? 15_000 : 9_500;
+    recorder.addEventListener("dataavailable", (event) => {
+      if (event.data.size > 0) chunks.push(event.data);
+    });
+    const stopped = new Promise<void>((resolve) => {
+      recorder?.addEventListener("stop", () => resolve(), { once: true });
+    });
+    setText($("count-label"), kind === "audio" ? "Voice note" : "Video");
+    setText(countHint, kind === "audio" ? "15 seconds at most. Cancel discards it." : "Stops near 9.5 seconds. Cancel discards it.");
+    const started = Date.now();
+    setText(countEl, formatLeft(Math.ceil(limitMs / 1000)));
+    ticker = window.setInterval(() => {
+      const leftMs = limitMs - (Date.now() - started);
+      setText(countEl, formatLeft(Math.ceil(leftMs / 1000)));
+      if (leftMs <= 0) finishStop();
+    }, 200);
+    recorder.start();
+    await stopped;
+    await finishRecording(kind, mime || recorder?.mimeType || "");
+  } catch (err) {
+    if (err instanceof DOMException || !local) {
       permEl.hidden = false;
-      setText(permEl, permissionMessage("photo", err));
-      return;
+      setText(permEl, permissionMessage(kind === "photo" ? "photo" : kind, err));
+    } else {
+      showError("Recording did not start. Upload a file or use a sample.");
     }
-    const video = document.createElement("video");
-    video.srcObject = stream;
-    video.playsInline = true;
-    await video.play();
-    const canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth || 640;
-    canvas.height = video.videoHeight || 480;
-    canvas.getContext("2d")?.drawImage(video, 0, 0);
-    stopTracks();
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.9));
-    if (!blob) {
-      showError("The photo could not be saved. Choose a file instead.");
-      return;
+  } finally {
+    window.clearInterval(ticker);
+    ticker = 0;
+    recording = false;
+    photoResolver = null;
+    recorder = null;
+    if (local) {
+      local.getTracks().forEach((track) => track.stop());
+      if (stream === local) stream = null;
     }
-    selectFile(new File([blob], "photo.jpg", { type: "image/jpeg" }));
-    return;
+    detachFinder();
+    overlay.hidden = true;
+    $<HTMLButtonElement>("shutter").hidden = true;
+    $<HTMLButtonElement>("stop-rec").hidden = false;
+    countEl.hidden = false;
+    countHint.hidden = false;
   }
-  const limit = kind === "audio" ? 15 : 10;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia(kind === "audio" ? { audio: true } : { audio: true, video: { facingMode: "environment" } });
-  } catch (err) {
-    permEl.hidden = false;
-    setText(permEl, permissionMessage(kind, err));
-    return;
-  }
-  const mime = pickMime(kind);
-  try {
-    recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
-  } catch (err) {
-    stopTracks();
-    permEl.hidden = false;
-    setText(permEl, permissionMessage(kind, err));
-    return;
-  }
-  chunks = [];
-  cancelled = false;
-  recording = true;
-  recorder.addEventListener("dataavailable", (event) => {
-    if (event.data.size > 0) chunks.push(event.data);
-  });
-  recorder.addEventListener("stop", () => {
-    void finishRecording(kind, mime || recorder?.mimeType || "");
-  });
-  overlay.hidden = false;
-  setText($("count-label"), kind === "audio" ? "Voice note" : "Video");
-  setText(countHint, kind === "audio" ? "15 seconds at most. Cancel discards it." : "10 seconds at most. Cancel discards it.");
-  const started = Date.now();
-  setText(countEl, formatLeft(limit));
-  ticker = window.setInterval(() => {
-    const left = limit - Math.floor((Date.now() - started) / 1000);
-    setText(countEl, formatLeft(left));
-    if (left <= 0) finishStop();
-  }, 200);
-  recorder.start();
 }
 
 function finishStop(): void {
+  if (photoResolver) {
+    const resolve = photoResolver;
+    photoResolver = null;
+    resolve(!cancelled);
+    return;
+  }
   if (!recording) return;
   recording = false;
   window.clearInterval(ticker);
-  overlay.hidden = true;
   if (recorder && recorder.state !== "inactive") recorder.stop();
-  stream?.getTracks().forEach((track) => track.stop());
 }
 
 async function finishRecording(kind: "audio" | "video", mime: string): Promise<void> {
@@ -556,15 +654,32 @@ async function finishRecording(kind: "audio" | "video", mime: string): Promise<v
   try {
     if (kind === "audio") {
       const wav = await blobToWav(blob);
-      selectFile(new File([wav], "voice.wav", { type: "audio/wav" }));
+      await selectFile(new File([wav], "voice.wav", { type: "audio/wav" }));
       return;
     }
     const type = blob.type || "video/webm";
     const name = type.includes("mp4") ? "clip.mp4" : "clip.webm";
-    selectFile(new File([blob], name, { type }));
+    await selectFile(new File([blob], name, { type }));
   } catch {
     showError(kind === "audio" ? "Could not convert the recording to WAV. Upload a WAV or MP3." : "Could not keep that recording. Upload an MP4 or WebM.");
   }
+}
+
+function showTurnstileFailure(host: HTMLElement): void {
+  widgetId = "";
+  host.replaceChildren();
+  const note = document.createElement("p");
+  note.className = "hint";
+  setText(note, "Security check did not load");
+  const retry = document.createElement("button");
+  retry.className = "btn";
+  retry.type = "button";
+  setText(retry, "Retry");
+  retry.addEventListener("click", () => {
+    host.replaceChildren();
+    void mountTurnstile();
+  });
+  host.append(note, retry);
 }
 
 async function mountTurnstile(): Promise<void> {
@@ -590,11 +705,18 @@ async function mountTurnstile(): Promise<void> {
     });
   };
   render();
+  const started = Date.now();
   const timer = window.setInterval(() => {
     render();
-    if (widgetId) window.clearInterval(timer);
+    if (widgetId) {
+      window.clearInterval(timer);
+      return;
+    }
+    if (Date.now() - started >= 30_000) {
+      window.clearInterval(timer);
+      showTurnstileFailure(host);
+    }
   }, 200);
-  window.setTimeout(() => window.clearInterval(timer), 8_000);
 }
 
 async function judge(): Promise<void> {
@@ -667,18 +789,26 @@ function bind(): void {
     cancelled = false;
     finishStop();
   });
+  $<HTMLButtonElement>("shutter").addEventListener("click", () => {
+    cancelled = false;
+    finishStop();
+  });
   $<HTMLInputElement>("file").addEventListener("change", () => {
     const file = $<HTMLInputElement>("file").files?.[0];
-    if (file) selectFile(file);
+    if (file) void selectFile(file);
   });
   $<HTMLInputElement>("capture").addEventListener("change", () => {
     const file = $<HTMLInputElement>("capture").files?.[0];
-    if (file) selectFile(file);
+    if (file) void selectFile(file);
+  });
+  $<HTMLInputElement>("snap-cam").addEventListener("change", () => {
+    const file = $<HTMLInputElement>("snap-cam").files?.[0];
+    if (file) void selectFile(file);
   });
   for (const button of document.querySelectorAll<HTMLButtonElement>("[data-sample]")) {
     button.addEventListener("click", () => {
-      const id = button.dataset.sample;
-      if (id && id in SAMPLES) selectSample(id as SampleId);
+      const id = button.dataset.sample ?? "";
+      if (Object.hasOwn(SAMPLES, id)) selectSample(id as SampleId);
     });
   }
   $<HTMLButtonElement>("add-question").addEventListener("click", () => {

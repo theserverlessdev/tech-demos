@@ -23,7 +23,7 @@ check(denied.status === 400 && deniedBody.error?.code === "turnstile_required", 
 
 const judged = await fetch(`${base}/api/judge`, {
   method: "POST",
-  headers: { "content-type": "application/json", cookie: "oj_vid=" + "ab".repeat(16) },
+  headers: { "content-type": "application/json", cookie: "__Host-oj_vid=" + "ab".repeat(16) },
   body: JSON.stringify({
     turnstileToken: "XXXX.DUMMY.TOKEN.XXXX",
     sampleId: "package",
@@ -40,7 +40,7 @@ check((judgedBody.judgment?.result?.answers?.length ?? 0) === 1, "one answer cam
 check(judgedBody.comparison?.result?.source === "chain-stub", "comparison is the labelled chain stub", judgedBody.comparison);
 
 const setCookie = judged.headers.get("set-cookie") ?? "";
-const media = await fetch(`${base}/api/judgments`, { headers: { cookie: setCookie.split(";")[0] || "oj_vid=" + "ab".repeat(16) } });
+const media = await fetch(`${base}/api/judgments`, { headers: { cookie: setCookie.split(";")[0] || "__Host-oj_vid=" + "ab".repeat(16) } });
 const list = (await media.json()) as { judgments?: unknown[] };
 check(media.status === 200 && (list.judgments?.length ?? 0) >= 1, "history lists the judgment", list);
 

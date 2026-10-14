@@ -7,10 +7,14 @@ export const LIMITS = {
   minOptionChars: 1,
   maxOptionChars: 48,
   maxImageBytes: 2 * 1024 * 1024,
+  /** Width times height, read from the image header. */
+  maxImagePixels: 16_000_000,
   maxAudioBytes: Math.floor(1.5 * 1024 * 1024),
   maxAudioMs: 15_000,
   maxVideoBytes: 6 * 1024 * 1024,
   maxVideoMs: 10_000,
+  /** The page stops near 9.5s. Containers often land a little over 10s. */
+  videoSlackMs: 500,
   /** Whole multipart body, a little above the video cap for form fields. */
   maxBodyBytes: 6_500_000,
   perVisitorHour: 8,

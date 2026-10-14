@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.1
+
+- Video duration is read from WebM block timecodes and from fMP4 `mehd` or `trun`, so a browser recording is not rejected for a missing header.
+- The demo host serves the API. The hub path redirects there. The visitor cookie is `__Host-oj_vid`.
+- Media reads support Range, ignore expired rows, and use the stored content type.
+- Phone capture shows a viewfinder, resizes photos, and stops video near 9.5 seconds.
+
 ## 0.1.0
 
 - One `@cf/cloudflare/clef-omni` call returns a probability for every allowed answer on a photo, a WAV or MP3, or a short MP4 or WebM.

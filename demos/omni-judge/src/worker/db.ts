@@ -18,6 +18,7 @@ export type JudgmentRow = {
   visitor_id: string;
   media_id: string | null;
   sample_id: string | null;
+  pair_id: string | null;
   kind: "omni" | "compare";
   modality: Modality;
   label: string;
@@ -34,7 +35,7 @@ export type JudgmentRow = {
 };
 
 const MEDIA_COLUMNS = "id, visitor_id, kind, content_type, bytes, duration_ms, r2_key, created_at, expires_at";
-const JUDGMENT_COLUMNS = "id, visitor_id, media_id, sample_id, kind, modality, label, ip_key, questions_json, result_json, status, error, latency_ms, source, cost_usd, created_at, expires_at";
+const JUDGMENT_COLUMNS = "id, visitor_id, media_id, sample_id, pair_id, kind, modality, label, ip_key, questions_json, result_json, status, error, latency_ms, source, cost_usd, created_at, expires_at";
 
 async function countWhere(env: Env, sql: string, ...binds: (string | number)[]): Promise<number> {
   const row = await env.DB.prepare(sql).bind(...binds).first<{ n: number }>();
@@ -62,8 +63,8 @@ export async function insertMedia(env: Env, row: Omit<MediaRow, "created_at" | "
     .run();
 }
 
-export async function getMedia(env: Env, id: string): Promise<MediaRow | null> {
-  return env.DB.prepare(`SELECT ${MEDIA_COLUMNS} FROM media WHERE id = ?`).bind(id).first<MediaRow>();
+export async function getMedia(env: Env, id: string, now: number): Promise<MediaRow | null> {
+  return env.DB.prepare(`SELECT ${MEDIA_COLUMNS} FROM media WHERE id = ? AND expires_at > ?`).bind(id, now).first<MediaRow>();
 }
 
 /**
@@ -77,6 +78,7 @@ export async function insertJudgment(
     visitorId: string;
     mediaId: string | null;
     sampleId: string | null;
+    pairId: string | null;
     kind: "omni" | "compare";
     modality: Modality;
     label: string;
@@ -88,8 +90,8 @@ export async function insertJudgment(
   const sinceHour = row.now - 60 * 60 * 1000;
   const sinceDay = row.now - LIMITS.retentionMs;
   const result = await env.DB.prepare(
-    `INSERT INTO judgments (id, visitor_id, media_id, sample_id, kind, modality, label, ip_key, questions_json, result_json, status, latency_ms, source, created_at, expires_at)
-     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', 'pending', 0, '', ?, ?
+    `INSERT INTO judgments (id, visitor_id, media_id, sample_id, pair_id, kind, modality, label, ip_key, questions_json, result_json, status, latency_ms, source, created_at, expires_at)
+     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', 'pending', 0, '', ?, ?
      WHERE (SELECT COUNT(*) FROM judgments WHERE visitor_id = ? AND created_at >= ?) < ?
        AND (SELECT COUNT(*) FROM judgments WHERE ip_key = ? AND created_at >= ?) < ?
        AND (SELECT COUNT(*) FROM judgments WHERE created_at >= ?) < ?`,
@@ -99,6 +101,7 @@ export async function insertJudgment(
       row.visitorId,
       row.mediaId,
       row.sampleId,
+      row.pairId,
       row.kind,
       row.modality,
       row.label,
@@ -131,15 +134,15 @@ export async function failJudgment(env: Env, id: string, message: string): Promi
   await env.DB.prepare(`UPDATE judgments SET status = 'error', error = ? WHERE id = ?`).bind(message.slice(0, 300), id).run();
 }
 
-export async function getJudgment(env: Env, id: string): Promise<JudgmentRow | null> {
-  return env.DB.prepare(`SELECT ${JUDGMENT_COLUMNS} FROM judgments WHERE id = ?`).bind(id).first<JudgmentRow>();
+export async function getJudgment(env: Env, id: string, now: number): Promise<JudgmentRow | null> {
+  return env.DB.prepare(`SELECT ${JUDGMENT_COLUMNS} FROM judgments WHERE id = ? AND expires_at > ?`).bind(id, now).first<JudgmentRow>();
 }
 
-export async function listJudgments(env: Env, visitorId: string): Promise<JudgmentRow[]> {
+export async function listJudgments(env: Env, visitorId: string, now: number): Promise<JudgmentRow[]> {
   const result = await env.DB.prepare(
-    `SELECT ${JUDGMENT_COLUMNS} FROM judgments WHERE visitor_id = ? ORDER BY created_at DESC LIMIT ?`,
+    `SELECT ${JUDGMENT_COLUMNS} FROM judgments WHERE visitor_id = ? AND expires_at > ? ORDER BY created_at DESC LIMIT ?`,
   )
-    .bind(visitorId, LIMITS.historyLimit)
+    .bind(visitorId, now, LIMITS.historyLimit)
     .all<JudgmentRow>();
   return result.results ?? [];
 }
@@ -171,6 +174,7 @@ function parseResult(raw: string, status: JudgmentRow["status"]): JudgmentResult
 export function toView(row: JudgmentRow): JudgmentView {
   return {
     id: row.id,
+    pairId: row.pair_id,
     kind: row.kind,
     modality: row.modality,
     label: row.label,

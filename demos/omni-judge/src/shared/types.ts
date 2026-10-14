@@ -44,6 +44,7 @@ export type JudgmentResult = {
 
 export type JudgmentView = {
   id: string;
+  pairId: string | null;
   kind: "omni" | "compare";
   modality: Modality;
   label: string;

@@ -62,7 +62,13 @@ export async function verifyTurnstile(secret: string, token: string, ip: string,
   }
   if (!result.success) return false;
   if (secret === TURNSTILE_TEST_SECRET) return true;
-  if (result.action && result.action !== "judge") return false;
+  return acceptSiteverify(result, requestHost);
+}
+
+/** Production widgets must be action "judge" on an exact hostname. */
+export function acceptSiteverify(result: Siteverify, requestHost: string): boolean {
+  if (result.action !== "judge") return false;
   const host = result.hostname ?? "";
-  return host === requestHost || host.endsWith(".theserverless.dev");
+  if (host !== requestHost) return false;
+  return host === "omni-judge.tech-demos.theserverless.dev" || host === "localhost" || host === "127.0.0.1";
 }

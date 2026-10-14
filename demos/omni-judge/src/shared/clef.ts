@@ -9,6 +9,8 @@ export type OmniMedia = {
   contentType: string;
   bytes: Uint8Array;
   durationMs: number | null;
+  /** Set once per request so compare mode does not encode the bytes again. */
+  encoded?: string;
 };
 
 export type OmniRequest = {
@@ -20,13 +22,36 @@ export type OmniRequest = {
   videos?: string[];
 };
 
+/** Encode in 3-byte groups so each btoa chunk is valid on its own. Avoids one giant binary string. */
 export function toBase64(bytes: Uint8Array): string {
-  let binary = "";
-  const step = 0x8000;
+  const step = 3 * 8192;
+  let out = "";
   for (let i = 0; i < bytes.length; i += step) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + step));
+    const slice = bytes.subarray(i, Math.min(bytes.length, i + step));
+    let binary = "";
+    for (let j = 0; j < slice.length; j++) binary += String.fromCharCode(slice[j] ?? 0);
+    out += btoa(binary);
   }
-  return btoa(binary);
+  return out;
+}
+
+export function mediaBase64(media: OmniMedia): string {
+  if (media.encoded) return media.encoded;
+  media.encoded = toBase64(media.bytes);
+  return media.encoded;
+}
+
+export function questionMap(questions: ChoiceQuestion[]): OmniRequest["questions"] {
+  return Object.fromEntries(
+    questions.map((question) => [
+      question.id,
+      {
+        type: "choice" as const,
+        instructions: question.instructions,
+        criteria: Object.fromEntries(question.options.map((option) => [option.id, option.label])),
+      },
+    ]),
+  );
 }
 
 /**
@@ -34,20 +59,11 @@ export function toBase64(bytes: Uint8Array): string {
  * base64 data URL in images, audio, or videos. Remote URLs are not accepted.
  */
 export function buildOmniRequest(media: OmniMedia, questions: ChoiceQuestion[]): OmniRequest {
-  const dataUrl = `data:${media.contentType};base64,${toBase64(media.bytes)}`;
+  const dataUrl = `data:${media.contentType};base64,${mediaBase64(media)}`;
   const body: OmniRequest = {
     model: "clef-omni",
     state: OMNI_STATE,
-    questions: Object.fromEntries(
-      questions.map((question) => [
-        question.id,
-        {
-          type: "choice" as const,
-          instructions: question.instructions,
-          criteria: Object.fromEntries(question.options.map((option) => [option.id, option.label])),
-        },
-      ]),
-    ),
+    questions: questionMap(questions),
   };
   if (media.kind === "image") body.images = [dataUrl];
   else if (media.kind === "audio") body.audio = [dataUrl];
@@ -64,11 +80,10 @@ export type ClefRequest = {
 /** Same System One choice map, on text, for the classic chain's last step. */
 export function buildClefRequest(untrustedText: string, questions: ChoiceQuestion[]): ClefRequest {
   const clipped = untrustedText.replace(/\s+/g, " ").trim().slice(0, LIMITS.maxUntrustedChars);
-  const omni = buildOmniRequest({ kind: "image", contentType: "image/png", bytes: new Uint8Array([0]), durationMs: null }, questions);
   return {
     model: "clef",
     state: `Untrusted model text follows. Decide only from it.\n\n${clipped}`,
-    questions: omni.questions,
+    questions: questionMap(questions),
   };
 }
 

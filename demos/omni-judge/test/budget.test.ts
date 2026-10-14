@@ -8,6 +8,7 @@ import { budgetDecision, hashIpKey, networkKey } from "../src/worker/policy";
 function memoryDb(): Database {
   const db = new Database(":memory:");
   db.exec(readFileSync(new URL("../migrations/0001_init.sql", import.meta.url), "utf8"));
+  db.exec(readFileSync(new URL("../migrations/0002_pair.sql", import.meta.url), "utf8"));
   return db;
 }
 
@@ -42,6 +43,7 @@ function row(i: number, visitor: string, ipKey: string, now: number) {
     visitorId: visitor,
     mediaId: null,
     sampleId: "package",
+    pairId: "pair",
     kind: "omni" as const,
     modality: "image" as const,
     label: "Package still",
@@ -77,18 +79,21 @@ describe("atomic budget insert", () => {
       expect(await insertJudgment(env, row(i + 200, `v-${i}`, `n-${i}`, now + i))).toBe(true);
     }
     expect(await insertJudgment(env, row(400, "fresh", "fresh-net", now + 400))).toBe(false);
-    expect(budgetDecision({ visitor: 0, network: 0, daily: LIMITS.dailyCap }).ok).toBe(false);
+    const decision = budgetDecision({ visitor: 0, network: 0, daily: LIMITS.dailyCap });
+    expect(decision.ok).toBe(false);
+    if (!decision.ok) expect(decision.message).toBe("The demo has reached its limit for today. Try again tomorrow.");
   });
 });
 
 describe("network hmac", () => {
-  test("IPv6 /64 addresses share a key and the address is not stored", async () => {
-    expect(networkKey("2001:db8:1:2::1")).toBe(networkKey("2001:db8:1:2:9::1"));
-    expect(networkKey("2001:db8:1:3::1")).not.toBe(networkKey("2001:db8:1:2::1"));
+  test("IPv6 /56 addresses share a key and the address is not stored", async () => {
+    expect(networkKey("2001:db8:1:2::1")).toBe(networkKey("2001:db8:1:ff::1"));
+    expect(networkKey("2001:db8:1:2::1")).toBe("2001:db8:1:0::");
+    expect(networkKey("2001:db8:1:100::1")).not.toBe(networkKey("2001:db8:1:2::1"));
     expect(networkKey("203.0.113.4")).toBe("203.0.113.4");
     const hash = await hashIpKey("2001:db8:1:2::1", "test-secret");
-    expect(hash).toBe(await hashIpKey("2001:db8:1:2:abcd::9", "test-secret"));
-    expect(hash).not.toBe(await hashIpKey("2001:db8:1:3::1", "test-secret"));
+    expect(hash).toBe(await hashIpKey("2001:db8:1:ff:abcd::9", "test-secret"));
+    expect(hash).not.toBe(await hashIpKey("2001:db8:2::1", "test-secret"));
     expect(hash.includes("2001")).toBe(false);
     expect(hash).toHaveLength(64);
   });

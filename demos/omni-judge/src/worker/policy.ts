@@ -47,7 +47,7 @@ function dotted(value: number): string {
   return [(value >>> 24) & 255, (value >>> 16) & 255, (value >>> 8) & 255, value & 255].join(".");
 }
 
-/** IPv4 as dotted decimal, or the IPv6 /64. Mapped IPv6 uses the embedded IPv4. */
+/** IPv4 as dotted decimal, or the IPv6 /56. Mapped IPv6 uses the embedded IPv4. */
 export function networkKey(ip: string): string {
   const trimmed = ip.trim();
   if (!trimmed || trimmed === "local") return "local";
@@ -56,7 +56,7 @@ export function networkKey(ip: string): string {
   const v6 = parseIPv6(trimmed);
   if (v6 === null) return "local";
   if (v6 >> 32n === 0xffffn) return dotted(Number(v6 & 0xffffffffn));
-  const prefix = v6 & ~((1n << 64n) - 1n);
+  const prefix = v6 & (~0n << 72n);
   const parts: string[] = [];
   for (let i = 0; i < 4; i++) parts.push(((prefix >> BigInt(112 - 16 * i)) & 0xffffn).toString(16));
   return `${parts.join(":")}::`;
@@ -75,7 +75,7 @@ export async function hashIpKey(ip: string, secret: string): Promise<string> {
 }
 
 export function budgetDecision(input: { visitor: number; network: number; daily: number }): { ok: true } | { ok: false; status: 429 | 503; code: "hourly" | "daily"; message: string } {
-  if (input.daily >= LIMITS.dailyCap) return { ok: false, status: 503, code: "daily", message: "daily budget used up" };
+  if (input.daily >= LIMITS.dailyCap) return { ok: false, status: 503, code: "daily", message: "The demo has reached its limit for today. Try again tomorrow." };
   if (input.visitor >= LIMITS.perVisitorHour) return { ok: false, status: 429, code: "hourly", message: "This browser has used its judgments for this hour." };
   if (input.network >= LIMITS.perNetworkHour) return { ok: false, status: 429, code: "hourly", message: "This network has used its judgments for this hour." };
   return { ok: true };

@@ -19,6 +19,7 @@ import {
   type JudgmentRow,
   type MediaRow,
 } from "./db";
+import { mediaBase64 } from "../shared/clef";
 import { runOmni } from "./judge";
 import { budgetDecision, hashIpKey, networkKey } from "./policy";
 import { environmentName, isLocalRequest, isTestSiteKey, resolveTurnstileSecret, verifyTurnstile } from "./turnstile";
@@ -33,7 +34,7 @@ export class HttpError extends Error {
   }
 }
 
-const COOKIE = "oj_vid";
+const COOKIE = "__Host-oj_vid";
 const VISITOR = /^[a-f0-9]{32}$/;
 const ID = /^[a-f0-9]{32}$/;
 
@@ -72,13 +73,8 @@ function readVisitor(request: Request): string | null {
   return null;
 }
 
-function cookiePath(url: URL): string {
-  return url.pathname.startsWith("/demos/omni-judge") ? "/demos/omni-judge" : "/";
-}
-
-function visitorCookie(url: URL, visitorId: string): string {
-  const secure = url.protocol === "https:" ? "; Secure" : "";
-  return `${COOKIE}=${visitorId}; HttpOnly; SameSite=Lax; Path=${cookiePath(url)}; Max-Age=604800${secure}`;
+function visitorCookie(visitorId: string): string {
+  return `${COOKIE}=${visitorId}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=604800`;
 }
 
 function ensureVisitor(request: Request): { id: string; fresh: boolean } {
@@ -92,7 +88,7 @@ function ensureVisitor(request: Request): { id: string; fresh: boolean } {
 function withVisitor(request: Request, response: Response, visitor: { id: string; fresh: boolean }): Response {
   if (!visitor.fresh) return response;
   const headers = new Headers(response.headers);
-  headers.append("set-cookie", visitorCookie(new URL(request.url), visitor.id));
+  headers.append("set-cookie", visitorCookie(visitor.id));
   return new Response(response.body, { status: response.status, headers });
 }
 
@@ -132,19 +128,22 @@ function ipSecret(env: Env): string {
 }
 
 function isSample(value: string): value is SampleId {
-  return value in SAMPLES;
+  return Object.hasOwn(SAMPLES, value);
+}
+
+function requireLength(request: Request, max: number): void {
+  const declared = request.headers.get("content-length");
+  if (declared === null) throw new HttpError(411, "length_required", "Content-Length is required.");
+  const size = Number(declared);
+  if (!Number.isInteger(size) || size < 0 || size > max) throw new HttpError(413, "too_large", "The request body is too large.");
 }
 
 async function readJson(request: Request): Promise<unknown> {
-  const declared = request.headers.get("content-length");
-  if (declared !== null) {
-    const size = Number(declared);
-    if (!Number.isFinite(size) || size < 0 || size > 32_000) throw new HttpError(413, "too_large", "The request body is too large.");
-  }
-  const text = await request.text();
-  if (text.length > 32_000) throw new HttpError(413, "too_large", "The request body is too large.");
+  requireLength(request, 32_000);
+  const bytes = new Uint8Array(await request.arrayBuffer());
+  if (bytes.byteLength > 32_000) throw new HttpError(413, "too_large", "The request body is too large.");
   try {
-    return JSON.parse(text) as unknown;
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes)) as unknown;
   } catch {
     throw new HttpError(400, "bad_json", "The request body must be JSON.");
   }
@@ -158,11 +157,7 @@ function field(body: unknown, key: string): unknown {
 async function readUpload(request: Request): Promise<{ token: string; questions: unknown; compare: boolean; sampleId: string | null; file: Uint8Array | null; filename: string }> {
   const type = request.headers.get("content-type") ?? "";
   if (type.includes("multipart/form-data")) {
-    const declared = request.headers.get("content-length");
-    if (declared !== null) {
-      const size = Number(declared);
-      if (!Number.isFinite(size) || size < 0 || size > LIMITS.maxBodyBytes) throw new HttpError(413, "too_large", "That file is too large.");
-    }
+    requireLength(request, LIMITS.maxBodyBytes);
     const form = await request.formData();
     const token = form.get("turnstileToken");
     const questionsRaw = form.get("questions");
@@ -216,8 +211,8 @@ async function loadSample(request: Request, env: Env, sampleId: SampleId): Promi
   return bytes;
 }
 
-function ownedMedia(row: MediaRow | null, visitorId: string): MediaRow {
-  if (!row || row.visitor_id !== visitorId) throw new HttpError(404, "not_found", "That file does not exist.");
+function ownedMedia(row: MediaRow | null, visitorId: string, now: number): MediaRow {
+  if (!row || row.visitor_id !== visitorId || row.expires_at <= now) throw new HttpError(404, "not_found", "That file does not exist.");
   return row;
 }
 
@@ -226,7 +221,7 @@ function ownedJudgment(row: JudgmentRow | null, visitorId: string): JudgmentRow 
   return row;
 }
 
-function fileResponse(bytes: Uint8Array, contentType: string): Response {
+function fileHeaders(contentType: string): Headers {
   const headers = new Headers();
   headers.set("content-type", contentType);
   headers.set("cache-control", "private, max-age=3600");
@@ -234,7 +229,23 @@ function fileResponse(bytes: Uint8Array, contentType: string): Response {
   headers.set("cross-origin-resource-policy", "same-origin");
   headers.set("x-robots-tag", "noindex");
   headers.set("content-security-policy", "sandbox; default-src 'none'");
-  return new Response(bytes, { headers });
+  headers.set("accept-ranges", "bytes");
+  return headers;
+}
+
+function isStoredBody(object: R2Object | R2ObjectBody): object is R2ObjectBody {
+  return "body" in object && object.body != null;
+}
+
+function contentRange(size: number, range: { offset?: number; length?: number; suffix?: number }): string {
+  if (range.suffix !== undefined && range.offset === undefined) {
+    const length = Math.min(range.suffix, size);
+    const start = Math.max(0, size - length);
+    return `bytes ${start}-${Math.max(start, size - 1)}/${size}`;
+  }
+  const start = range.offset ?? 0;
+  const end = range.length !== undefined ? start + range.length - 1 : size - 1;
+  return `bytes ${start}-${end}/${size}`;
 }
 
 async function spend(env: Env, visitorId: string, ipKey: string, now: number): Promise<[number, number, number]> {
@@ -248,6 +259,7 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
   const visitor = ensureVisitor(request);
 
   if (request.method === "GET" && path === "/api/health") {
+    await limit(env.READ_LIMIT, request, "Too many reads from this address. Wait a minute.");
     let d1 = false;
     try {
       await env.DB.prepare("SELECT 1 AS ok").first();
@@ -281,7 +293,7 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
 
   if (request.method === "GET" && path === "/api/judgments") {
     await limit(env.READ_LIMIT, request, "Too many reads from this address. Wait a minute.");
-    const rows = await listJudgments(env, visitor.id);
+    const rows = await listJudgments(env, visitor.id, Date.now());
     return withVisitor(request, json({ judgments: rows.map(toView) }), visitor);
   }
 
@@ -289,25 +301,34 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
   if (request.method === "GET" && mediaMatch) {
     await limit(env.READ_LIMIT, request, "Too many reads from this address. Wait a minute.");
     const id = mediaMatch[1] ?? "";
-    const row = ownedMedia(await getMedia(env, id), visitor.id);
-    const object = await env.BUCKET.get(row.r2_key);
+    const now = Date.now();
+    const row = ownedMedia(await getMedia(env, id, now), visitor.id, now);
+    const object = await env.BUCKET.get(row.r2_key, { range: request.headers, onlyIf: request.headers });
     if (!object) throw new HttpError(404, "not_found", "That file does not exist.");
-    const bytes = new Uint8Array(await object.arrayBuffer());
-    const sniffed = sniffMedia(bytes);
-    const type = sniffed.ok ? sniffed.contentType : "application/octet-stream";
-    return withVisitor(request, fileResponse(bytes, type), visitor);
+    const headers = fileHeaders(row.content_type);
+    if (object.httpEtag) headers.set("etag", object.httpEtag);
+    if (!isStoredBody(object)) return withVisitor(request, new Response(null, { status: 304, headers }), visitor);
+    const asked = request.headers.get("range");
+    if (asked && object.range) {
+      headers.set("content-range", contentRange(object.size, object.range));
+      return withVisitor(request, new Response(object.body, { status: 206, headers }), visitor);
+    }
+    return withVisitor(request, new Response(object.body, { status: 200, headers }), visitor);
   }
 
   const judgmentMatch = /^\/api\/judgments\/([a-f0-9]{32})$/.exec(path);
   if (request.method === "GET" && judgmentMatch) {
     await limit(env.READ_LIMIT, request, "Too many reads from this address. Wait a minute.");
     const id = judgmentMatch[1] ?? "";
-    const row = ownedJudgment(await getJudgment(env, id), visitor.id);
+    const row = ownedJudgment(await getJudgment(env, id, Date.now()), visitor.id);
     return withVisitor(request, json(toView(row)), visitor);
   }
 
   if (request.method === "POST" && path === "/api/judge") {
     assertSameOrigin(request);
+    const posted = request.headers.get("content-type") ?? "";
+    requireLength(request, posted.includes("multipart/form-data") ? LIMITS.maxBodyBytes : 32_000);
+    await limit(env.JUDGE_LIMIT, request, "Too many judgments from this network. Wait a minute.");
     const local = isLocalRequest(request, environmentName(env));
     const secret = resolveTurnstileSecret(local, env.TURNSTILE_SECRET);
     if (!secret.ok) throw new HttpError(503, "turnstile_unconfigured", "Turnstile is not configured. Set TURNSTILE_SECRET.");
@@ -337,8 +358,7 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
     if (!sniffed.ok) throw new HttpError(400, "media", sniffed.message);
 
     const wantCompare = upload.compare && sniffed.kind !== "video";
-    await limit(env.JUDGE_LIMIT, request, "Too many judgments from this network. Wait a minute.");
-    if (upload.compare && sniffed.kind !== "video") await limit(env.COMPARE_LIMIT, request, "Too many comparisons from this network. Wait a minute.");
+    if (wantCompare) await limit(env.COMPARE_LIMIT, request, "Too many comparisons from this network. Wait a minute.");
 
     const now = Date.now();
     const ipKey = await hashIpKey(clientIp(request), ipSecret(env));
@@ -346,36 +366,17 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
     const budget = budgetDecision({ visitor: visitorUsed, network: networkUsed, daily: dailyUsed });
     if (!budget.ok) throw new HttpError(budget.status, budget.code, budget.message);
 
-    let mediaId: string | null = null;
-    if (!sampleId) {
-      mediaId = newId();
-      const key = mediaKey(mediaId);
-      try {
-        await env.BUCKET.put(key, bytes, { httpMetadata: { contentType: sniffed.contentType } });
-      } catch (err) {
-        console.error(JSON.stringify({ event: "r2_put_failed", error: err instanceof Error ? err.name : "error" }));
-        throw new HttpError(503, "storage", "The file could not be stored.");
-      }
-      await insertMedia(env, {
-        id: mediaId,
-        visitor_id: visitor.id,
-        kind: sniffed.kind,
-        content_type: sniffed.contentType,
-        bytes: bytes.length,
-        duration_ms: sniffed.durationMs,
-        r2_key: key,
-        now,
-      });
-    }
-
     const questionsJson = JSON.stringify(validated.questions);
     const omniId = newId();
-    if (!ID.test(omniId)) throw new HttpError(500, "internal", "The server failed. Try again.");
+    const pairId = newId();
+    if (!ID.test(omniId) || !ID.test(pairId)) throw new HttpError(500, "internal", "The server failed. Try again.");
+    const mediaId = sampleId ? null : newId();
     const inserted = await insertJudgment(env, {
       id: omniId,
       visitorId: visitor.id,
       mediaId,
       sampleId,
+      pairId,
       kind: "omni",
       modality: sniffed.kind,
       label,
@@ -390,14 +391,41 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
       throw new HttpError(429, "hourly", "This network has used its judgments for this hour.");
     }
 
+    if (mediaId) {
+      const key = mediaKey(mediaId);
+      try {
+        await env.BUCKET.put(key, bytes, { httpMetadata: { contentType: sniffed.contentType } });
+        await insertMedia(env, {
+          id: mediaId,
+          visitor_id: visitor.id,
+          kind: sniffed.kind,
+          content_type: sniffed.contentType,
+          bytes: bytes.length,
+          duration_ms: sniffed.durationMs,
+          r2_key: key,
+          now,
+        });
+      } catch (err) {
+        console.error(JSON.stringify({ event: "r2_put_failed", error: err instanceof Error ? err.name : "error" }));
+        try {
+          await env.BUCKET.delete(key);
+        } catch (deleteErr) {
+          console.error(JSON.stringify({ event: "r2_delete_failed", error: deleteErr instanceof Error ? deleteErr.name : "error" }));
+        }
+        await failJudgment(env, omniId, "The file could not be stored.");
+        throw new HttpError(503, "storage", "The file could not be stored.");
+      }
+    }
+
     const media = { kind: sniffed.kind, contentType: sniffed.contentType, bytes, durationMs: sniffed.durationMs };
+    mediaBase64(media);
     const omni = await runOmni(env, media, validated.questions, omniId);
     if (!omni.ok) {
       await failJudgment(env, omniId, omni.message);
     } else {
       await finishJudgment(env, omniId, omni.result, omni.result.cost.usd);
     }
-    const omniRow = ownedJudgment(await getJudgment(env, omniId), visitor.id);
+    const omniRow = ownedJudgment(await getJudgment(env, omniId, now), visitor.id);
 
     let comparison: JudgmentView | { available: false; reason: string } | { error: { code: string; message: string } } | null = null;
     if (!omni.ok) {
@@ -417,6 +445,7 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
           visitorId: visitor.id,
           mediaId,
           sampleId,
+          pairId,
           kind: "compare",
           modality: sniffed.kind,
           label,
@@ -430,7 +459,7 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
           const chain = await runCompare(env, media, validated.questions, compareId);
           if (!chain.ok) await failJudgment(env, compareId, chain.message);
           else await finishJudgment(env, compareId, chain.result, chain.result.cost.usd);
-          comparison = toView(ownedJudgment(await getJudgment(env, compareId), visitor.id));
+          comparison = toView(ownedJudgment(await getJudgment(env, compareId, compareNow), visitor.id));
         }
       }
     }

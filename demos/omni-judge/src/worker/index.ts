@@ -1,7 +1,9 @@
 import { cleanupExpired } from "./db";
 import { errorResponse, handleApi } from "./api";
+import { isLocalHost } from "./turnstile";
 
 const BASE_PATH = "/demos/omni-judge";
+const DEMO_HOST = "omni-judge.tech-demos.theserverless.dev";
 
 const PAGE_CSP = [
   "default-src 'self'",
@@ -39,21 +41,30 @@ async function serveAsset(request: Request, env: Env, path: string): Promise<Res
   return new Response(res.body, { status: res.status, headers });
 }
 
+function demoHost(hostname: string): boolean {
+  return hostname === DEMO_HOST || isLocalHost(hostname);
+}
+
 export default {
   async fetch(request, env): Promise<Response> {
     const url = new URL(request.url);
-    if (url.pathname === BASE_PATH) {
-      url.pathname = `${BASE_PATH}/`;
-      return Response.redirect(url.toString(), 308);
+    if (url.pathname === BASE_PATH || url.pathname.startsWith(`${BASE_PATH}/`)) {
+      const rest = url.pathname.slice(BASE_PATH.length) || "/";
+      return Response.redirect(`https://${DEMO_HOST}${rest}${url.search}`, 308);
     }
-    let path = url.pathname;
-    if (path.startsWith(`${BASE_PATH}/`)) path = path.slice(BASE_PATH.length) || "/";
+    if (url.pathname.startsWith("/api/") && !demoHost(url.hostname)) {
+      return new Response("This demo is unavailable.", { status: 503, headers: { "content-type": "text/plain; charset=utf-8" } });
+    }
+    const path = url.pathname;
     if (path.startsWith("/api/")) {
       try {
         return await handleApi(request, env, path);
       } catch (err) {
         return errorResponse(err);
       }
+    }
+    if (!demoHost(url.hostname)) {
+      return Response.redirect(`https://${DEMO_HOST}${path}${url.search}`, 308);
     }
     return serveAsset(request, env, path);
   },

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { buildClefRequest, buildOmniRequest, omniCost, parseOmniResponse } from "../src/shared/clef";
+import { buildClefRequest, buildOmniRequest, omniCost, parseOmniResponse, questionMap, toBase64 } from "../src/shared/clef";
+import { buildVisionRequest, buildWhisperRequest } from "../src/worker/compare";
 import type { ChoiceQuestion } from "../src/shared/types";
 
 const questions: ChoiceQuestion[] = [
@@ -81,7 +82,22 @@ describe("clef-omni request and response", () => {
   test("the text classifier keeps the same choice map", () => {
     const body = buildClefRequest("the pump is loud", questions);
     expect(body.model).toBe("clef");
+    expect(body.questions).toEqual(questionMap(questions));
     expect(body.questions.q0?.criteria.b).toBe("Technical");
     expect(body.state).toContain("the pump is loud");
+    expect("images" in body).toBe(false);
+  });
+
+  test("base64 is chunked and reused, and vision sends a byte array", () => {
+    const bytes = new Uint8Array(30_000);
+    for (let i = 0; i < bytes.length; i++) bytes[i] = i & 0xff;
+    const encoded = toBase64(bytes);
+    expect(encoded).toBe(Buffer.from(bytes).toString("base64"));
+    const media = { kind: "audio" as const, contentType: "audio/wav", bytes, durationMs: 1000, encoded };
+    const omni = buildOmniRequest(media, questions);
+    expect(buildWhisperRequest(media).audio).toBe(encoded);
+    expect(omni.audio?.[0]).toBe(`data:audio/wav;base64,${encoded}`);
+    const image = Uint8Array.of(1, 2, 3, 4);
+    expect(buildVisionRequest(image).image).toEqual([1, 2, 3, 4]);
   });
 });

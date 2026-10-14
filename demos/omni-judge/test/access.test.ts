@@ -14,6 +14,7 @@ const PNG = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAA
 function memoryDb(): Database {
   const db = new Database(":memory:");
   db.exec(readFileSync(new URL("../migrations/0001_init.sql", import.meta.url), "utf8"));
+  db.exec(readFileSync(new URL("../migrations/0002_pair.sql", import.meta.url), "utf8"));
   return db;
 }
 
@@ -57,10 +58,36 @@ function apiEnv(db: Database, objects: Map<string, Uint8Array>): Env {
     JUDGE_LIMIT: { limit: async () => ({ success: true }) },
     COMPARE_LIMIT: { limit: async () => ({ success: true }) },
     BUCKET: {
-      get: async (key: string) => {
-        const body = objects.get(key);
-        if (!body) return null;
-        return { arrayBuffer: async () => body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) };
+      get: async (key: string, options?: { range?: Headers }) => {
+        const stored = objects.get(key);
+        if (!stored) return null;
+        const header = options?.range instanceof Headers ? options.range.get("range") : null;
+        let offset = 0;
+        let length = stored.length;
+        if (header?.startsWith("bytes=")) {
+          const [startRaw, endRaw] = header.slice(6).split("-");
+          offset = Number(startRaw || 0);
+          const end = endRaw ? Number(endRaw) : stored.length - 1;
+          length = end - offset + 1;
+        }
+        const slice = stored.subarray(offset, offset + length);
+        return {
+          size: stored.length,
+          httpEtag: '"etag"',
+          range: header ? { offset, length: slice.length } : undefined,
+          body: new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(slice);
+              controller.close();
+            },
+          }),
+        };
+      },
+      delete: async (key: string) => {
+        objects.delete(key);
+      },
+      put: async (key: string, value: Uint8Array) => {
+        objects.set(key, value);
       },
     },
   } as unknown as Env;
@@ -68,7 +95,7 @@ function apiEnv(db: Database, objects: Map<string, Uint8Array>): Env {
 
 async function call(env: Env, path: string, cookie: string): Promise<Response> {
   try {
-    return await handleApi(new Request(`http://127.0.0.1${path}`, { headers: { cookie: `oj_vid=${cookie}` } }), env, path);
+    return await handleApi(new Request(`http://127.0.0.1${path}`, { headers: { cookie: `__Host-oj_vid=${cookie}` } }), env, path);
   } catch (err) {
     if (err instanceof HttpError) {
       return Response.json({ error: { code: err.code, message: err.message } }, { status: err.status });
@@ -82,7 +109,7 @@ describe("owner-only access", () => {
     const db = memoryDb();
     const objects = new Map<string, Uint8Array>([["media/" + MEDIA, PNG]]);
     const env = apiEnv(db, objects);
-    const now = 1_700_000_000_000;
+    const now = Date.now();
     await insertMedia(env, {
       id: MEDIA,
       visitor_id: OWNER,
@@ -99,6 +126,7 @@ describe("owner-only access", () => {
         visitorId: OWNER,
         mediaId: MEDIA,
         sampleId: null,
+        pairId: "pair-1",
         kind: "omni",
         modality: "image",
         label: "Upload",
@@ -136,5 +164,69 @@ describe("owner-only access", () => {
     expect(foreign.status).toBe(404);
     const foreignBody = (await foreign.json()) as { error?: { message?: string } };
     expect(foreignBody.error?.message).toBe("That judgment does not exist.");
+    const ownBody = (await own.json()) as { pairId?: string };
+    expect(ownBody.pairId).toBe("pair-1");
+  });
+
+  test("a byte range is streamed with the stored type and an expired file is hidden", async () => {
+    const db = memoryDb();
+    const objects = new Map<string, Uint8Array>([["media/" + MEDIA, PNG]]);
+    const env = apiEnv(db, objects);
+    const now = Date.now();
+    await insertMedia(env, {
+      id: MEDIA,
+      visitor_id: OWNER,
+      kind: "image",
+      content_type: "image/png",
+      bytes: PNG.length,
+      duration_ms: null,
+      r2_key: `media/${MEDIA}`,
+      now,
+    });
+    const ranged = await handleApi(
+      new Request(`http://127.0.0.1/api/media/${MEDIA}`, { headers: { cookie: `__Host-oj_vid=${OWNER}`, range: "bytes=0-3" } }),
+      env,
+      `/api/media/${MEDIA}`,
+    );
+    expect(ranged.status).toBe(206);
+    expect(ranged.headers.get("content-type")).toBe("image/png");
+    expect(ranged.headers.get("accept-ranges")).toBe("bytes");
+    expect(ranged.headers.get("content-range")).toBe(`bytes 0-3/${PNG.length}`);
+    const body = new Uint8Array(await ranged.arrayBuffer());
+    expect([...body]).toEqual([...PNG.subarray(0, 4)]);
+
+    const expiredId = "e".repeat(32);
+    objects.set(`media/${expiredId}`, PNG);
+    await insertMedia(env, {
+      id: expiredId,
+      visitor_id: OWNER,
+      kind: "image",
+      content_type: "image/png",
+      bytes: PNG.length,
+      duration_ms: null,
+      r2_key: `media/${expiredId}`,
+      now: now - 25 * 60 * 60 * 1000,
+    });
+    const expired = await call(env, `/api/media/${expiredId}`, OWNER);
+    expect(expired.status).toBe(404);
+    const oldJudgment = "f".repeat(32);
+    expect(
+      await insertJudgment(env, {
+        id: oldJudgment,
+        visitorId: OWNER,
+        mediaId: null,
+        sampleId: null,
+        pairId: "old",
+        kind: "omni",
+        modality: "image",
+        label: "Old",
+        ipKey: "hashed",
+        questionsJson: "[]",
+        now: now - 25 * 60 * 60 * 1000,
+      }),
+    ).toBe(true);
+    const listed = await call(env, "/api/judgments", OWNER);
+    const list = (await listed.json()) as { judgments: { id: string }[] };
+    expect(list.judgments.some((row) => row.id === oldJudgment)).toBe(false);
   });
 });
