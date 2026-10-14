@@ -2,7 +2,7 @@ import type { GateAgent } from "./agent";
 import { listDecisions, purgeExpired, sessionIsLive } from "./audit";
 import { isLocalMode, isTestSiteKey, resolveTurnstileSecret, verifyTurnstile } from "./turnstile";
 import { TOOL_NAMES } from "./tools";
-import { cookieHeader, newSessionId, readCookie, sessionKey, sessionTtlSeconds, signSession, verifySession } from "./session";
+import { cookieHeader, legacySessionId, newSessionId, readCookie, sessionKey, sessionTtlSeconds, signSession, verifySession } from "./session";
 import type { ClefModel, HealthBody, PublicConfig } from "../shared/types";
 
 export class HttpError extends Error {
@@ -136,13 +136,55 @@ function config(env: Env): PublicConfig {
   };
 }
 
-async function resolveCookie(request: Request, env: Env): Promise<string | null> {
+export type PathLimit = "none" | "session" | "chat" | "read";
+
+/** Rate-limit bucket for a route. Cookie lookup and D1 reads run only after this, except health/config. */
+export function pathLimit(method: string, pathname: string): PathLimit {
+  if (method === "GET" && (pathname === "/api/health" || pathname === "/api/config")) return "none";
+  if (method === "POST" && pathname === "/api/sessions") return "session";
+  if (method === "POST" && pathname === "/api/chat") return "chat";
+  if (method === "PATCH" && pathname === "/api/model") return "chat";
+  if (method === "POST" && pathname === "/api/approvals") return "chat";
+  return "read";
+}
+
+async function applyPathLimit(env: Env, request: Request, method: string, pathname: string): Promise<void> {
+  const kind = pathLimit(method, pathname);
+  if (kind === "session") return limit(env.SESSION_LIMIT, request);
+  if (kind === "chat") return limit(env.CHAT_LIMIT, request);
+  if (kind === "read") return limit(env.READ_LIMIT, request);
+}
+
+async function reclaimMissing(env: Env, id: string): Promise<void> {
+  try {
+    await stub(env, id).reclaim();
+  } catch (err) {
+    console.error(JSON.stringify({ event: "reclaim_failed", error: err instanceof Error ? err.message : "error" }));
+  }
+}
+
+type ResolvedSession = { sessionId: string | null; stale: boolean };
+
+async function resolveSession(request: Request, env: Env): Promise<ResolvedSession> {
   const key = sessionKey(env);
-  if (!key) return null;
-  const id = await verifySession(key, readCookie(request));
-  if (!id) return null;
-  if (!(await sessionIsLive(env.DB, id))) return null;
-  return id;
+  const raw = readCookie(request);
+  if (!raw) return { sessionId: null, stale: false };
+  if (!key) return { sessionId: null, stale: true };
+
+  const verified = await verifySession(key, raw);
+  if (verified) {
+    if (await sessionIsLive(env.DB, verified)) return { sessionId: verified, stale: false };
+    await reclaimMissing(env, verified);
+    return { sessionId: null, stale: true };
+  }
+
+  const legacy = legacySessionId(raw);
+  if (legacy) {
+    if (!(await sessionIsLive(env.DB, legacy))) await reclaimMissing(env, legacy);
+    return { sessionId: null, stale: true };
+  }
+
+  return { sessionId: null, stale: true };
 }
 
 export async function handleApi(request: Request, env: Env, pathname: string, base: string): Promise<Response> {
@@ -166,29 +208,27 @@ export async function handleApi(request: Request, env: Env, pathname: string, ba
   if (method === "POST" || method === "PATCH" || method === "DELETE") assertOrigin(request, env);
 
   if (pathname === "/api/sessions" && method === "POST") {
-    await limit(env.SESSION_LIMIT, request);
+    await applyPathLimit(env, request, method, pathname);
     const body = await readJson(request);
     await requireTurnstile(request, env, body);
     requireSessionKey(env);
-    const model = parseModel(body.model) ?? "clef";
     const id = newSessionId();
+    const model = parseModel(body.model) ?? "clef";
     const result = await stub(env, id).start({ sessionId: id, model });
     const headers = result.ok ? { "set-cookie": await signedCookie(env, id, base, secure) } : undefined;
     return agentHttp(result, { status: 201, headers });
   }
 
-  const sessionId = await resolveCookie(request, env);
-  const staleCookie = Boolean(readCookie(request)) && !sessionId;
-  const dropStale = staleCookie ? { "set-cookie": clearCookie(base, secure) } : undefined;
+  await applyPathLimit(env, request, method, pathname);
+  const { sessionId, stale } = await resolveSession(request, env);
+  const dropStale = stale ? { "set-cookie": clearCookie(base, secure) } : undefined;
 
   if (pathname === "/api/session" && method === "DELETE") {
-    await limit(env.READ_LIMIT, request);
     if (sessionId) await stub(env, sessionId).forget();
     return json({ ok: true }, 200, { "set-cookie": clearCookie(base, secure) });
   }
 
   if (pathname === "/api/chat" && method === "POST") {
-    await limit(env.CHAT_LIMIT, request);
     const body = await readJson(request);
     await requireTurnstile(request, env, body);
     const text = typeof body.text === "string" ? body.text : "";
@@ -209,32 +249,23 @@ export async function handleApi(request: Request, env: Env, pathname: string, ba
   }
 
   if (!sessionId) {
-    if (pathname === "/api/session" && method === "GET") {
-      await limit(env.READ_LIMIT, request);
-      return json({ fresh: true }, 200, dropStale);
-    }
-    if (pathname === "/api/audit" && method === "GET") {
-      await limit(env.READ_LIMIT, request);
-      return json({ decisions: [] }, 200, dropStale);
-    }
+    if (pathname === "/api/session" && method === "GET") return json({ fresh: true }, 200, dropStale);
+    if (pathname === "/api/audit" && method === "GET") return json({ decisions: [] }, 200, dropStale);
     throw new HttpError(401, "no_session", "Start a session before using the desk.");
   }
 
   if (pathname === "/api/session" && method === "GET") {
-    await limit(env.READ_LIMIT, request);
     const result = await stub(env, sessionId).view();
     const headers = !result.ok && result.status === 410 ? { "set-cookie": clearCookie(base, secure) } : undefined;
     return agentHttp(result, { headers });
   }
 
   if (pathname === "/api/audit" && method === "GET") {
-    await limit(env.READ_LIMIT, request);
     const decisions = await listDecisions(env.DB, sessionId);
     return json({ decisions });
   }
 
   if (pathname === "/api/model" && method === "PATCH") {
-    await limit(env.CHAT_LIMIT, request);
     const body = await readJson(request);
     const model = parseModel(body.model);
     if (!model) throw new HttpError(400, "bad_model", "Model must be clef or clef-flash.");
@@ -242,7 +273,6 @@ export async function handleApi(request: Request, env: Env, pathname: string, ba
   }
 
   if (pathname === "/api/approvals" && method === "POST") {
-    await limit(env.CHAT_LIMIT, request);
     const body = await readJson(request);
     await requireTurnstile(request, env, body);
     const id = typeof body.id === "string" ? body.id : "";

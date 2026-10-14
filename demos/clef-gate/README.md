@@ -32,10 +32,10 @@ The five tools are fake. `read_docs` quotes demo copy. `fetch_url` describes a U
 - Nothing is sent, fetched, deleted, or executed. `fetch_url` does not request the URL.
 - Local mode is `LOCAL_DEV=1` in `.dev.vars` only. Production has `LOCAL_DEV=0`, so the labeled heuristic, the test Turnstile secret, and `http://localhost` origins are unreachable there. A failed Clef call in production does not run the tool.
 - A weak **deny** stays deny. Only a weak allow or ask-human waits for a person.
-- The planner uses `@cf/zai-org/glm-5.3-flash` with `reasoning_effort: "low"` when it is reachable. An empty or failed model reply falls back to keyword rules that do not invent a delete id, a fetch URL, or a SQL statement. The gate card shows which planner ran.
+- The planner uses `@cf/zai-org/glm-5.3-flash` with `reasoning_effort: "low"` when it is reachable. An empty or failed model reply falls back to keyword rules that need explicit SQL-shaped syntax or an email verb / address. They do not invent a delete id, a fetch URL, or a SQL statement. The gate card shows which planner ran.
 - The 8s planner / Clef timeout does not cancel `AI.run`, so a timed-out call can still be billed. Cost stays small.
 - Sessions last 6 hours. Args summaries are capped. Email bodies are not written to D1.
-- Session cookies are `id.exp.hmac`. A forged or expired cookie never wakes a Durable Object. Ended sessions call `destroy()` so SQLite storage is freed.
+- Session cookies are `id.exp.hmac`. A forged HMAC cookie never wakes a Durable Object. An old 32-hex cookie, or a signed cookie whose D1 row is gone, wakes the object once so `reclaim()` can `destroy()` leftover SQLite. Ended sessions also call `destroy()`.
 
 ## What it proves
 
@@ -43,8 +43,8 @@ The five tools are fake. `read_docs` quotes demo copy. `fetch_url` describes a U
 | --- | --- |
 | **Agents SDK** | One Durable Object per anonymous session. The pending tool call sits in SQLite until Approve, Deny, or the 10-minute `schedule()`. Expiry and forget call `destroy()`. |
 | **Workers AI** | `toolGate()` asks `@cf/cloudflare/clef` or `@cf/cloudflare/clef-flash` one System One choice question. The planner uses `@cf/zai-org/glm-5.3-flash` when it is reachable, and keyword rules otherwise. |
-| **D1** | Audit row per decision: tool, args summary, decision, probabilities, latency, model, human outcome. A live D1 row is required before `idFromName`. |
-| **Rate Limiting** | 12 chat/approval writes per minute per IP, 6 new sessions per minute, 60 session/audit reads per minute. |
+| **D1** | Audit row per decision: tool, args summary, decision, probabilities, latency, model, human outcome. A live D1 row is required before a session is treated as live. A missing row on first touch reclaims the Durable Object. |
+| **Rate Limiting** | 12 chat/approval writes per minute per IP, 6 new sessions per minute, 60 session/audit reads per minute. Limits run before the cookie lookup and D1 reads. |
 | **Turnstile** | Required on chat, session start, and approval. |
 
 `toolGate()` lives in `src/worker/tool-gate.ts` with its types. It does not execute tools. That is the shape a shared guardrails package (repo issue #95) can re-export later.

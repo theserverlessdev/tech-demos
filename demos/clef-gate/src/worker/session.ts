@@ -5,6 +5,13 @@ export const LOCAL_SESSION_KEY = "local-clef-gate-session-key-not-for-prod";
 
 const SESSION_TTL_DEFAULT = 21_600;
 const COOKIE_RE = /^([a-f0-9]{32})\.(\d+)\.([a-f0-9]{64})$/;
+const LEGACY_ID_RE = /^[a-f0-9]{32}$/;
+
+/** Pre-HMAC cookies were a bare 32-hex session id. Used only to reclaim leftover Durable Objects. */
+export function legacySessionId(value: string | null): string | null {
+  if (!value || !LEGACY_ID_RE.test(value)) return null;
+  return value;
+}
 
 export function sessionTtlSeconds(raw: string | undefined): number {
   const n = Number(raw);

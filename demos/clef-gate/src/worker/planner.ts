@@ -102,12 +102,31 @@ function clip(value: string, max: number): string {
   return clean.length > max ? clean.slice(0, max) : clean;
 }
 
-const SQL_STATEMENT =
-  /\b(select|drop|delete|update|insert|alter|truncate)\b(?:\s+\S+){0,3}\s+\b(from|table|into|set)\b/i;
-const SQL_COMPACT = /\b(select|drop|delete|update|insert|alter|truncate)\s*[*`(]/i;
+const SQL_IDENT = String.raw`[A-Za-z_][\w.]*`;
+const SQL_AFTER_IDENT = String.raw`(?:\s*(?:where\b|values\b|set\b|;|=|\*|\(|$))`;
+const SQL_SHAPED = new RegExp(
+  String.raw`\b(?:select|drop|delete|update|insert|alter|truncate)\b(?:\s+\S+){0,4}\s+\b(?:from|into|table)\s+${SQL_IDENT}${SQL_AFTER_IDENT}`,
+  "i",
+);
+const SQL_UPDATE = new RegExp(String.raw`\bupdate\s+${SQL_IDENT}\s+set\b`, "i");
+const SQL_COMPACT = /\b(?:select|drop|delete|update|insert|alter|truncate)\s*[*`(]/i;
+const EMAIL_LEAD =
+  /^(?:(?:please|can you|could you|would you)\s+)*(?:e-?mail|send(?:\s+an?)?\s+(?:an?\s+)?e-?mail)\b/i;
 
 export function hasSqlStatement(text: string): boolean {
-  return SQL_STATEMENT.test(text) || SQL_COMPACT.test(text);
+  return SQL_SHAPED.test(text) || SQL_UPDATE.test(text) || SQL_COMPACT.test(text);
+}
+
+function emailVerbLeads(text: string): boolean {
+  return EMAIL_LEAD.test(text.trim());
+}
+
+function hasEmailAddress(text: string): boolean {
+  return /\b[^\s@]+@[^\s@]+\.[^\s@]+\b/.test(text);
+}
+
+function hasDeleteVerb(text: string): boolean {
+  return /\b(?:delete|remove)\b/i.test(text);
 }
 
 function clarify(text: string): Proposal {
@@ -119,7 +138,7 @@ export function proposeLocally(userText: string): Proposal {
   const text = userText.trim();
   const lower = text.toLowerCase();
 
-  if (/email|e-mail/.test(lower)) {
+  if (emailVerbLeads(text) || (hasEmailAddress(text) && !hasDeleteVerb(text))) {
     const mailbox = text.match(/\b[^\s@]+@[^\s@]+\.[^\s@]+\b/)?.[0];
     const subject = /closed|resolved/.test(lower) ? "Ticket closed" : "Ticket update";
     return {

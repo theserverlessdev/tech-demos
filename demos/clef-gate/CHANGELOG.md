@@ -31,6 +31,13 @@ What this slice changes relative to [yologdev/yoagent `clef-worker`](https://git
 
 ## 2026-10-14
 
+Follow-ups after the audit PR:
+
+- Rebased onto `main` so the hub registry keeps `standalone()` and “or ten minutes pass”.
+- First touch of a Durable Object whose D1 session is gone calls `reclaim()` → `destroy()`. Old 32-hex cookies are reclaim-only.
+- Keyword planner requires SQL-shaped syntax or an explicit email verb / address. Plain English no longer becomes `run_sql` or `send_email`.
+- Rate limits run before cookie lookup and D1 reads, including 401/404.
+
 Audit fixes:
 
 - Session cookies are HMAC-signed (`id.exp.hmac`). Forged cookies never call `idFromName`. GET/DELETE `/api/session` and GET `/api/audit` use `READ_LIMIT` `7467`.

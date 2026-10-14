@@ -1,5 +1,5 @@
 import { Agent } from "agents";
-import { insertDecision, insertSession, purgeSession, setHumanOutcome } from "./audit";
+import { insertDecision, insertSession, purgeSession, sessionIsLive, setHumanOutcome } from "./audit";
 import { conclude, propose, type ChatBody } from "./planner";
 import { parseToolCall, runTool, type ParsedCall } from "./tools";
 import { toolGate, CONFIDENCE_FLOOR_DEFAULT, type ToolGateVerdict } from "./tool-gate";
@@ -282,6 +282,19 @@ export class GateAgent extends Agent<Env, GateState> {
     this.ensureSchema();
     await this.wipe();
     return this.fail(410, "forgotten", "Session cleared.");
+  }
+
+  /** First touch of a Durable Object whose D1 session is gone: free leftover SQLite. */
+  async reclaim(): Promise<{ ok: true }> {
+    const id = this.state.sessionId;
+    if (id && (await sessionIsLive(this.env.DB, id))) return { ok: true };
+    try {
+      await this.destroy();
+    } catch (err) {
+      console.error(JSON.stringify({ event: "reclaim_destroy_failed", error: err instanceof Error ? err.message : "error" }));
+      await this.ctx.storage.deleteAll();
+    }
+    return { ok: true };
   }
 
   async chat(input: { text: string; flags: Flags }): Promise<AgentResult> {

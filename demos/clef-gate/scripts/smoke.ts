@@ -1,6 +1,7 @@
 // Smoke: bun run scripts/smoke.ts [baseUrl]
-import { propose, proposeLocally } from "../src/worker/planner";
-import { isPendingExpired, signSession, verifySession } from "../src/worker/session";
+import { pathLimit } from "../src/worker/api";
+import { hasSqlStatement, propose, proposeLocally } from "../src/worker/planner";
+import { isPendingExpired, legacySessionId, LOCAL_SESSION_KEY, signSession, verifySession } from "../src/worker/session";
 import {
   decideFromProbabilities,
   heuristicProbabilities,
@@ -38,6 +39,20 @@ check("signed cookie verifies", (await verifySession("unit-secret", signed)) ===
 check("forged cookie is rejected", (await verifySession("unit-secret", `${"b".repeat(32)}.9999999999.${"c".repeat(64)}`)) === null);
 check("unsigned 32-hex cookie is rejected", (await verifySession("unit-secret", "a".repeat(32))) === null);
 check("expired signed cookie is rejected", (await verifySession("unit-secret", await signSession("unit-secret", "a".repeat(32), 1), Date.now())) === null);
+check("legacy cookie id is the bare 32-hex value", legacySessionId("ab".repeat(16)) === "ab".repeat(16));
+check("signed cookie is not a legacy id", legacySessionId(signed) === null);
+check("empty cookie is not a legacy id", legacySessionId(null) === null);
+
+check("GET /api/session is read-limited before cookie lookup", pathLimit("GET", "/api/session") === "read");
+check("GET /api/audit is read-limited before cookie lookup", pathLimit("GET", "/api/audit") === "read");
+check("GET /api/nope is read-limited before cookie lookup", pathLimit("GET", "/api/nope") === "read");
+check("DELETE /api/session is read-limited before cookie lookup", pathLimit("DELETE", "/api/session") === "read");
+check("POST /api/chat is chat-limited before cookie lookup", pathLimit("POST", "/api/chat") === "chat");
+check("PATCH /api/model is chat-limited before cookie lookup", pathLimit("PATCH", "/api/model") === "chat");
+check("POST /api/approvals is chat-limited before cookie lookup", pathLimit("POST", "/api/approvals") === "chat");
+check("POST /api/sessions uses the session limit", pathLimit("POST", "/api/sessions") === "session");
+check("GET /api/health is not rate-limited", pathLimit("GET", "/api/health") === "none");
+check("GET /api/config is not rate-limited", pathLimit("GET", "/api/config") === "none");
 
 const sample = {
   model: "clef",
@@ -80,6 +95,13 @@ check("email mentioning remove stays send_email", proposeLocally("Email the cust
 check("select the privacy doc is read_docs not sql", proposeLocally("Can you select the privacy doc for me?").call?.name === "read_docs");
 check("talking about sql does not invent a statement", proposeLocally("What does this desk do with sql?").call === null);
 check("fetch without a URL does not invent one", proposeLocally("Fetch the refund doc").call?.name === "read_docs");
+check("plain English delete-from is not SQL", !hasSqlStatement("Please delete the customer from the newsletter list"));
+check("plain English delete-from does not call a tool", proposeLocally("Please delete the customer from the newsletter list").call === null);
+check("select a doc from the list is not SQL", proposeLocally("Select a doc from the list for me").call?.name !== "run_sql");
+check("insert a note into the ticket is not SQL", proposeLocally("Insert a note into the ticket").call === null);
+check("delete the email to an account is delete_record", proposeLocally("Delete the email I sent to acct_1842").call?.name === "delete_record");
+check("DROP TABLE still maps to run_sql", hasSqlStatement("Run DROP TABLE tickets") && proposeLocally("Run DROP TABLE tickets").call?.name === "run_sql");
+check("SELECT FROM table still maps to run_sql", proposeLocally("Run SELECT * FROM tickets WHERE id = 1").call?.name === "run_sql");
 const emptyPlan = await propose({
   userText: "Look up the refund policy in the docs",
   forceLocal: false,
@@ -188,6 +210,13 @@ async function runSession(read: { status: number; data: ChatBody | null; res: Re
 
   const forged = await call<{ fresh?: boolean } & ErrorBody>("/api/session", { cookie: `clef_gate=${"ab".repeat(16)}` });
   check("unsigned cookie does not open a Durable Object", forged.status === 200 && forged.data?.fresh === true, forged.data);
+
+  const orphanSigned = await signSession(LOCAL_SESSION_KEY, "f".repeat(32), Math.floor(Date.now() / 1000) + 600);
+  const orphan = await call<{ fresh?: boolean } & ErrorBody>("/api/session", { cookie: `clef_gate=${orphanSigned}` });
+  check("signed cookie with no D1 row is reclaimed as fresh", orphan.status === 200 && orphan.data?.fresh === true, orphan.data);
+
+  const unknown = await call<ErrorBody>("/api/nope");
+  check("unknown API route without a session is 401 after the read limit", unknown.status === 401 && errorCode(unknown.data) === "no_session", unknown.data);
 
   const tooLong = await call<ErrorBody>("/api/chat", {
     method: "POST",
