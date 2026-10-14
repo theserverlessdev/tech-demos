@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.5
+
+- A WebM cut-tail is kept only when the broken element is the last bytes of the file. A short edit in the middle of a cluster, or bytes after a shrunk Segment, is rejected.
+- MP4 duration includes the `sidx` subsegment sum, composition offsets, and the span across `trun`s that share a `tfdt`. An 8 second fragment whose decode time does not start at zero still passes.
+
 ## 0.1.4
 
 - A broken WebM element, a second Info, or an unknown-size Info is rejected instead of keeping a short prefix. A cut-off cluster keeps the last complete block.

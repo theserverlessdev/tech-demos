@@ -589,11 +589,145 @@ describe("media caps", () => {
     if (placed.ok) expect(placed.durationMs).toBe(2001);
   });
 
+  test("a short edit inside a chrome cluster does not hide the rest of the file", () => {
+    const scale = element([0x2a, 0xd7, 0xb1], Uint8Array.of(0x0f, 0x42, 0x40));
+    const info = element([0x15, 0x49, 0xa9, 0x66], scale);
+    const header = element([0x1a, 0x45, 0xdf, 0xa3], element([0x42, 0x86], Uint8Array.of(1)));
+    const tc = (value: number) => {
+      const time = new Uint8Array(2);
+      new DataView(time.buffer).setUint16(0, value, false);
+      return element([0xe7], time);
+    };
+    const cluster = (...parts: Uint8Array[]) => concat(Uint8Array.of(0x1f, 0x43, 0xb6, 0x75), ebmlUnknown(), ...parts);
+    const wrap = (...parts: Uint8Array[]) => concat(header, Uint8Array.of(0x18, 0x53, 0x80, 0x67), ebmlUnknown(), info, ...parts);
+    const late = cluster(tc(50_000), simpleBlock(0));
+    const attacks = [
+      Uint8Array.of(0xec, 0x00),
+      Uint8Array.of(0xec, 0x1f, 0xff, 0xff, 0xfe),
+      Uint8Array.of(0xa3, 0x1f, 0xff, 0xff, 0xfe),
+      Uint8Array.of(0xec, 0x01, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfe),
+    ];
+    for (const attack of attacks) {
+      const sniffed = sniffMedia(wrap(cluster(tc(0), simpleBlock(0), simpleBlock(4961), attack), late));
+      expect(sniffed.ok).toBe(false);
+      if (!sniffed.ok) expect(sniffed.message).toContain("no readable duration");
+    }
+    const whole = sniffMedia(wrap(cluster(tc(0), simpleBlock(0), simpleBlock(4961)), late));
+    expect(whole.ok).toBe(false);
+    if (!whole.ok) expect(whole.message).toContain("10 seconds");
+    const voided = sniffMedia(wrap(cluster(tc(0), simpleBlock(0), Uint8Array.of(0xec, 0x80), simpleBlock(4000))));
+    expect(voided).toMatchObject({ ok: true, contentType: "video/webm" });
+    if (voided.ok) expect(voided.durationMs).toBe(4000);
+  });
+
+  test("a known-size webm cut or a shrunk segment does not keep a short duration", () => {
+    const scale = element([0x2a, 0xd7, 0xb1], Uint8Array.of(0x0f, 0x42, 0x40));
+    const info = element([0x15, 0x49, 0xa9, 0x66], scale);
+    const header = element([0x1a, 0x45, 0xdf, 0xa3], element([0x42, 0x86], Uint8Array.of(1)));
+    const tc = (value: number) => {
+      const time = new Uint8Array(2);
+      new DataView(time.buffer).setUint16(0, value, false);
+      return element([0xe7], time);
+    };
+    const early = element([0x1f, 0x43, 0xb6, 0x75], concat(tc(0), simpleBlock(0), simpleBlock(5000)));
+    const late = element([0x1f, 0x43, 0xb6, 0x75], concat(tc(50_000), simpleBlock(0)));
+    const segment = element([0x18, 0x53, 0x80, 0x67], concat(info, early));
+    const file = concat(header, segment);
+    const intact = sniffMedia(file);
+    expect(intact).toMatchObject({ ok: true, contentType: "video/webm" });
+    if (intact.ok) expect(intact.durationMs).toBe(5000);
+    const cut = sniffMedia(file.subarray(0, file.length - 3));
+    expect(cut.ok).toBe(false);
+    if (!cut.ok) expect(cut.message).toContain("no readable duration");
+    const hidden = sniffMedia(concat(file, late));
+    expect(hidden.ok).toBe(false);
+    if (!hidden.ok) expect(hidden.message).toContain("no readable duration");
+    const junk = sniffMedia(concat(file, Uint8Array.of(0x01)));
+    expect(junk.ok).toBe(false);
+    if (!junk.ok) expect(junk.message).toContain("no readable duration");
+    const padded = sniffMedia(concat(file, new Uint8Array(8)));
+    expect(padded).toMatchObject({ ok: true, contentType: "video/webm" });
+    if (padded.ok) expect(padded.durationMs).toBe(5000);
+  });
+
+  test("sidx subsegment durations extend a short sample table", () => {
+    const sidx = (durations: number[], count = durations.length) => {
+      const refs = durations.map((duration) => concat(u32be(0), u32be(duration), u32be(0)));
+      return atom("sidx", concat(u32be(0), u32be(1), u32be(1000), u32be(0), u32be(0), u16be(0), u16be(count), ...refs));
+    };
+    const long = sniffMedia(concat(mp4(98), sidx([20_000, 29_000])));
+    expect(long.ok).toBe(false);
+    if (!long.ok) expect(long.message).toContain("10 seconds");
+    const kept = sniffMedia(concat(mp4(1000), sidx([1000])));
+    expect(kept).toMatchObject({ ok: true, kind: "video" });
+    if (kept.ok) expect(kept.durationMs).toBe(1000);
+    const truncated = sniffMedia(concat(mp4(1000), sidx([], 4)));
+    expect(truncated.ok).toBe(false);
+    if (!truncated.ok) expect(truncated.message).toContain("no readable duration");
+  });
+
+  test("composition offsets extend the track end", () => {
+    const ftyp = atom("ftyp", concat(ascii("isom"), u32be(0), ascii("isom")));
+    const mvhd = new Uint8Array(100);
+    new DataView(mvhd.buffer).setUint32(12, 1000);
+    const tkhd = new Uint8Array(84);
+    new DataView(tkhd.buffer).setUint32(12, 1);
+    const mdhd = new Uint8Array(24);
+    new DataView(mdhd.buffer).setUint32(12, 1000);
+    const file = (stts: Uint8Array, ctts: Uint8Array) => {
+      const trak = atom(
+        "trak",
+        concat(atom("tkhd", tkhd), atom("mdia", concat(atom("mdhd", mdhd), atom("minf", atom("stbl", concat(atom("stts", stts), atom("ctts", ctts))))))),
+      );
+      return concat(ftyp, atom("moov", concat(atom("mvhd", mvhd), trak)));
+    };
+    const shifted = sniffMedia(file(concat(u32be(0), u32be(1), u32be(1), u32be(98)), concat(u32be(0), u32be(1), u32be(1), u32be(49_872))));
+    expect(shifted.ok).toBe(false);
+    if (!shifted.ok) expect(shifted.message).toContain("10 seconds");
+    const same = sniffMedia(file(concat(u32be(0), u32be(1), u32be(1), u32be(1000)), concat(u32be(0), u32be(1), u32be(1), u32be(0))));
+    expect(same).toMatchObject({ ok: true, kind: "video" });
+    if (same.ok) expect(same.durationMs).toBe(1000);
+    const mismatch = sniffMedia(file(concat(u32be(0), u32be(1), u32be(1), u32be(1000)), concat(u32be(0), u32be(1), u32be(2), u32be(0))));
+    expect(mismatch.ok).toBe(false);
+    if (!mismatch.ok) expect(mismatch.message).toContain("no readable duration");
+  });
+
+  test("truns in one traf continue from tfdt and a mid-stream fragment keeps its span", () => {
+    const fragment = (tfdt: number, durations: number[], offset?: number) => {
+      const tfhd = concat(u32be(0), u32be(1));
+      const time = concat(u32be(0), u32be(tfdt));
+      const truns = durations.map((duration) => {
+        const body = offset === undefined ? concat(u32be(0x100), u32be(1), u32be(duration)) : concat(u32be(0x900), u32be(1), u32be(duration), u32be(offset));
+        return atom("trun", body);
+      });
+      return atom("moof", atom("traf", concat(atom("tfhd", tfhd), atom("tfdt", time), ...truns)));
+    };
+    const hidden = sniffMedia(concat(safariFmp4({}), fragment(0, [10_433, 10_433])));
+    expect(hidden.ok).toBe(false);
+    if (!hidden.ok) expect(hidden.message).toContain("10 seconds");
+    const pair = sniffMedia(concat(safariFmp4({}), fragment(0, [1000, 1000])));
+    expect(pair).toMatchObject({ ok: true, kind: "video" });
+    if (pair.ok) expect(pair.durationMs).toBe(2000);
+    const dash = sniffMedia(concat(safariFmp4({}), fragment(8000, [8000])));
+    expect(dash).toMatchObject({ ok: true, kind: "video" });
+    if (dash.ok) expect(dash.durationMs).toBe(8000);
+    const composed = sniffMedia(concat(safariFmp4({}), fragment(0, [98], 50_000)));
+    expect(composed.ok).toBe(false);
+    if (!composed.ok) expect(composed.message).toContain("10 seconds");
+  });
+
   test("a stock ffmpeg frag_every_frame file stays inside the cap", () => {
     const file = new Uint8Array(readFileSync(new URL("./fixtures/frag-every-frame.mp4", import.meta.url)));
     const sniffed = sniffMedia(file);
     expect(sniffed).toMatchObject({ ok: true, contentType: "video/mp4" });
     if (sniffed.ok) expect(Math.abs((sniffed.durationMs ?? 0) - 2000)).toBeLessThanOrEqual(200);
+  });
+
+  test("a chrome-style fragmented mp4 reads the real duration", () => {
+    const file = new Uint8Array(readFileSync(new URL("./fixtures/chrome-fmp4.mp4", import.meta.url)));
+    const sniffed = sniffMedia(file);
+    expect(sniffed).toMatchObject({ ok: true, contentType: "video/mp4" });
+    if (sniffed.ok) expect(Math.abs((sniffed.durationMs ?? 0) - 3000)).toBeLessThanOrEqual(150);
   });
 
   test("an exact mp3 duration does not gain a millisecond", () => {
