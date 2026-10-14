@@ -43,7 +43,7 @@
   <section class="panel keys" aria-labelledby="keys-title">
     <header class="panel__head">
       <h2 id="keys-title">Your endpoint</h2>
-      <p>The key is sent in the JSON body of each request and is not stored on the Worker. Session storage is the default; Remember keeps it in this browser only. One Turnstile pass mints a signed session cookie for this origin.</p>
+      <p>The key is sent in the JSON body and is not stored on the Worker. Session storage is the default. One Turnstile pass mints a signed session cookie.</p>
     </header>
     <div class="fields">
       <label>API key
@@ -64,7 +64,7 @@
     </div>
     <p id="models-note" class="hint" role="status"></p>
     <div id="turnstile" class="turnstile"></div>
-    <p id="session-note" class="hint">Complete Turnstile once so this browser can call your endpoint. Compare uses a second check with action compare.</p>
+    <p id="session-note" class="hint">Complete Turnstile once for a signed session. Compare uses action compare.</p>
   </section>
 
   <section class="intro" aria-labelledby="try-title">

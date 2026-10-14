@@ -338,6 +338,9 @@ textarea { min-height: 4.2rem; resize: vertical; }
   .intro, .fields, .compare-grid, .sliders { display: flex; flex-direction: column; align-items: stretch; }
   .intro { padding-top: 0.65rem; }
   .intro li { margin: 0.15rem 0; }
+  .panel { margin: 0.7rem 0.85rem; padding: 0.85rem; }
+  .shows--bar { padding: 0.55rem 0.85rem; }
+  .panel__head p { margin: 0.25rem 0 0.6rem; }
   .btn, a.btn, .tab, .btn-ghost { min-height: 44px; }
   .btn-icon { width: 44px; height: 44px; }
   body { padding-bottom: calc(1.2rem + env(safe-area-inset-bottom)); }

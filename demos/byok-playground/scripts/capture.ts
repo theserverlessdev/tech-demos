@@ -56,7 +56,7 @@ const video = page.video();
 await context.close();
 const raw = video ? await video.path() : "";
 if (raw) {
-  const proc = Bun.spawn(["ffmpeg", "-y", "-i", raw, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart", `${out}byok-playground-demo.mp4`], {
+  const proc = Bun.spawn(["ffmpeg", "-y", "-i", raw, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "32", "-preset", "slow", "-vf", "scale=960:-2", "-an", "-movflags", "+faststart", `${out}byok-playground-demo.mp4`], {
     stdout: "ignore",
     stderr: "pipe",
   });

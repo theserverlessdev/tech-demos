@@ -197,7 +197,7 @@ async function ensureSession(): Promise<void> {
     throw new Error(messageOf(data, "Complete the Turnstile check so this browser can call your endpoint."));
   }
   sessionReady = true;
-  sessionNote.textContent = "This browser has a signed session cookie. Compare still needs a Turnstile pass with action compare.";
+  sessionNote.textContent = "Signed session cookie is set. Compare still needs action compare.";
   if (siteKey && !testSiteKey) mountTurnstile("compare");
 }
 
