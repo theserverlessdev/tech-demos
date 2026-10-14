@@ -1,5 +1,6 @@
 import { RpcTarget, newMessagePortRpcSession } from "capnweb";
 // The build copies capnweb's ESM bundle here, so the shell can embed it in each sandboxed frame.
+import { gadgetIsolationScript } from "./gadget-isolation";
 import CAPNWEB_SOURCE from "./gen/capnweb.txt";
 
 /** Same base CSS the gadget contract documents (src/blueprints/CONTRACT.md). */
@@ -97,7 +98,7 @@ window.addEventListener("unhandledrejection", (e) => window.parent.postMessage({
 window.addEventListener("message", (e) => {
   if (e.source === window.parent && e.data && e.data.type === "theme") document.documentElement.setAttribute("data-theme", e.data.theme);
 });
-window.open = () => null;
+${gadgetIsolationScript()}
 `;
 }
 

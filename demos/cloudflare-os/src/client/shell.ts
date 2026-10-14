@@ -13,7 +13,9 @@ import type {
   WorkspaceSnapshot,
 } from "../shared/types";
 import { clock, h, icon, logoMark, renderMarkdown, timeAgo } from "./dom";
+import { GADGET_IFRAME_SANDBOX } from "./gadget-isolation";
 import { FrameBridge, sandboxHtml } from "./gadget-frame";
+import { safeGadgetOpenUrl } from "./open-url";
 
 // Cap'n Web stubs are dynamic. Typing them as `any` avoids deep type instantiation in the checker.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -68,7 +70,7 @@ type Drawer = "activity" | "system" | null;
 
 const state = {
   snap: null as WorkspaceSnapshot | null,
-  conn: "connecting" as "connecting" | "live" | "offline",
+  conn: "connecting" as "connecting" | "live" | "offline" | "paused",
   blueprints: [] as BlueprintInfo[],
   active: null as string | null,
   view: "app" as View,
@@ -247,6 +249,7 @@ class WorkspaceListener extends RpcTarget {
 let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 let reconnectDelay = 800;
 let heartbeat: ReturnType<typeof setInterval> | undefined;
+let allowReconnect = true;
 
 function wsUrl() {
   return `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}${BASE}/api`;
@@ -255,10 +258,30 @@ function wsUrl() {
 function setConn(next: typeof state.conn) {
   state.conn = next;
   connEl.setAttribute("data-state", next);
-  connEl.querySelector(".conn__label")!.textContent = next === "live" ? "Live" : next === "connecting" ? "Connecting" : "Offline";
+  connEl.querySelector(".conn__label")!.textContent =
+    next === "live" ? "Live" : next === "connecting" ? "Connecting" : next === "paused" ? "Paused" : "Offline";
+}
+
+function pauseForIdle(message: string) {
+  allowReconnect = false;
+  clearInterval(heartbeat);
+  heartbeat = undefined;
+  clearTimeout(reconnectTimer);
+  session = null;
+  try {
+    rootStub?.[Symbol.dispose]();
+  } catch {}
+  rootStub = null;
+  setConn("paused");
+  toast(message, "error");
+}
+
+function isIdleError(err: unknown): boolean {
+  return /paused after .* idle/i.test(errMsg(err));
 }
 
 async function connect() {
+  if (!allowReconnect) return;
   clearTimeout(reconnectTimer);
   setConn("connecting");
   const root: Stub = newWebSocketRpcSession(wsUrl());
@@ -266,6 +289,10 @@ async function connect() {
   root.onRpcBroken(() => {
     if (rootStub !== root) return;
     session = null;
+    if (!allowReconnect) {
+      setConn("paused");
+      return;
+    }
     setConn("offline");
     scheduleReconnect();
   });
@@ -283,7 +310,11 @@ async function connect() {
     }
     clearInterval(heartbeat);
     heartbeat = setInterval(() => {
-      if (session === ws) ws.ping().catch(() => {});
+      if (session === ws) {
+        ws.ping().catch((err: unknown) => {
+          if (isIdleError(err)) pauseForIdle(errMsg(err));
+        });
+      }
     }, 20_000);
     render();
   } catch (err) {
@@ -296,6 +327,7 @@ async function connect() {
 }
 
 function scheduleReconnect() {
+  if (!allowReconnect) return;
   clearTimeout(reconnectTimer);
   reconnectTimer = setTimeout(() => void connect(), reconnectDelay);
   reconnectDelay = Math.min(reconnectDelay * 1.8, 10_000);
@@ -340,6 +372,9 @@ function onEvent(e: WorkspaceEvent) {
     case "log":
       pushLog(e.gadget, e.level, e.message);
       break;
+    case "session-idle":
+      pauseForIdle("This workspace paused after 20 minutes idle to limit Durable Object billing. Refresh to continue.");
+      break;
   }
 }
 
@@ -374,7 +409,7 @@ async function mountFrame(g: Pick<GadgetInfo, "id" | "title" | "version">, messa
   if (!session) return;
   const previous = frames.get(g.id);
   const iframe = h("iframe", {
-    sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox",
+    sandbox: GADGET_IFRAME_SANDBOX,
     title: `${g.title} (sandboxed gadget UI)`,
     referrerpolicy: "no-referrer",
   }) as HTMLIFrameElement;
@@ -439,6 +474,9 @@ window.addEventListener("message", (e: MessageEvent) => {
         });
     } else if (e.data && typeof e.data === "object" && e.data.type === "console") {
       pushLog(id, String(e.data.level), String(e.data.message).slice(0, 600));
+    } else if (e.data && typeof e.data === "object" && e.data.type === "open-url") {
+      const url = safeGadgetOpenUrl(e.data.url);
+      if (url) window.open(url, "_blank", "noopener,noreferrer");
     }
     return;
   }
@@ -1391,7 +1429,7 @@ function openAbout() {
   const rows: [string, string, string][] = [
     ["Workspace", "OverseerDurableObject, typed KV storage, git objects", "Workspace DO with SQLite tables"],
     ["Gadget server", "server.js Durable Object, LOADER.get(), ctx.facets.get()", "Same"],
-    ["Gadget UI", "client.js in a sandboxed srcdoc frame, Cap'n Web over MessagePort", "Same"],
+    ["Gadget UI", "client.js in a sandboxed srcdoc frame, Cap'n Web over MessagePort", 'Same. iframe sandbox="allow-scripts" only; http(s) links open via the parent shell'],
     ["Shell ⇄ backend", "One Cap'n Web WebSocket, callback subscriptions", "Same"],
     ["Gatekeepers", "One Worker for each service, OAuth, action journal", "WEB and AI loopback entrypoints with an approval queue"],
     ["Agent", "pi-agent-core, many providers, file tools, Code Mode", "Workers AI glm-5.3-flash with tools"],

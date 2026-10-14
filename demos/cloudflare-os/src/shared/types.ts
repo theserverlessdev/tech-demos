@@ -92,7 +92,8 @@ export type WorkspaceEvent =
   | { type: "gadget-removed"; gadget: string }
   | { type: "focus"; gadget: string }
   | { type: "rpc"; event: RpcEvent }
-  | { type: "log"; gadget: string; level: "info" | "error"; message: string };
+  | { type: "log"; gadget: string; level: "info" | "error"; message: string }
+  | { type: "session-idle"; reason: "idle"; idleMs: number };
 
 export type StorageReport = {
   tables: { name: string; rows: number; columns: string[]; sample: Record<string, unknown>[] }[];

@@ -92,11 +92,12 @@ bun run scripts/agent-check.ts https://tech-demos.theserverless.dev/demos/cloudf
 
 | Guard | Default | Where |
 |---|---|---|
-| Workers AI spend for each day, for all visitors. Each call reserves its worst-case cost first | `AI_DAILY_BUDGET_USD = 0.15` | `wrangler.jsonc`, `Meter` |
+| Workers AI spend for each day, for all visitors. Each call reserves its worst-case cost first. Missing `usage` settles at that reserved amount, not $0 | `AI_DAILY_BUDGET_USD = 0.15` | `wrangler.jsonc`, `Meter` |
 | New unique Dynamic Worker IDs for each day | `DYNAMIC_WORKER_DAILY_CAP = 60` | `wrangler.jsonc`, `Meter` |
 | Agent turns for each IP | 6 each minute | `AGENT_LIMIT` binding |
 | Gadget creates, code saves, and binding changes for each IP | 12 each minute | `CODE_LIMIT` binding |
 | Gadget AI completions for each workspace | 6 each minute | `AGENT_LIMIT` binding |
+| Abandoned-tab idle close (user RPC, not ping) | 20 minutes | `workspace.ts` |
 | Gadget CPU and subrequests | 500 ms, 50 | Worker Loader `limits` |
 | Gadgets in each workspace | 8 | `workspace.ts` |
 

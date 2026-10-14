@@ -17,12 +17,12 @@ import type {
 } from "../shared/types";
 import { runAgent, type AgentHost } from "./agent";
 import { BLUEPRINT_INFOS, getBlueprint } from "./blueprints";
+import { idleErrorMessage, idleReason, nextIdleAlarmAt, SESSION_IDLE_MS } from "./idle";
 import { assertBudget, meter } from "./meter";
+import { APPROVAL_TIMEOUT_MS, GADGET_CALL_TIMEOUT_MS, GADGET_METHOD_TIMEOUT_MS } from "./timeouts";
 
 const MAX_GADGETS = 8;
 const MAX_FILE_BYTES = 96_000;
-const APPROVAL_TIMEOUT_MS = 90_000;
-const GADGET_CALL_TIMEOUT_MS = 20_000;
 const COMPATIBILITY_DATE = "2026-09-04";
 const FILE_PATHS = ["server.js", "client.js", "README.md"] as const;
 const BINDINGS: BindingName[] = ["WEB", "AI"];
@@ -122,6 +122,7 @@ export class Workspace extends DurableObject<Env> {
   #agentBusy = false;
   #agentStatus: string | null = null;
   #snapshotQueued = false;
+  #lastActivity = Date.now();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -182,6 +183,7 @@ export class Workspace extends DurableObject<Env> {
 
   addListener(key: string, listener: Listener, viewer: Viewer) {
     this.#listeners.set(key, { listener, viewer });
+    this.touchActivity();
     this.#queueSnapshot();
   }
 
@@ -270,6 +272,51 @@ export class Workspace extends DurableObject<Env> {
       agent: { busy: this.#agentBusy, status: this.#agentStatus, model: this.env.AI_MODEL },
       limits: { maxGadgets: MAX_GADGETS },
     };
+  }
+
+  /** User RPC (not ping). Resets the idle timer so an abandoned tab can still be reaped. */
+  touchActivity() {
+    this.#lastActivity = Date.now();
+    void this.ctx.storage.setAlarm(nextIdleAlarmAt(Date.now(), this.#lastActivity));
+  }
+
+  assertNotIdle() {
+    const reason = idleReason(Date.now(), this.#lastActivity);
+    if (!reason) return;
+    if (this.#listeners.size > 0) this.#reap(reason);
+    throw new Error(idleErrorMessage(reason));
+  }
+
+  /** A new browser session after an idle close starts a fresh idle window. */
+  beginSession() {
+    const reason = idleReason(Date.now(), this.#lastActivity);
+    if (reason && this.#listeners.size === 0) {
+      this.touchActivity();
+      return;
+    }
+    this.assertNotIdle();
+    this.touchActivity();
+  }
+
+  #reap(reason: "idle") {
+    this.#broadcast({ type: "session-idle", reason, idleMs: SESSION_IDLE_MS });
+    for (const [id, resolve] of this.#approvals) {
+      this.ctx.storage.sql.exec(`UPDATE actions SET status = 'expired' WHERE id = ? AND status = 'pending'`, id);
+      resolve("expired");
+    }
+    this.#approvals.clear();
+    for (const key of [...this.#listeners.keys()]) this.removeListener(key);
+    void this.ctx.storage.deleteAlarm();
+  }
+
+  async alarm() {
+    if (this.#listeners.size === 0) return;
+    const reason = idleReason(Date.now(), this.#lastActivity);
+    if (reason) {
+      this.#reap(reason);
+      return;
+    }
+    await this.ctx.storage.setAlarm(nextIdleAlarmAt(Date.now(), this.#lastActivity));
   }
 
   setTitle(title: string) {
@@ -688,7 +735,7 @@ export class Workspace extends DurableObject<Env> {
   async inspectStorage(id: string): Promise<StorageReport> {
     const g = this.#gadget(id);
     const started = Date.now();
-    const report = (await withTimeout(this.#facet(g).__platformInspect!(), GADGET_CALL_TIMEOUT_MS, "inspect")) as StorageReport;
+    const report = (await withTimeout(this.#facet(g).__platformInspect!(), GADGET_METHOD_TIMEOUT_MS, "inspect")) as StorageReport;
     this.#rpcEvent({ gadget: g.id, method: "__platformInspect", ms: Date.now() - started, ok: true, via: "platform" });
     return report;
   }
@@ -784,7 +831,13 @@ export class WorkspaceClient extends RpcTarget {
     this.#ip = ip;
   }
 
+  #live() {
+    this.#ws.assertNotIdle();
+    this.#ws.touchActivity();
+  }
+
   subscribe(listener: Listener) {
+    this.#ws.beginSession();
     const dup = listener.dup();
     this.#ws.addListener(this.#key, dup, this.#viewer);
     dup.onRpcBroken(() => this.#ws.removeListener(this.#key));
@@ -792,65 +845,80 @@ export class WorkspaceClient extends RpcTarget {
   }
 
   ping() {
+    this.#ws.assertNotIdle();
     return Date.now();
   }
 
   setTitle(title: string) {
+    this.#live();
     this.#ws.setTitle(title);
   }
 
   listBlueprints(): BlueprintInfo[] {
+    this.#live();
     return BLUEPRINT_INFOS;
   }
 
   async createGadget(blueprintId: string, title?: string) {
+    this.#live();
     await this.#ws.assertCodeLimit(this.#ip);
     return this.#ws.createGadget(blueprintId, title, this.#viewer);
   }
 
   removeGadget(id: string) {
+    this.#live();
     this.#ws.removeGadget(id, this.#viewer);
   }
 
   getUiBundle(id: string) {
+    this.#live();
     return this.#ws.getUiBundle(id);
   }
 
   connectToGadget(id: string) {
+    this.#live();
     return this.#ws.connectToGadget(id, this.#viewer);
   }
 
   getFiles(id: string) {
+    this.#live();
     return this.#ws.getFiles(id);
   }
 
   async writeFile(id: string, path: keyof GadgetFiles, content: string) {
+    this.#live();
     await this.#ws.assertCodeLimit(this.#ip);
     return this.#ws.writeFile(id, path, content, this.#viewer);
   }
 
   async setBinding(id: string, binding: BindingName, enabled: boolean) {
+    this.#live();
     await this.#ws.assertCodeLimit(this.#ip);
     return this.#ws.setBinding(id, binding, enabled, this.#viewer);
   }
 
   inspectStorage(id: string) {
+    this.#live();
     return this.#ws.inspectStorage(id);
   }
 
   decideAction(actionId: number, approve: boolean, always: boolean) {
+    this.#live();
     this.#ws.decideAction(actionId, approve, always, this.#viewer);
   }
 
   setAutoApprove(id: string, binding: BindingName, enabled: boolean) {
+    this.#live();
     this.#ws.setAutoApprove(id, binding, enabled);
   }
 
   chat(text: string) {
+    this.#live();
     return this.#ws.chat(text, this.#viewer, this.#ip);
   }
 
   reportLog(id: string, level: "info" | "error", message: string) {
+    this.#live();
     this.#ws.reportLog(id, level, message);
   }
 
