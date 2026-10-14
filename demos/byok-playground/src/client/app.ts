@@ -391,6 +391,7 @@ async function runCompare() {
         }
       }
     }
+    await refreshConfig();
   } catch (err) {
     say(err instanceof Error ? err.message : "Compare failed.");
   } finally {
@@ -475,6 +476,23 @@ function toggleTheme() {
   }
 }
 
+async function refreshConfig() {
+  try {
+    const res = await call("api/config");
+    const data = (await res.json()) as PublicConfig;
+    siteKey = data.siteKey ?? "";
+    testSiteKey = data.testSiteKey;
+    budgetNote.textContent = data.ai === "off"
+      ? "Workers AI compare is off until Turnstile is configured."
+      : `${data.budget.remaining} of ${data.budget.dailyCap} compares left today${data.ai === "stub" ? " · local stub" : ""}.`;
+    if (data.testSiteKey) budgetNote.textContent += " Test Turnstile key.";
+    if (siteKey && !widgetId) mountTurnstile();
+    else if (data.ai === "off") compareBtn.disabled = true;
+  } catch {
+    budgetNote.textContent = "Could not load config.";
+  }
+}
+
 async function boot() {
   applyCreds(loadCreds());
   temperature.addEventListener("input", () => {
@@ -502,20 +520,7 @@ async function boot() {
     tab.addEventListener("click", () => switchTab(tab.dataset.tab ?? "chat"));
   }
 
-  try {
-    const res = await call("api/config");
-    const data = (await res.json()) as PublicConfig;
-    siteKey = data.siteKey ?? "";
-    testSiteKey = data.testSiteKey;
-    budgetNote.textContent = data.ai === "off"
-      ? "Workers AI compare is off until Turnstile is configured."
-      : `${data.budget.remaining} of ${data.budget.dailyCap} compares left today${data.ai === "stub" ? " · local stub" : ""}.`;
-    if (data.testSiteKey) budgetNote.textContent += " Test Turnstile key.";
-    if (siteKey) mountTurnstile();
-    else compareBtn.disabled = data.ai === "off";
-  } catch {
-    budgetNote.textContent = "Could not load config.";
-  }
+  await refreshConfig();
 }
 
 void boot();

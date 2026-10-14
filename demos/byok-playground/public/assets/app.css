@@ -210,7 +210,7 @@ textarea { min-height: 4.2rem; resize: vertical; }
 
 .controls { display: grid; gap: 0.7rem; }
 .sliders { display: grid; grid-template-columns: 1fr 1fr; margin-top: 0; }
-.sliders input[type="range"] { min-height: 44px; padding: 0; }
+.sliders input[type="range"] { min-height: 44px; padding: 0; accent-color: var(--ember); }
 .transcript {
   list-style: none;
   margin: 0.8rem 0;
