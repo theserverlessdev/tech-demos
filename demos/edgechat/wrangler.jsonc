@@ -34,13 +34,26 @@
       "bucket_name": "tech-demos-edgechat"
     }
   ],
+  // WRITE_LIMIT stays 7421. CONNECT_LIMIT is new at 7468 (do not reuse 7421).
   "ratelimits": [
-    { "name": "WRITE_LIMIT", "namespace_id": "7421", "simple": { "limit": 40, "period": 60 } }
+    { "name": "WRITE_LIMIT", "namespace_id": "7421", "simple": { "limit": 40, "period": 60 } },
+    { "name": "CONNECT_LIMIT", "namespace_id": "7468", "simple": { "limit": 40, "period": 60 } }
   ],
+  "triggers": { "crons": ["11 * * * *"] },
+  "vars": {
+    "TURNSTILE_SITE_KEY": "",
+    "TURNSTILE_LOCAL": "0"
+  },
+  // Secrets, never commit: TURNSTILE_SECRET (wrangler secret put).
+  // Local `bun run dev` writes .dev.vars with Cloudflare's always-pass test pair
+  // and TURNSTILE_LOCAL=1. wrangler dev rewrites Host to the zone route.
   "routes": [
     { "pattern": "tech-demos.theserverless.dev/demos/edgechat*", "zone_name": "theserverless.dev" },
     { "pattern": "edgechat.tech-demos.theserverless.dev/*", "zone_name": "theserverless.dev" }
   ],
   "workers_dev": true,
-  "observability": { "enabled": true }
+  "observability": {
+    "enabled": true,
+    "traces": { "enabled": true }
+  }
 }

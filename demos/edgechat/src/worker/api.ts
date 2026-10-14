@@ -1,42 +1,32 @@
-import type { ChatMessage } from "../shared/types";
+import type { ChatMessage, SessionResponse } from "../shared/types";
+import { DAILY_UPLOAD_BUDGET, MAX_BODY, MAX_JSON_BODY, MAX_UPLOAD, MAX_UPLOAD_BODY } from "../shared/types";
 import {
   counts,
   ensureRoom,
   ensureSeedFiles,
   getAttachmentRow,
+  getRoom,
   insertAttachment,
   insertMessage,
   listMessages,
   listRooms,
 } from "./db";
 import { fileResponseHeaders } from "./files";
+import { assertContentLength, clientIp, HttpError, json, safeDecode } from "./http";
 import { fanout } from "./room";
-import { requireSession, sanitizeName, sessionCookie, upsertSession } from "./session";
+import {
+  ephemeralSession,
+  loadSession,
+  persistSession,
+  publicSession,
+  requirePersistedSession,
+  sanitizeName,
+  sessionCookie,
+  type SessionRecord,
+} from "./session";
+import { turnstileSiteKey, verifyTurnstile, writesOpen } from "./turnstile";
 
-export class HttpError extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: string,
-    message: string,
-  ) {
-    super(message);
-  }
-}
-
-const MAX_UPLOAD = 1_000_000;
-const MAX_BODY = 2_000;
 const ALLOWED_FILE = /^[\w .\-()[\]]+$/;
-
-function json(data: unknown, status = 200, extra?: HeadersInit): Response {
-  const headers = new Headers(extra);
-  headers.set("cache-control", "no-store");
-  if (!headers.has("content-type")) headers.set("content-type", "application/json; charset=utf-8");
-  return new Response(JSON.stringify(data), { status, headers });
-}
-
-function clientIp(request: Request): string {
-  return request.headers.get("cf-connecting-ip") || request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "local";
-}
 
 async function limitWrite(env: Env, request: Request): Promise<void> {
   const { success } = await env.WRITE_LIMIT.limit({ key: clientIp(request) });
@@ -44,8 +34,9 @@ async function limitWrite(env: Env, request: Request): Promise<void> {
 }
 
 async function readJson(request: Request): Promise<Record<string, unknown>> {
+  assertContentLength(request, MAX_JSON_BODY);
   const text = await request.text();
-  if (text.length > 16_000) throw new HttpError(413, "too_large", "The request body is too large.");
+  if (text.length > MAX_JSON_BODY) throw new HttpError(413, "too_large", "The request body is too large.");
   if (!text.trim()) return {};
   try {
     const parsed = JSON.parse(text) as unknown;
@@ -56,36 +47,72 @@ async function readJson(request: Request): Promise<Record<string, unknown>> {
   }
 }
 
-function withSession(session: { id: string }, res: Response): Response {
+function withSession(session: SessionRecord, request: Request, res: Response): Response {
   const headers = new Headers(res.headers);
-  headers.append("set-cookie", sessionCookie(session.id));
+  headers.append("set-cookie", sessionCookie(session.id, request));
   return new Response(res.body, { status: res.status, headers });
+}
+
+function sessionPayload(env: Env, request: Request, session: SessionResponse["session"]): SessionResponse {
+  return {
+    session,
+    turnstileSiteKey: turnstileSiteKey(env, request),
+    writesOpen: writesOpen(env, request),
+  };
 }
 
 function roomFromPath(pathname: string): { id: string; rest: string } | null {
   const match = pathname.match(/^\/api\/rooms\/([^/]+)(?:\/(.*))?$/);
   if (!match) return null;
-  return { id: decodeURIComponent(match[1]!), rest: match[2] ?? "" };
+  return { id: safeDecode(match[1]!), rest: match[2] ?? "" };
+}
+
+async function chargeUpload(env: Env, size: number): Promise<void> {
+  const day = new Date().toISOString().slice(0, 10);
+  const key = `budget:uploads:${day}`;
+  const used = Number((await env.SESSIONS.get(key)) ?? "0") || 0;
+  if (used + size > DAILY_UPLOAD_BUDGET) {
+    throw new HttpError(429, "budget", "The demo hit today's upload budget. Try again tomorrow.");
+  }
+  await env.SESSIONS.put(key, String(used + size), { expirationTtl: 172_800 });
+}
+
+async function safeFanout(env: Env, roomId: string, message: ChatMessage, room: import("../shared/types").RoomSummary): Promise<void> {
+  try {
+    await fanout(env, roomId, message, room);
+  } catch (err) {
+    console.error(JSON.stringify({ event: "fanout_failed", roomId, error: String(err) }));
+  }
 }
 
 export async function handleApi(request: Request, env: Env, path: string): Promise<Response> {
-  await ensureSeedFiles(env);
-
   if (path === "/api/health" && request.method === "GET") {
     const c = await counts(env);
     return json({ ok: true, rooms: c.rooms, messages: c.messages });
   }
 
+  await ensureSeedFiles(env);
+
   if (path === "/api/session" && request.method === "POST") {
     await limitWrite(env, request);
+    const existing = await loadSession(env, request);
     const body = await readJson(request);
-    const session = await upsertSession(env, request, sanitizeName(body.displayName));
-    return withSession(session, json({ session }));
+    if (!existing) {
+      if (!writesOpen(env, request)) {
+        throw new HttpError(503, "turnstile_unconfigured", "Writes are off until the owner sets a Turnstile widget.");
+      }
+      const token = typeof body.turnstileToken === "string" ? body.turnstileToken.trim() : "";
+      const ok = await verifyTurnstile(env, request, token);
+      if (!ok) throw new HttpError(403, "turnstile_failed", "Complete the check, then try again.");
+    }
+    const record = await persistSession(env, request, sanitizeName(body.displayName));
+    return withSession(record, request, json(sessionPayload(env, request, publicSession(record, true))));
   }
 
   if (path === "/api/session" && request.method === "GET") {
-    const session = await requireSession(env, request);
-    return withSession(session, json({ session }));
+    const existing = await loadSession(env, request);
+    if (existing) return withSession(existing, request, json(sessionPayload(env, request, publicSession(existing, true))));
+    return json(sessionPayload(env, request, ephemeralSession()));
   }
 
   if (path === "/api/rooms" && request.method === "GET") {
@@ -95,6 +122,7 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
 
   if (path === "/api/rooms" && request.method === "POST") {
     await limitWrite(env, request);
+    await requirePersistedSession(env, request);
     const body = await readJson(request);
     const name = typeof body.name === "string" ? body.name : "";
     const room = await ensureRoom(env, name);
@@ -103,7 +131,7 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
 
   const fileMatch = path.match(/^\/api\/files\/([^/]+)$/);
   if (fileMatch && request.method === "GET") {
-    const row = await getAttachmentRow(env, decodeURIComponent(fileMatch[1]!));
+    const row = await getAttachmentRow(env, safeDecode(fileMatch[1]!));
     if (!row) throw new HttpError(404, "not_found", "No file with that id.");
     const object = await env.FILES.get(row.r2_key);
     if (!object) throw new HttpError(404, "not_found", "The file is missing from R2.");
@@ -112,60 +140,80 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
 
   const roomPath = roomFromPath(path);
   if (roomPath) {
-    const room = await ensureRoom(env, roomPath.id);
     if (roomPath.rest === "" && request.method === "GET") {
+      const room = await getRoom(env, roomPath.id);
+      if (!room) throw new HttpError(404, "not_found", "No room with that name.");
       const messages = await listMessages(env, room.id);
       return json({ room, messages });
     }
     if (roomPath.rest === "messages" && request.method === "GET") {
+      const room = await getRoom(env, roomPath.id);
+      if (!room) throw new HttpError(404, "not_found", "No room with that name.");
       const messages = await listMessages(env, room.id);
       return json({ room, messages });
     }
     if (roomPath.rest === "messages" && request.method === "POST") {
       await limitWrite(env, request);
-      const session = await requireSession(env, request);
+      const session = await requirePersistedSession(env, request);
       const body = await readJson(request);
       const text = typeof body.body === "string" ? body.body.replace(/\s+/g, " ").trim().slice(0, MAX_BODY) : "";
       if (!text) throw new HttpError(400, "empty", "Type a message first.");
-      const message = await insertMessage(env, {
+      const room = await ensureRoom(env, roomPath.id);
+      const saved = await insertMessage(env, {
         roomId: room.id,
         author: session.displayName,
-        sessionId: session.id,
+        authorKey: session.publicId,
         body: text,
       });
-      await fanout(env, room.id, message);
-      return withSession(session, json({ message }, 201));
+      await safeFanout(env, room.id, saved.message, saved.room);
+      return withSession(session, request, json({ message: saved.message, room: saved.room }, 201));
     }
     if (roomPath.rest === "upload" && request.method === "POST") {
       await limitWrite(env, request);
-      const session = await requireSession(env, request);
+      const session = await requirePersistedSession(env, request);
+      assertContentLength(request, MAX_UPLOAD_BODY);
       const form = await request.formData();
       const file = form.get("file");
       if (!(file instanceof File)) throw new HttpError(400, "no_file", "Choose a file to upload.");
       if (file.size <= 0 || file.size > MAX_UPLOAD) throw new HttpError(413, "too_large", "Files must be between 1 byte and 1 MB.");
       const filename = file.name.replace(/[^\w .\-()[\]]+/g, "_").slice(0, 80) || "upload.bin";
       if (!ALLOWED_FILE.test(filename)) throw new HttpError(400, "bad_name", "That filename is not allowed.");
+      await chargeUpload(env, file.size);
+      const room = await ensureRoom(env, roomPath.id);
       const contentType = (file.type || "application/octet-stream").slice(0, 120);
-      const key = `${room.id}/${crypto.randomUUID()}/${filename}`;
+      const key = `uploads/${room.id}/${crypto.randomUUID()}/${filename}`;
       await env.FILES.put(key, file.stream(), { httpMetadata: { contentType } });
-      const attachment = await insertAttachment(env, {
-        roomId: room.id,
-        r2Key: key,
-        filename,
-        contentType,
-        size: file.size,
-      });
+      let attachment;
+      try {
+        attachment = await insertAttachment(env, {
+          roomId: room.id,
+          r2Key: key,
+          filename,
+          contentType,
+          size: file.size,
+        });
+      } catch (err) {
+        try {
+          await env.FILES.delete(key);
+        } catch {
+          /* keep going */
+        }
+        throw err;
+      }
       const captionRaw = form.get("caption");
       const caption = typeof captionRaw === "string" ? captionRaw.replace(/\s+/g, " ").trim().slice(0, MAX_BODY) : "";
-      const message: ChatMessage = await insertMessage(env, {
+      const saved = await insertMessage(env, {
         roomId: room.id,
         author: session.displayName,
-        sessionId: session.id,
+        authorKey: session.publicId,
         body: caption || filename,
         attachmentId: attachment.id,
       });
-      await fanout(env, room.id, message);
-      return withSession(session, json({ message, attachment }, 201));
+      await safeFanout(env, room.id, saved.message, saved.room);
+      return withSession(session, request, json({ message: saved.message, attachment, room: saved.room }, 201));
+    }
+    if (request.method === "GET") {
+      throw new HttpError(404, "not_found", "Unknown API route.");
     }
   }
 

@@ -37,6 +37,12 @@ This demo is **inspired by** [aozorae/Edgechat](https://github.com/aozorae/Edgec
 
 Hub Graphite & Ember. Ember accent `#c2410c`, background `#0e0e11`. Real LogoMark SVG (cloud + lightning + streaks). No purple-to-cyan logo.
 
+## 2026-10-14
+
+Opus audit of the live demo. Session cookie values no longer appear in messages (`author_key` / `publicId`). `loadSession` is cookie-only; incoming `x-edgechat-*` is stripped. WebSocket sends share `WRITE_LIMIT` and a per-socket bucket. GETs are read-only. Presence drops on leave. Hourly prune + Turnstile on session mint. Message list scrolls; 390px rooms are chips. Unicode room slugs. Origin check on upgrade. Copy says what the demo proves.
+
+`CONNECT_LIMIT` is namespace `7468` (40 / 60s). `WRITE_LIMIT` stays `7421`.
+
 ## 2026-10-09
 
 Phone layout: 16px fields, 44px buttons, a stacked top bar (name, save, and theme on one row; the Inspired by link stays in the footer), a sticky composer, and safe-area padding.
