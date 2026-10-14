@@ -144,7 +144,7 @@ button, textarea { font: inherit; color: inherit; }
   align-items: start;
 }
 
-.chat, .gate { display: flex; flex-direction: column; gap: 0.8rem; min-width: 0; }
+.chat, .gate { display: flex; flex-direction: column; gap: 0.8rem; min-width: 0; max-width: 100%; }
 .transcript {
   list-style: none;
   margin: 0;
@@ -179,6 +179,8 @@ button, textarea { font: inherit; color: inherit; }
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
+  min-width: 0;
+  max-width: 100%;
 }
 .chips { display: flex; flex-wrap: wrap; gap: 0.35rem; }
 .chip {
@@ -192,11 +194,15 @@ button, textarea { font: inherit; color: inherit; }
 .chip:hover { border-color: var(--ember); color: var(--text-strong); }
 textarea {
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   resize: vertical;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg);
   padding: 0.6rem 0.7rem;
+  overflow-wrap: anywhere;
+  overflow-x: hidden;
 }
 .composer__row { display: flex; justify-content: space-between; align-items: flex-end; gap: 0.6rem; }
 .turnstile { min-height: 65px; }
