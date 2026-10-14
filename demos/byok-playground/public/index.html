@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#0e0e11" />
   <meta name="referrer" content="no-referrer" />
   <title>BYOK playground · Tech Demos · theserverless.dev</title>
-  <meta name="description" content="A safe bring-your-own-key proxy on Cloudflare Workers: your OpenAI-compatible key stays in the browser, SSRF is blocked, and Workers AI comparison is Turnstile-gated." />
+  <meta name="description" content="A bring-your-own-key playground on Cloudflare Workers: not a general-purpose proxy — only /models and /chat/completions, https:443, no redirects, rate-limited." />
   <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -28,7 +28,7 @@
     </a>
     <div class="topbar__title">
       <h1>BYOK playground</h1>
-      <p>Your key, your endpoint, a Worker that refuses to store either</p>
+      <p class="topbar__tag">Your key stays in this browser</p>
     </div>
     <div class="topbar__actions">
       <a class="btn" href="https://theserverless.dev/contact" rel="noopener noreferrer">Contact</a>
@@ -38,32 +38,12 @@
     </div>
   </header>
 
-  <p class="shows shows--bar"><span class="shows__k">What this shows</span> A Worker can proxy a visitor’s OpenAI-compatible key without becoming an open proxy: the key lives in this browser, SSRF is blocked, redirects are refused, and Workers AI comparison is Turnstile-gated with a daily budget.</p>
-
-  <section class="intro" aria-labelledby="try-title">
-    <div>
-      <h2 id="try-title">What you can try</h2>
-      <ul>
-        <li>Paste a key, an https base URL, and a model id, then stream a chat.</li>
-        <li>List models from <code>GET /models</code>.</li>
-        <li>Send the same prompt to your model and to Workers AI, and read latency, time to first token, and tokens.</li>
-        <li>Probe streaming, tools, JSON schema, and vision. Each check is pass, fail, or unsupported, with the raw error.</li>
-      </ul>
-    </div>
-    <div>
-      <h2>What you could build</h2>
-      <ul>
-        <li>A product that accepts a customer’s OpenAI-compatible key without writing it to disk.</li>
-        <li>A migration bench that compares a provider against Workers AI on the same prompt.</li>
-        <li>An eval harness that records which capabilities an endpoint actually implements.</li>
-      </ul>
-    </div>
-  </section>
+  <p class="shows shows--bar"><span class="shows__k">What this shows</span> Not a general-purpose proxy: only <code>/models</code> and <code>/chat/completions</code>, https:443, no redirects, rate-limited. The key lives in this browser. DNS checks are best-effort against rebinding; platform egress is the backstop.</p>
 
   <section class="panel keys" aria-labelledby="keys-title">
     <header class="panel__head">
       <h2 id="keys-title">Your endpoint</h2>
-      <p>The key is never written on the Worker. It is sent per request in a header, then dropped. Errors and logs strip it. Session storage is the default; Remember keeps it in this browser only.</p>
+      <p>The key is sent in the JSON body of each request and is not stored on the Worker. Session storage is the default; Remember keeps it in this browser only. One Turnstile pass mints a signed session cookie for this origin.</p>
     </header>
     <div class="fields">
       <label>API key
@@ -83,6 +63,28 @@
       <button class="btn btn-ghost" id="list-models" type="button">List models</button>
     </div>
     <p id="models-note" class="hint" role="status"></p>
+    <div id="turnstile" class="turnstile"></div>
+    <p id="session-note" class="hint">Complete Turnstile once so this browser can call your endpoint. Compare uses a second check with action compare.</p>
+  </section>
+
+  <section class="intro" aria-labelledby="try-title">
+    <div>
+      <h2 id="try-title">What you can try</h2>
+      <ul>
+        <li>Paste a key, an https base URL, and a model id, then stream a chat. Multi-turn sends the transcript (at most 15 turns, 4000 characters each).</li>
+        <li>List models from <code>GET /models</code>. The Worker returns only <code>{ data: [{ id }] }</code>.</li>
+        <li>Send the same prompt to your model and to Workers AI, and read latency, time to first token, and tokens.</li>
+        <li>Probe streaming, tools, JSON schema, and vision. A pass is evidence-based; otherwise the check is fail, unsupported, or inconclusive.</li>
+      </ul>
+    </div>
+    <div>
+      <h2>What you could build</h2>
+      <ul>
+        <li>A product that accepts a customer’s OpenAI-compatible key without writing it to disk.</li>
+        <li>A migration bench that compares a provider against Workers AI on the same prompt.</li>
+        <li>An eval harness that records which capabilities an endpoint actually implements.</li>
+      </ul>
+    </div>
   </section>
 
   <div class="tabs" role="tablist" aria-label="Playground">
@@ -94,7 +96,7 @@
   <section class="panel tab-panel" id="panel-chat" data-panel="chat" aria-labelledby="chat-title">
     <header class="panel__head">
       <h2 id="chat-title">Streaming chat</h2>
-      <p>SSE passthrough to <code>/chat/completions</code>. Output is rendered as text, never HTML.</p>
+      <p>SSE passthrough to <code>/chat/completions</code>. Chat is not stored on the Worker. Output is rendered as text, never HTML. A reply that ends without <code>[DONE]</code> is marked “stream ended early”.</p>
     </header>
     <div class="controls">
       <label>System prompt
@@ -120,10 +122,9 @@
   <section class="panel tab-panel" id="panel-compare" data-panel="compare" hidden aria-labelledby="compare-title">
     <header class="panel__head">
       <h2 id="compare-title">Same prompt, two models</h2>
-      <p>Your endpoint on the left. Workers AI on our account on the right — Turnstile plus a shared daily budget. Completing the check spends one compare.</p>
+      <p>Your endpoint on the left. Workers AI on our account on the right — Turnstile plus a shared daily budget. Each compare spends one of today’s shared runs.</p>
     </header>
     <div class="compare-bar">
-      <div id="turnstile" class="turnstile"></div>
       <p id="budget-note" class="hint">Checking the daily budget…</p>
       <button class="btn" id="compare" type="button">Compare</button>
     </div>
@@ -144,7 +145,7 @@
   <section class="panel tab-panel" id="panel-caps" data-panel="caps" hidden aria-labelledby="caps-title">
     <header class="panel__head">
       <h2 id="caps-title">Capability checks</h2>
-      <p>Four small requests against your endpoint. Failures show the raw error, with the key stripped.</p>
+      <p>Four small requests against your endpoint. Tools pass only with <code>tool_calls</code>; JSON schema pass only if <code>ok</code> is a boolean; vision asks about a known-colour pixel. Otherwise the result is fail, unsupported, or inconclusive. Raw errors have the key stripped.</p>
     </header>
     <button class="btn" id="run-caps" type="button">Run checks</button>
     <ul id="caps" class="caps"></ul>
@@ -153,8 +154,8 @@
   <p id="status" class="status" role="status"></p>
 
   <footer class="foot">
-    <p>The Worker allows only <code>/chat/completions</code> and <code>/models</code> under the base you paste. https only. No redirects. No visitor cookies forwarded.</p>
-    <p><a href="https://theserverless.dev/contact" rel="noopener noreferrer">Contact</a> · <a href="https://tech-demos.theserverless.dev/">All demos</a></p>
+    <p>Not a general-purpose proxy: only <code>/chat/completions</code> and <code>/models</code>, https on port 443, no redirects, rate-limited. The DNS check is best-effort (rebinding); Workers egress with <code>global_fetch_strictly_public</code> is the backstop. Concurrent stream caps are per isolate, not a global cluster lock.</p>
+    <p class="foot__links"><a href="https://theserverless.dev/contact" rel="noopener noreferrer">Contact</a> · <a href="https://tech-demos.theserverless.dev/">All demos</a></p>
   </footer>
   <noscript><p class="status">This playground needs JavaScript to talk to your endpoint.</p></noscript>
   <script src="./assets/app.js" type="module"></script>

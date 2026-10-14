@@ -13,9 +13,12 @@ describe("budget helpers", () => {
     expect(key).toHaveLength(64);
   });
 
-  test("mapped IPv6 uses the embedded IPv4 as the network key", () => {
+  test("networkKey is IPv4 /32 and IPv6 /64", () => {
     expect(networkKey("::ffff:203.0.113.9")).toBe("203.0.113.9");
+    expect(networkKey("203.0.113.9")).toBe("203.0.113.9");
     expect(networkKey("local")).toBe("local");
+    expect(networkKey("2001:db8:abcd:1234:5678::1")).toBe("2001:db8:abcd:1234::");
+    expect(networkKey("2001:db8:abcd:1234:9999::2")).toBe("2001:db8:abcd:1234::");
   });
 
   test("UTC day key and cap parsing", () => {

@@ -1,9 +1,6 @@
-import { handleApi, errorResponse, secretsFrom } from "./api";
-import type { DemoEnv } from "./env";
-import { finish, visitor } from "./session";
-
-/** The hub serves this demo under a path. The subdomain serves it at the root. */
-const BASE_PATH = "/demos/byok-playground";
+import { CANONICAL_HOST, HUB_BASE_PATH } from "../shared/limits";
+import { errorResponse, handleApi } from "./api";
+import { isLocalEnv } from "./env";
 
 const PAGE_CSP = [
   "default-src 'self'",
@@ -18,7 +15,18 @@ const PAGE_CSP = [
   "frame-ancestors 'none'",
 ].join("; ");
 
-async function serveAsset(request: Request, env: DemoEnv, path: string): Promise<Response> {
+function canonicalRedirect(request: Request, path: string): Response | null {
+  const url = new URL(request.url);
+  let rest = path;
+  if (rest === HUB_BASE_PATH) rest = "/";
+  else if (rest.startsWith(`${HUB_BASE_PATH}/`)) rest = rest.slice(HUB_BASE_PATH.length) || "/";
+  if (url.hostname === CANONICAL_HOST && rest === path) return null;
+  const dest = `https://${CANONICAL_HOST}${rest}${url.search}`;
+  if (dest === url.href) return null;
+  return Response.redirect(dest, 308);
+}
+
+async function serveAsset(request: Request, env: Env, path: string): Promise<Response> {
   if (request.method !== "GET" && request.method !== "HEAD") return new Response("Method not allowed", { status: 405 });
   const assetUrl = new URL(request.url);
   assetUrl.pathname = path === "/" ? "/index.html" : path;
@@ -38,19 +46,23 @@ export default {
   async fetch(request, env): Promise<Response> {
     const url = new URL(request.url);
     let path = url.pathname;
-    const who = visitor(request);
 
-    if (path === BASE_PATH) {
-      url.pathname = `${BASE_PATH}/`;
-      return finish(Response.redirect(url.toString(), 308), who.cookie);
+    if (isLocalEnv(env)) {
+      if (path === HUB_BASE_PATH) {
+        url.pathname = `${HUB_BASE_PATH}/`;
+        return Response.redirect(url.toString(), 308);
+      }
+      if (path.startsWith(`${HUB_BASE_PATH}/`)) path = path.slice(HUB_BASE_PATH.length) || "/";
+    } else {
+      const redirected = canonicalRedirect(request, path);
+      if (redirected) return redirected;
     }
-    if (path.startsWith(`${BASE_PATH}/`)) path = path.slice(BASE_PATH.length);
 
     try {
-      if (path.startsWith("/api/")) return finish(await handleApi(request, env as DemoEnv, path), who.cookie);
-      return finish(await serveAsset(request, env as DemoEnv, path), who.cookie);
+      if (path.startsWith("/api/")) return await handleApi(request, env, path);
+      return await serveAsset(request, env, path);
     } catch (err) {
-      return finish(errorResponse(err, secretsFrom(request)), who.cookie);
+      return errorResponse(err);
     }
   },
 } satisfies ExportedHandler<Env>;

@@ -1,24 +1,10 @@
-import type { LIMITS } from "../shared/limits";
-
-export type RateLimitBinding = {
-  limit(input: { key: string }): Promise<{ success: boolean }>;
-};
-
-/** Bindings from wrangler.jsonc. Secrets are optional on the generated Env. */
-export interface DemoEnv {
-  AI?: Ai;
-  DB: D1Database;
-  ASSETS: Fetcher;
-  CHAT_LIMIT: RateLimitBinding;
-  MODELS_LIMIT: RateLimitBinding;
-  COMPARE_LIMIT: RateLimitBinding;
-  AI_MODEL: string;
-  DAILY_COMPARE_CAP: string;
-  IP_COMPARE_CAP: string;
-  ENVIRONMENT: string;
-  TURNSTILE_SITE_KEY: string;
-  TURNSTILE_SECRET?: string;
-  IP_HASH_SECRET?: string;
+export function isLocalEnv(env: Env): boolean {
+  return `${env.ENVIRONMENT}` === "local";
 }
 
-export type Cap = typeof LIMITS;
+/** REPLACE_ME and empty site keys mean Turnstile (and compare) is off. */
+export function publicSiteKey(env: Env): string | null {
+  const key = env.TURNSTILE_SITE_KEY?.trim() ?? "";
+  if (!key || key === "REPLACE_ME") return null;
+  return key;
+}

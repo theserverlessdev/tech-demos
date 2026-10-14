@@ -3,7 +3,7 @@
   "name": "tech-demos-byok-playground",
   "main": "src/worker/index.ts",
   "compatibility_date": "2026-10-08",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
@@ -33,5 +33,9 @@
     "TURNSTILE_SITE_KEY": "1x00000000000000000000AA"
   },
   "workers_dev": true,
-  "observability": { "enabled": true }
+  "observability": {
+    "enabled": true,
+    "logs": { "enabled": true, "invocation_logs": false },
+    "traces": { "enabled": false }
+  }
 }

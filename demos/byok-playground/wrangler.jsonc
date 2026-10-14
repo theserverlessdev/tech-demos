@@ -3,7 +3,7 @@
   "name": "tech-demos-byok-playground",
   "main": "src/worker/index.ts",
   "compatibility_date": "2026-10-08",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
@@ -36,7 +36,7 @@
     // Replace after creating the widget. Local wrangler.local.jsonc uses the always-pass test key.
     "TURNSTILE_SITE_KEY": "REPLACE_ME"
   },
-  "secrets": { "required": ["TURNSTILE_SECRET", "IP_HASH_SECRET"] },
+  "secrets": { "required": ["TURNSTILE_SECRET", "IP_HASH_SECRET", "SESSION_SECRET"] },
   "routes": [
     { "pattern": "tech-demos.theserverless.dev/demos/byok-playground*", "zone_name": "theserverless.dev" },
     { "pattern": "byok-playground.tech-demos.theserverless.dev/*", "zone_name": "theserverless.dev" }
@@ -44,7 +44,7 @@
   "workers_dev": true,
   "observability": {
     "enabled": true,
-    "logs": { "enabled": true, "head_sampling_rate": 1 },
-    "traces": { "enabled": true, "head_sampling_rate": 1 }
+    "logs": { "enabled": true, "invocation_logs": false, "head_sampling_rate": 1 },
+    "traces": { "enabled": false }
   }
 }

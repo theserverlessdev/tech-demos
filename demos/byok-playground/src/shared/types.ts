@@ -6,7 +6,7 @@ export type ChatMessage = {
 };
 
 export type CapabilityName = "streaming" | "tools" | "json_schema" | "vision";
-export type CapabilityStatus = "pass" | "fail" | "unsupported";
+export type CapabilityStatus = "pass" | "fail" | "unsupported" | "inconclusive";
 
 export type CapabilityResult = {
   name: CapabilityName;
@@ -38,5 +38,7 @@ export type PublicConfig = {
     compareMaxTokens: number;
     requestBytes: number;
     timeoutMs: number;
+    maxMessages: number;
+    maxMessageChars: number;
   };
 };

@@ -1,9 +1,10 @@
-import { KEY_HEADER } from "../shared/limits";
+import { LIMITS } from "../shared/limits";
 import type { CapabilityResult, PublicConfig, SideMetrics } from "../shared/types";
 
 const SESSION_STORE = "byok.session";
 const LOCAL_STORE = "byok.local";
 const REMEMBER_STORE = "byok.remember";
+const TURNSTILE_DUMMY = "XXXX.DUMMY.TOKEN.XXXX";
 
 type Creds = { key: string; baseUrl: string; model: string };
 type ApiError = { error?: { code?: string; message?: string } };
@@ -33,6 +34,7 @@ const prompt = $<HTMLTextAreaElement>("prompt");
 const send = $<HTMLButtonElement>("send");
 const compareBtn = $<HTMLButtonElement>("compare");
 const budgetNote = $<HTMLParagraphElement>("budget-note");
+const sessionNote = $<HTMLParagraphElement>("session-note");
 const yoursMetrics = $<HTMLParagraphElement>("yours-metrics");
 const oursMetrics = $<HTMLParagraphElement>("ours-metrics");
 const yoursOut = $<HTMLPreElement>("yours-out");
@@ -46,9 +48,11 @@ const themeBtn = $<HTMLButtonElement>("theme");
 let siteKey = "";
 let testSiteKey = false;
 let widgetId: string | null = null;
+let widgetAction: "session" | "compare" = "session";
 let readyToken: string | null = null;
 let tokenWaiter: ((token: string) => void) | null = null;
 let busy = false;
+let sessionReady = false;
 
 function api(path: string): string {
   const url = new URL(location.href);
@@ -111,14 +115,13 @@ function requireCreds(): Creds {
   return creds;
 }
 
-async function call(path: string, init: { method?: string; body?: unknown; key?: string } = {}): Promise<Response> {
+async function call(path: string, init: { method?: string; body?: unknown } = {}): Promise<Response> {
   const headers: Record<string, string> = {};
   let body: string | undefined;
   if (init.body !== undefined) {
     headers["content-type"] = "application/json";
     body = JSON.stringify(init.body);
   }
-  if (init.key) headers[KEY_HEADER] = init.key;
   return fetch(api(path), { method: init.method ?? "GET", headers, body, credentials: "same-origin" });
 }
 
@@ -148,13 +151,15 @@ function onToken(token: string) {
   readyToken = token;
 }
 
-function mountTurnstile() {
+function mountTurnstile(action: "session" | "compare") {
   const apiRef = turnstileApi();
   if (!apiRef || !siteKey) return;
   if (widgetId) apiRef.remove(widgetId);
   readyToken = null;
+  widgetAction = action;
   widgetId = apiRef.render(turnstileHost, {
     sitekey: siteKey,
+    action,
     callback: onToken,
     "error-callback": () => say("Turnstile failed to load. Refresh and try again."),
     "expired-callback": () => {
@@ -183,6 +188,19 @@ function takeToken(): Promise<string> {
   });
 }
 
+async function ensureSession(): Promise<void> {
+  if (sessionReady) return;
+  const token = testSiteKey || !siteKey ? TURNSTILE_DUMMY : widgetAction === "session" && readyToken ? await takeToken() : testSiteKey ? TURNSTILE_DUMMY : await takeToken();
+  const res = await call("api/session", { method: "POST", body: { turnstileToken: token } });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => null)) as unknown;
+    throw new Error(messageOf(data, "Complete the Turnstile check so this browser can call your endpoint."));
+  }
+  sessionReady = true;
+  sessionNote.textContent = "This browser has a signed session cookie. Compare still needs a Turnstile pass with action compare.";
+  if (siteKey && !testSiteKey) mountTurnstile("compare");
+}
+
 function addBubble(role: "user" | "assistant", text: string): HTMLElement {
   const item = document.createElement("li");
   item.className = `bubble ${role}`;
@@ -197,44 +215,72 @@ function addBubble(role: "user" | "assistant", text: string): HTMLElement {
   return body;
 }
 
-function chatBody(creds: Creds, extra: Record<string, unknown> = {}) {
-  const history = [...transcript.querySelectorAll(".bubble")].map((node) => {
+function transcriptMessages(): { role: "user" | "assistant"; content: string }[] {
+  const history = [...transcript.querySelectorAll(".bubble")].flatMap((node) => {
     const role = node.classList.contains("user") ? "user" : "assistant";
-    const content = node.querySelector("div")?.textContent ?? "";
-    return { role, content };
+    const content = (node.querySelector("div")?.textContent ?? "").slice(0, LIMITS.maxMessageChars);
+    if (!content.trim()) return [];
+    return [{ role, content } as const];
   });
-  if (!history.length || extra.prompt) {
-    const content = typeof extra.prompt === "string" ? extra.prompt : prompt.value.trim();
-    if (content) history.push({ role: "user", content });
-  }
+  return history.slice(-LIMITS.maxMessages);
+}
+
+function chatBody(creds: Creds, extra: Record<string, unknown> = {}) {
   return {
+    apiKey: creds.key,
     baseUrl: creds.baseUrl,
     model: creds.model,
     system: system.value,
     temperature: Number(temperature.value),
     max_tokens: Number(maxTokens.value),
-    messages: history.filter((row) => row.content),
+    messages: transcriptMessages(),
     ...extra,
   };
 }
 
 async function readSseChat(res: Response, target: HTMLElement) {
   const reader = res.body?.getReader();
-  if (!reader) return;
+  if (!reader) {
+    target.textContent = "stream ended early";
+    return;
+  }
   const decoder = new TextDecoder();
   let carry = "";
   let text = "";
+  let eventName = "message";
+  let sawDone = false;
   while (true) {
     const chunk = await reader.read();
-    if (chunk.done) break;
+    if (chunk.done) {
+      carry += decoder.decode();
+      break;
+    }
     carry += decoder.decode(chunk.value, { stream: true });
     const lines = carry.split(/\r?\n/);
     carry = lines.pop() ?? "";
     for (const line of lines) {
+      if (line.startsWith("event:")) {
+        eventName = line.slice(6).trim();
+        continue;
+      }
       const trimmed = line.trim();
       if (!trimmed.startsWith("data:")) continue;
       const payload = trimmed.slice(5).trim();
-      if (!payload || payload === "[DONE]") continue;
+      if (!payload) continue;
+      if (payload === "[DONE]") {
+        sawDone = true;
+        continue;
+      }
+      if (eventName === "error") {
+        try {
+          const parsed = JSON.parse(payload) as { message?: string };
+          const message = parsed.message || "The stream failed.";
+          target.textContent = text ? `${text}\n${message}` : message;
+        } catch {
+          target.textContent = text ? `${text}\n${payload}` : payload;
+        }
+        return;
+      }
       try {
         const parsed = JSON.parse(payload) as { choices?: { delta?: { content?: string }; message?: { content?: string } }[] };
         const piece = parsed.choices?.[0]?.delta?.content ?? parsed.choices?.[0]?.message?.content ?? "";
@@ -246,6 +292,12 @@ async function readSseChat(res: Response, target: HTMLElement) {
         /* ignore */
       }
     }
+  }
+  if (!sawDone) {
+    const suffix = "stream ended early";
+    target.textContent = text ? `${text}\n${suffix}` : suffix;
+  } else if (!target.textContent) {
+    target.textContent = "(empty reply)";
   }
 }
 
@@ -269,7 +321,8 @@ async function sendChat(event: Event) {
   send.disabled = true;
   say("");
   try {
-    const res = await call("api/proxy/chat/stream", { method: "POST", key: creds.key, body: chatBody(creds, { messages: [{ role: "user", content: text }] }) });
+    await ensureSession();
+    const res = await call("api/proxy/chat/stream", { method: "POST", body: chatBody(creds) });
     if (!res.ok) {
       const data = (await res.json().catch(() => null)) as unknown;
       reply.textContent = messageOf(data, "The endpoint returned an error.");
@@ -277,7 +330,6 @@ async function sendChat(event: Event) {
       return;
     }
     await readSseChat(res, reply);
-    if (!reply.textContent) reply.textContent = "(empty reply)";
   } catch (err) {
     reply.textContent = err instanceof Error ? err.message : "The chat request failed.";
     say(reply.textContent);
@@ -298,7 +350,8 @@ async function loadModels() {
   saveCreds();
   modelsNote.textContent = "Listing models…";
   try {
-    const res = await call("api/proxy/models", { method: "POST", key: creds.key, body: { baseUrl: creds.baseUrl } });
+    await ensureSession();
+    const res = await call("api/proxy/models", { method: "POST", body: { apiKey: creds.key, baseUrl: creds.baseUrl } });
     const data = (await res.json().catch(() => null)) as { data?: { id?: string }[]; error?: { message?: string } } | null;
     if (!res.ok) {
       modelsNote.textContent = messageOf(data, "Could not list models.");
@@ -346,14 +399,14 @@ async function runCompare() {
   setMetrics(yoursMetrics, null);
   setMetrics(oursMetrics, null);
   try {
+    await ensureSession();
     const token = testSiteKey || !siteKey ? TURNSTILE_DUMMY : await takeToken();
     const res = await call("api/compare", {
       method: "POST",
-      key: creds.key,
       body: {
         ...chatBody(creds, { messages: [{ role: "user", content: text }] }),
         turnstileToken: token,
-        max_tokens: Math.min(Number(maxTokens.value), 128),
+        max_tokens: Math.min(Number(maxTokens.value), LIMITS.compareMaxTokens),
       },
     });
     if (!res.ok) {
@@ -368,7 +421,10 @@ async function runCompare() {
     let eventName = "message";
     while (true) {
       const chunk = await reader.read();
-      if (chunk.done) break;
+      if (chunk.done) {
+        carry += decoder.decode();
+        break;
+      }
       carry += decoder.decode(chunk.value, { stream: true });
       const lines = carry.split(/\r?\n/);
       carry = lines.pop() ?? "";
@@ -380,6 +436,10 @@ async function runCompare() {
         if (!line.startsWith("data:")) continue;
         const payload = line.slice(5).trim();
         if (!payload) continue;
+        if (eventName === "error") {
+          say("Compare failed.");
+          continue;
+        }
         const parsed = JSON.parse(payload) as SideMetrics;
         if (eventName === "yours" || parsed.side === "yours") {
           yoursOut.textContent = parsed.error || parsed.text;
@@ -399,8 +459,6 @@ async function runCompare() {
     compareBtn.disabled = false;
   }
 }
-
-const TURNSTILE_DUMMY = "XXXX.DUMMY.TOKEN.XXXX";
 
 function renderCap(result: CapabilityResult) {
   const item = document.createElement("li");
@@ -436,10 +494,10 @@ async function runCapabilityChecks() {
   caps.replaceChildren();
   say("");
   try {
+    await ensureSession();
     const res = await call("api/capabilities", {
       method: "POST",
-      key: creds.key,
-      body: { baseUrl: creds.baseUrl, model: creds.model, messages: [{ role: "user", content: "Reply with the word ok." }] },
+      body: { apiKey: creds.key, baseUrl: creds.baseUrl, model: creds.model, messages: [{ role: "user", content: "Reply with the word ok." }] },
     });
     const data = (await res.json().catch(() => null)) as { results?: CapabilityResult[]; error?: { message?: string } } | null;
     if (!res.ok) {
@@ -482,12 +540,21 @@ async function refreshConfig() {
     const data = (await res.json()) as PublicConfig;
     siteKey = data.siteKey ?? "";
     testSiteKey = data.testSiteKey;
-    budgetNote.textContent = data.ai === "off"
-      ? "Workers AI compare is off until Turnstile is configured."
-      : `${data.budget.remaining} of ${data.budget.dailyCap} compares left today${data.ai === "stub" ? " · local stub" : ""}.`;
+    budgetNote.textContent =
+      data.ai === "off"
+        ? "Workers AI compare is off until Turnstile is configured."
+        : `${data.budget.remaining} of ${data.budget.dailyCap} compares left today${data.ai === "stub" ? " · local stub" : ""}.`;
     if (data.testSiteKey) budgetNote.textContent += " Test Turnstile key.";
-    if (siteKey && !widgetId) mountTurnstile();
-    else if (data.ai === "off") compareBtn.disabled = true;
+    if (data.ai === "off") compareBtn.disabled = true;
+    if (testSiteKey) {
+      try {
+        await ensureSession();
+      } catch (err) {
+        sessionNote.textContent = err instanceof Error ? err.message : "Could not mint a session.";
+      }
+    } else if (siteKey && !widgetId) {
+      mountTurnstile(sessionReady ? "compare" : "session");
+    }
   } catch {
     budgetNote.textContent = "Could not load config.";
   }
@@ -525,5 +592,5 @@ async function boot() {
 
 void boot();
 window.addEventListener("load", () => {
-  if (siteKey && !widgetId) mountTurnstile();
+  if (siteKey && !widgetId && !testSiteKey) mountTurnstile(sessionReady ? "compare" : "session");
 });

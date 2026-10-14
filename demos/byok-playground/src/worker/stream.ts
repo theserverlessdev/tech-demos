@@ -1,3 +1,5 @@
+import { LIMITS } from "../shared/limits";
+import { HttpError } from "./errors";
 import { redact } from "./redact";
 
 export type StreamStats = {
@@ -23,40 +25,69 @@ function contentFromJson(parsed: unknown): { text: string; tokens: number | null
   return { text, tokens };
 }
 
-/** Parse OpenAI-style SSE (and Workers AI JSON chunks) into text + TTFT. */
-export async function consumeSse(stream: ReadableStream<Uint8Array> | null, secrets: readonly string[], started: number): Promise<StreamStats> {
-  if (!stream) return { text: "", ttftMs: null, tokens: null, latencyMs: Date.now() - started };
+function takeLine(line: string, secrets: readonly string[], acc: StreamStats, started: number): void {
+  const cleaned = redact(line, secrets);
+  const trimmed = cleaned.trim();
+  if (!trimmed || trimmed === "data: [DONE]") return;
+  const payload = trimmed.startsWith("data:") ? trimmed.slice(5).trim() : trimmed;
+  try {
+    const parsed = JSON.parse(payload) as unknown;
+    const piece = contentFromJson(parsed);
+    if (piece.text) {
+      if (acc.ttftMs === null) acc.ttftMs = Date.now() - started;
+      acc.text += piece.text;
+    }
+    if (piece.tokens !== null) acc.tokens = piece.tokens;
+  } catch {
+    /* ignore keepalives */
+  }
+}
+
+/** Parse OpenAI-style SSE into text + TTFT. Caps total bytes and a carry without a newline. */
+export async function consumeSse(
+  stream: ReadableStream<Uint8Array> | null,
+  secrets: readonly string[],
+  started: number,
+  signal?: AbortSignal,
+): Promise<StreamStats> {
+  const acc: StreamStats = { text: "", ttftMs: null, tokens: null, latencyMs: 0 };
+  if (!stream) {
+    acc.latencyMs = Date.now() - started;
+    return acc;
+  }
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let carry = "";
-  let text = "";
-  let ttftMs: number | null = null;
-  let tokens: number | null = null;
-  while (true) {
-    const chunk = await reader.read();
-    if (chunk.done) break;
-    carry += decoder.decode(chunk.value, { stream: true });
-    carry = redact(carry, secrets);
-    const lines = carry.split(/\r?\n/);
-    carry = lines.pop() ?? "";
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed === "data: [DONE]") continue;
-      const payload = trimmed.startsWith("data:") ? trimmed.slice(5).trim() : trimmed;
-      try {
-        const parsed = JSON.parse(payload) as unknown;
-        const piece = contentFromJson(parsed);
-        if (piece.text) {
-          if (ttftMs === null) ttftMs = Date.now() - started;
-          text += piece.text;
-        }
-        if (piece.tokens !== null) tokens = piece.tokens;
-      } catch {
-        /* ignore keepalives */
+  let seen = 0;
+  try {
+    while (true) {
+      if (signal?.aborted) {
+        await reader.cancel().catch(() => undefined);
+        throw new HttpError(499, "cancelled", "The stream was cancelled.");
       }
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      seen += chunk.value.byteLength;
+      if (seen > LIMITS.sseBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new HttpError(502, "too_large", "The endpoint stream was too large.");
+      }
+      carry += decoder.decode(chunk.value, { stream: true });
+      if (carry.length > LIMITS.sseCarryBytes && !/[\r\n]/.test(carry)) {
+        await reader.cancel().catch(() => undefined);
+        throw new HttpError(502, "too_large", "The endpoint sent a line that was too long.");
+      }
+      const lines = carry.split(/\r?\n/);
+      carry = lines.pop() ?? "";
+      for (const line of lines) takeLine(line, secrets, acc, started);
     }
+    carry += decoder.decode();
+    if (carry) takeLine(carry, secrets, acc, started);
+  } finally {
+    acc.latencyMs = Date.now() - started;
   }
-  return { text: redact(text, secrets), ttftMs, tokens, latencyMs: Date.now() - started };
+  acc.text = redact(acc.text, secrets);
+  return acc;
 }
 
 export function encodeSse(event: string, data: unknown): string {

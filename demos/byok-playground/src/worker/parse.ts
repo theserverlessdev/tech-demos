@@ -1,5 +1,6 @@
 import { LIMITS } from "../shared/limits";
 import type { ChatMessage } from "../shared/types";
+import { readCappedBytes, rejectOversizedContentLength } from "./bytes";
 import { HttpError } from "./errors";
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -7,14 +8,16 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export async function readJson(request: Request): Promise<Record<string, unknown>> {
-  const text = await request.text();
-  if (text.length > LIMITS.requestBytes) throw new HttpError(413, "too_large", "The request body is too large.");
+  rejectOversizedContentLength(request.headers, LIMITS.requestBytes, "The request body is too large.");
+  const bytes = await readCappedBytes(request.body, LIMITS.requestBytes);
+  const text = new TextDecoder().decode(bytes);
   if (!text.trim()) return {};
   try {
     const parsed = JSON.parse(text) as unknown;
     if (!isRecord(parsed)) throw new Error("shape");
     return parsed;
-  } catch {
+  } catch (err) {
+    if (err instanceof HttpError) throw err;
     throw new HttpError(400, "invalid_json", "The request body must be a JSON object.");
   }
 }
@@ -64,7 +67,7 @@ export function parseMessages(value: unknown, system: string): ChatMessage[] {
     }
     if (typeof content !== "string" || !content.trim()) throw new HttpError(400, "messages", "Message content must be text.");
     if (content.length > LIMITS.maxMessageChars) throw new HttpError(400, "messages", "A message is too long.");
-    messages.push({ role, content });
+    messages.push({ role, content: content.slice(0, LIMITS.maxMessageChars) });
   }
   return messages;
 }

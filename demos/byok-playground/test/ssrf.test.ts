@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { addressBlocked, assessUrl, authorizeNavigation, joinAllowedPath, type Lookup } from "../src/worker/ssrf";
+import { addressBlocked, assessUrl, authorizeNavigation, internalHostname, joinAllowedPath, type Lookup } from "../src/worker/ssrf";
 import { HttpError } from "../src/worker/errors";
 
 const publicDns: Lookup = async () => ["1.1.1.1"];
@@ -38,12 +38,17 @@ describe("address forms", () => {
     expect(addressBlocked("example.com")).toBe(null);
   });
 
-  test("blocks private, link-local, CGNAT, metadata, and broadcast ranges", () => {
-    for (const host of ["10.1.2.3", "172.16.0.1", "192.168.1.20", "169.254.169.254", "100.64.0.1", "0.0.0.0", "255.255.255.255", "192.0.2.1", "198.51.100.1", "203.0.113.1"]) {
+  test("blocks private, link-local, CGNAT, metadata, broadcast, and extra ranges", () => {
+    for (const host of ["10.1.2.3", "172.16.0.1", "192.168.1.20", "169.254.169.254", "100.64.0.1", "0.0.0.0", "255.255.255.255", "192.0.2.1", "198.51.100.1", "203.0.113.1", "192.88.99.1"]) {
       expect(addressBlocked(host)).toBe(true);
     }
     expect(addressBlocked("100.128.0.1")).toBe(false);
     expect(addressBlocked("172.15.0.1")).toBe(false);
+    expect(addressBlocked("64:ff9b:1::1")).toBe(true);
+    expect(addressBlocked("64:ff9b:1:2::abc")).toBe(true);
+    expect(addressBlocked("3fff::1")).toBe(true);
+    expect(addressBlocked("3fff:0abc::1")).toBe(true);
+    expect(addressBlocked("5f00::1")).toBe(true);
   });
 });
 
@@ -69,6 +74,24 @@ describe("assessUrl", () => {
     expect(assessUrl("https://files.intranet/").ok).toBe(false);
     expect(assessUrl("https://dc.corp/").ok).toBe(false);
     expect(assessUrl("https://1.2.3.4.in-addr.arpa/").ok).toBe(false);
+    expect(assessUrl("https://foo.svc/").ok).toBe(false);
+    expect(assessUrl("https://theserverless.dev/").ok).toBe(false);
+    expect(assessUrl("https://byok-playground.tech-demos.theserverless.dev/").ok).toBe(false);
+    expect(assessUrl("https://tech-demos-byok-playground.workers.dev/").ok).toBe(false);
+    const literal = assessUrl("https://1.1.1.1/");
+    expect(literal.ok).toBe(false);
+    if (!literal.ok) expect(literal.message).toMatch(/IP address literals/i);
+    expect(assessUrl("https://[2606:4700:4700::1111]/").ok).toBe(false);
+  });
+
+  test("denies TSD and workers.dev hostnames as internal", () => {
+    expect(internalHostname("theserverless.dev")).toBe(true);
+    expect(internalHostname("api.theserverless.dev")).toBe(true);
+    expect(internalHostname("workers.dev")).toBe(true);
+    expect(internalHostname("foo.workers.dev")).toBe(true);
+    expect(internalHostname("foo.svc")).toBe(true);
+    expect(internalHostname("nas.home.arpa")).toBe(true);
+    expect(internalHostname("api.openai.com")).toBe(false);
   });
 
   test("accepts a public https URL without resolving it", () => {

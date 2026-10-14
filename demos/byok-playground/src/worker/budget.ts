@@ -1,6 +1,5 @@
 import { LIMITS } from "../shared/limits";
 import { HttpError } from "./errors";
-import type { DemoEnv } from "./env";
 import { parseIPv4, parseIPv6, dottedIPv4 } from "./ssrf";
 
 export function dayKey(now = Date.now()): string {
@@ -42,7 +41,7 @@ export function parseCap(raw: string | undefined, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
-export async function usedToday(env: DemoEnv, day = dayKey()): Promise<number> {
+export async function usedToday(env: Env, day = dayKey()): Promise<number> {
   const row = await env.DB.prepare(`SELECT COUNT(*) AS n FROM compares WHERE day = ?`).bind(day).first<{ n: number }>();
   return Number(row?.n ?? 0);
 }
@@ -51,7 +50,7 @@ export async function usedToday(env: DemoEnv, day = dayKey()): Promise<number> {
  * Atomic insert: one global daily cap and one per-ip_key cap.
  * D1 runs the SELECT in the same statement as the INSERT.
  */
-export async function claimCompare(env: DemoEnv, ipKey: string, now = Date.now()): Promise<string> {
+export async function claimCompare(env: Env, ipKey: string, now = Date.now()): Promise<string> {
   const day = dayKey(now);
   const id = crypto.randomUUID();
   const dailyCap = parseCap(env.DAILY_COMPARE_CAP, LIMITS.dailyCompareCap);
@@ -69,7 +68,7 @@ export async function claimCompare(env: DemoEnv, ipKey: string, now = Date.now()
     if (globalUsed >= dailyCap) {
       throw new HttpError(503, "daily", "The shared Workers AI budget for today is used up. Try again tomorrow.");
     }
-    throw new HttpError(429, "hourly", "This network has used its compare budget for today.");
+    throw new HttpError(429, "daily", "This network has used its compare budget for today.");
   }
   return id;
 }

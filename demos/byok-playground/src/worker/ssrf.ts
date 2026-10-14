@@ -6,7 +6,7 @@ export type Lookup = (hostname: string) => Promise<string[]>;
 export type Decision = { ok: true; url: string } | { ok: false; code: "ssrf" | "dns" | "url"; message: string };
 
 export type AssessOptions = {
-  /** wrangler dev only. Allows http://localhost, http://127.0.0.1, and http://[::1]. */
+  /** Only when Env.ENVIRONMENT === "local". Allows http://localhost, http://127.0.0.1, and http://[::1]. */
   allowLocalhost?: boolean;
 };
 
@@ -80,6 +80,7 @@ export function ipv4Blocked(ip: number): boolean {
   if (a === 192 && b === 168) return true;
   if (a === 100 && b >= 64 && b <= 127) return true;
   if (a === 192 && b === 0 && (c === 0 || c === 2)) return true;
+  if (a === 192 && b === 88 && c === 99) return true;
   if (a === 198 && b === 51 && c === 100) return true;
   if (a === 203 && b === 0 && c === 113) return true;
   if (a === 198 && (b === 18 || b === 19)) return true;
@@ -136,13 +137,19 @@ export function ipv6Loopback(ip: bigint): boolean {
   return ip === 1n;
 }
 
+function ipv6Prefix(ip: bigint, bits: number): bigint {
+  return ip >> BigInt(128 - bits);
+}
+
 export function ipv6Blocked(ip: bigint): boolean {
   if (ip < 0n || ip > (1n << 128n) - 1n) return true;
   if (ip >> 32n === 0n) return true;
   if (ip >> 32n === 0xffffn) return true;
   if (ip >> 32n === 0xffff0000n) return true;
   if (ip >> 32n === 0x64ff9b0000000000000000n) return ipv4Blocked(Number(ip & 0xffffffffn));
-  if (ip >> 80n === 0x0064ff9b0001n) return ipv4Blocked(Number(ip & 0xffffffffn));
+  if (ipv6Prefix(ip, 48) === 0x64ff9b0001n) return true;
+  if (ipv6Prefix(ip, 20) === 0x3fff0n) return true;
+  if (ipv6Prefix(ip, 16) === 0x5f00n) return true;
   const top7 = Number(ip >> 121n);
   if (top7 === 0x7e) return true;
   const top8 = Number(ip >> 120n);
@@ -179,7 +186,7 @@ function isLocalhostName(host: string): boolean {
   return false;
 }
 
-function internalHostname(host: string): boolean {
+export function internalHostname(host: string): boolean {
   const name = host.toLowerCase().replace(/\.$/, "");
   if (!name || BLOCKED_HOSTS.has(name)) return true;
   if (name.endsWith(".localhost") || name.endsWith(".local") || name.endsWith(".localdomain")) return true;
@@ -188,6 +195,10 @@ function internalHostname(host: string): boolean {
   if (name === "lan" || name.endsWith(".lan")) return true;
   if (name === "intranet" || name.endsWith(".intranet")) return true;
   if (name === "corp" || name.endsWith(".corp")) return true;
+  if (name === "svc" || name.endsWith(".svc")) return true;
+  if (name === "home.arpa" || name.endsWith(".home.arpa")) return true;
+  if (name === "theserverless.dev" || name.endsWith(".theserverless.dev")) return true;
+  if (name === "workers.dev" || name.endsWith(".workers.dev")) return true;
   if (!name.includes(".")) return true;
   return false;
 }
@@ -219,11 +230,14 @@ export function assessUrl(raw: string, options: AssessOptions = {}): Decision {
   if (url.username || url.password) return urlFail("URLs with a username or password are not allowed.");
 
   const blocked = addressBlocked(host);
-  if (blocked === true && !localOk) return fail("ssrf", "That address is in a blocked range.");
-  if (blocked === null && internalHostname(host) && !localOk) return fail("ssrf", "That hostname is not a public site.");
-  if (blocked === false && parseIPv4(host) !== null) {
-    url.hostname = dottedIPv4(parseIPv4(host)!);
+  if (blocked !== null) {
+    if (localOk) {
+      /* loopback literals are allowed only under ENVIRONMENT=local */
+    } else {
+      return fail("ssrf", "IP address literals are not allowed. Use a hostname.");
+    }
   }
+  if (blocked === null && internalHostname(host) && !localOk) return fail("ssrf", "That hostname is not a public site.");
   if (!localOk && url.port && url.port !== "443") return urlFail("Only port 443 is allowed.");
   return { ok: true, url: url.href };
 }
@@ -239,9 +253,9 @@ export async function authorizeNavigation(raw: string, lookup: Lookup, options: 
   try {
     addresses = await lookup(host);
   } catch {
-    return fail("dns", "The hostname could not be resolved.");
+    return fail("dns", "The hostname could not be resolved. DNS is best-effort; platform egress is the backstop.");
   }
-  if (addresses.length === 0) return fail("dns", "The hostname did not resolve.");
+  if (addresses.length === 0) return fail("dns", "The hostname did not resolve. DNS is best-effort; platform egress is the backstop.");
   for (const address of addresses) {
     if (addressBlocked(address) !== false) return fail("ssrf", "DNS for that hostname includes a blocked address.");
   }

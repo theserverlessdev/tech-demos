@@ -92,11 +92,12 @@ code { font-family: var(--font-mono); font-size: 0.84em; color: var(--accent-tex
   font-family: var(--font-heading);
   font-weight: 680;
   flex-shrink: 0;
+  min-height: 44px;
 }
 .brand__mark { color: var(--ember); }
 .topbar__title { flex: 1; min-width: 0; }
 .topbar__title h1 { overflow-wrap: anywhere; }
-.topbar__title p { margin: 0.15rem 0 0; color: var(--muted); }
+.topbar__title p, .topbar__tag { margin: 0.15rem 0 0; color: var(--muted); }
 .topbar__actions { display: flex; gap: 0.5rem; align-items: center; flex-shrink: 0; }
 
 .shows {
@@ -287,6 +288,7 @@ textarea { min-height: 4.2rem; resize: vertical; }
 .pill-pass { background: rgba(90, 168, 119, 0.18); color: var(--ok); }
 .pill-fail { background: rgba(208, 83, 63, 0.16); color: var(--danger); }
 .pill-unsupported { background: rgba(209, 154, 42, 0.16); color: var(--warn); }
+.pill-inconclusive { background: rgba(138, 138, 133, 0.16); color: var(--muted); }
 .cap .raw {
   margin: 0.4rem 0 0;
   font-family: var(--font-mono);
@@ -311,15 +313,35 @@ textarea { min-height: 4.2rem; resize: vertical; }
   font-size: 0.9rem;
 }
 .foot p { max-width: 40rem; }
+.foot__links { display: flex; flex-wrap: wrap; gap: 0.35rem 0.8rem; align-items: center; }
+.foot__links a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}
 
 @media (max-width: 900px) {
-  .topbar, .intro, .fields, .compare-grid, .sliders { display: flex; flex-direction: column; align-items: stretch; }
-  .topbar { align-items: flex-start; flex-wrap: wrap; padding-top: max(10px, env(safe-area-inset-top)); padding-left: max(12px, env(safe-area-inset-left)); padding-right: max(12px, env(safe-area-inset-right)); }
-  .topbar__title { order: 3; flex-basis: 100%; }
-  .topbar__actions { margin-left: auto; }
+  .topbar {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-areas: "brand actions" "title title";
+    align-items: center;
+    gap: 0.35rem 0.75rem;
+    padding-top: max(10px, env(safe-area-inset-top));
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+  }
+  .brand { grid-area: brand; }
+  .topbar__actions { grid-area: actions; margin-left: 0; justify-self: end; }
+  .topbar__title { grid-area: title; min-width: 0; }
+  .topbar__tag { display: none; }
+  .intro, .fields, .compare-grid, .sliders { display: flex; flex-direction: column; align-items: stretch; }
+  .intro { padding-top: 0.65rem; }
+  .intro li { margin: 0.15rem 0; }
   .btn, a.btn, .tab, .btn-ghost { min-height: 44px; }
   .btn-icon { width: 44px; height: 44px; }
   body { padding-bottom: calc(1.2rem + env(safe-area-inset-bottom)); }
   .composer { padding-bottom: env(safe-area-inset-bottom); }
   .transcript { max-height: 42dvh; }
+  .foot { flex-direction: column; }
 }

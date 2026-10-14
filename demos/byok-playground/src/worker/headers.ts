@@ -36,6 +36,8 @@ const NEVER_FORWARD = new Set([
   KEY_HEADER,
 ]);
 
+const API_CSP = "default-src 'none'; sandbox";
+
 function extraHopByHop(headers: Headers): Set<string> {
   const extra = new Set<string>();
   const connection = headers.get("connection");
@@ -65,22 +67,18 @@ export function outboundHeaders(apiKey: string, accept: string): Headers {
   return headers;
 }
 
-/** Upstream response headers that may reach the browser. Cookies and hop-by-hop names are dropped. */
-export function sanitizeResponseHeaders(upstream: Headers): Headers {
-  const extra = extraHopByHop(upstream);
+/** Forced API response headers. Upstream content-type is not copied. */
+export function apiHeaders(kind: "json" | "sse"): Headers {
   const headers = new Headers();
-  const contentType = upstream.get("content-type");
-  if (contentType) headers.set("content-type", contentType);
+  headers.set("content-type", kind === "sse" ? "text/event-stream; charset=utf-8" : "application/json; charset=utf-8");
   headers.set("cache-control", "no-store");
   headers.set("x-content-type-options", "nosniff");
-  for (const [name, value] of upstream) {
-    const lower = name.toLowerCase();
-    if (isHopByHop(lower) || extra.has(lower)) continue;
-    if (lower === "content-type" || lower === "cache-control") continue;
-    if (lower === "content-security-policy") continue;
-    if (lower.startsWith("x-")) continue;
-  }
+  headers.set("content-security-policy", API_CSP);
   return headers;
+}
+
+export function mimeType(headers: Headers): string {
+  return (headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
 }
 
 export function forwardedVisitorCookies(headers: Headers): boolean {

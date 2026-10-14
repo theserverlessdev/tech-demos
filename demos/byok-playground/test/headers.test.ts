@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { KEY_HEADER } from "../src/shared/limits";
-import { forwardedVisitorCookies, isHopByHop, outboundHeaders, sanitizeResponseHeaders } from "../src/worker/headers";
+import { apiHeaders, forwardedVisitorCookies, isHopByHop, mimeType, outboundHeaders } from "../src/worker/headers";
 
 describe("header stripping", () => {
   test("never forwards cookies, hop-by-hop names, or the visitor key header", () => {
@@ -47,24 +47,13 @@ describe("header stripping", () => {
     expect([...headers.keys()].sort()).toEqual(["accept", "accept-encoding", "authorization", "content-type"]);
   });
 
-  test("response sanitizer drops Set-Cookie and hop-by-hop, keeps content-type", () => {
-    const upstream = new Headers({
-      "set-cookie": "evil=1; Path=/",
-      "set-cookie2": "evil=2",
-      connection: "close",
-      "transfer-encoding": "chunked",
-      "keep-alive": "timeout=5",
-      "content-type": "text/event-stream",
-      "x-request-id": "should-drop",
-      "content-security-policy": "should-drop",
-    });
-    const out = sanitizeResponseHeaders(upstream);
-    expect(out.get("set-cookie")).toBeNull();
-    expect(out.get("set-cookie2")).toBeNull();
-    expect(out.get("connection")).toBeNull();
-    expect(out.get("transfer-encoding")).toBeNull();
-    expect(out.get("x-request-id")).toBeNull();
-    expect(out.get("content-type")).toBe("text/event-stream");
-    expect(out.get("cache-control")).toBe("no-store");
+  test("API responses force content-type and a sandbox CSP", () => {
+    const json = apiHeaders("json");
+    expect(json.get("content-type")).toBe("application/json; charset=utf-8");
+    expect(json.get("content-security-policy")).toBe("default-src 'none'; sandbox");
+    const sse = apiHeaders("sse");
+    expect(sse.get("content-type")).toBe("text/event-stream; charset=utf-8");
+    expect(sse.get("cache-control")).toBe("no-store");
+    expect(mimeType(new Headers({ "content-type": "text/event-stream; charset=utf-8" }))).toBe("text/event-stream");
   });
 });

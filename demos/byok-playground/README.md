@@ -2,8 +2,8 @@
 
 A bring-your-own-key AI playground. Paste an OpenAI-compatible API key, base URL, and model id. The Worker proxies `/chat/completions` and `/models` without storing the key.
 
-- **Live (after deploy):** <https://tech-demos.theserverless.dev/demos/byok-playground/>
-- **Subdomain:** <https://byok-playground.tech-demos.theserverless.dev/>
+- **Live (after deploy):** <https://byok-playground.tech-demos.theserverless.dev/>
+- **Hub path:** <https://tech-demos.theserverless.dev/demos/byok-playground/> 308s to the subdomain so key storage is origin-isolated from the other demos.
 - **Plan:** [PLAN.md](./PLAN.md)
 - **What changed:** [CHANGELOG.md](./CHANGELOG.md)
 
@@ -11,14 +11,14 @@ Walkthrough stills and a short video: [artifacts/](./artifacts/).
 
 ## What this demonstrates
 
-**Pattern.** A Worker can proxy a visitor’s OpenAI-compatible key without becoming an open proxy. The key lives in the browser (`sessionStorage` by default, opt-in Remember on `localStorage`). Each request sends it in a header. The Worker never logs, stores, or echoes it. SSRF is blocked, redirects are refused, and Workers AI comparison is Turnstile-gated with an atomic D1 daily budget.
+**Pattern.** This Worker is not a general-purpose proxy: only `/models` and `/chat/completions`, https on port 443, no redirects, rate-limited. The key lives in the browser (`sessionStorage` by default, opt-in Remember on `localStorage`). Each request sends it in the JSON body. The Worker does not store it. Invocation logs are disabled; until a live dashboard check confirms headers and bodies are not captured, this README does not claim the key is never logged. SSRF is blocked, redirects are refused, and Workers AI comparison is Turnstile-gated with an atomic D1 daily budget.
 
 **What you can do**
 
-- Paste a key, an https base URL, and a model id, then stream a chat.
-- List models from `GET /models`.
-- Send the same prompt to your model and to Workers AI. Read latency, time to first token, and tokens where the endpoint reports them.
-- Probe streaming, tools / function calling, JSON schema `response_format`, and vision. Each check is pass, fail, or unsupported, with the raw error (key stripped).
+- Paste a key, an https base URL, and a model id, then stream a chat. Multi-turn sends the transcript (at most 15 turns, 4000 characters each).
+- List models from `GET /models`. The Worker returns only `{ data: [{ id }] }`.
+- Send the same prompt to your model and to Workers AI. Read latency, time to first token, and tokens where the endpoint reports them. Each compare spends one of today’s shared runs.
+- Probe streaming, tools / function calling, JSON schema `response_format`, and vision. Tools pass only with `tool_calls`; JSON schema pass only if the content parses and `ok` is a boolean; vision asks about a known-colour pixel. Otherwise the result is fail, unsupported, or inconclusive.
 
 **What you could build**
 
@@ -28,31 +28,34 @@ Walkthrough stills and a short video: [artifacts/](./artifacts/).
 
 **Limits**
 
-- Only `/chat/completions` and `/models` under the pasted base. https only (`http://localhost` under `wrangler dev`).
+- Only `/chat/completions` and `/models` under the pasted base. https on port 443 (`http://localhost` only when `ENVIRONMENT=local`).
 - No redirects. Hop-by-hop headers and cookies are stripped. Visitor cookies are never forwarded.
-- Compare spends the shared Workers AI budget and requires Turnstile.
+- DNS to the visitor URL is best-effort against rebinding. `global_fetch_strictly_public` (platform egress) is the backstop.
+- Compare spends the shared Workers AI budget and requires Turnstile action `compare`. Chat is not stored; D1 holds only the compare budget.
+- Concurrent stream caps are per isolate, not a global cluster lock.
 - Local `bun run dev` omits the Workers AI binding and uses a labelled stub.
 
 ## What it proves
 
 | Binding | What the demo does with it |
 | --- | --- |
-| **Workers + Static Assets** | Serves the playground and the proxy API from one Worker. |
-| **SSRF guard** | Blocks private, loopback, link-local, CGNAT, metadata, and internal hostnames, including decimal / octal / hex / mapped forms. |
-| **Rate limiting** | Chat `7461`, models `7462`, compare `7463`, per IP. |
-| **Turnstile** | Required on the Workers AI comparison path. Fails closed without a real secret off localhost. |
+| **Workers + Static Assets** | Serves the playground and the proxy API from one Worker on the demo subdomain. |
+| **SSRF guard** | Blocks private, loopback, link-local, CGNAT, metadata, internal hostnames (including `.svc`, `.home.arpa`, `theserverless.dev`, `*.workers.dev`), and IP literals. DNS is best-effort; egress is the backstop. |
+| **Rate limiting** | Chat `7461`, models `7462`, compare `7463`, keyed by network (`IPv4 /32`, `IPv6 /64`). |
+| **Turnstile** | One pass mints an HMAC-signed session cookie. Compare requires action `compare`. Fails closed without a real secret when `ENVIRONMENT` is not `local`. `TURNSTILE_SITE_KEY=REPLACE_ME` is off. |
 | **D1** | Atomic daily compare budget. Rows store an HMAC’d `ip_key`, never the address. |
 | **Workers AI** | The “ours” side of compare. Local wrangler config stubs it. |
 
 ## How it works
 
 ```text
-browser (sessionStorage) ── x-byok-key ──► Worker
-                                            ├─ same-origin + session cookie
-                                            ├─ SSRF + path allowlist
-                                            ├─ POST /chat/completions  (SSE passthrough)
-                                            ├─ GET  /models
-                                            └─ compare ─ Turnstile + D1 budget ─ Workers AI
+browser (sessionStorage) ── JSON body.apiKey ──► Worker
+                                                 ├─ HMAC session cookie (after Turnstile)
+                                                 ├─ same-origin
+                                                 ├─ SSRF + path allowlist + egress flag
+                                                 ├─ POST /chat/completions  (SSE passthrough)
+                                                 ├─ GET  /models  → { data: [{ id }] }
+                                                 └─ compare ─ Turnstile action=compare + D1 budget ─ Workers AI
 ```
 
 Cloudflare resources are prefixed `tech-demos-byok-playground` so they do not collide with other demos in this repo.
@@ -67,7 +70,7 @@ bun run mock          # OpenAI-compatible mock on :8799
 bun run dev           # Worker on :8787
 ```
 
-`.dev.vars` holds Cloudflare’s published always-pass Turnstile test secret (`1x0000000000000000000000000000000AA`) and a local `IP_HASH_SECRET`. `wrangler.local.jsonc` uses the matching test site key.
+`.dev.vars` holds Cloudflare’s published always-pass Turnstile test secret (`1x0000000000000000000000000000000AA`), a local `IP_HASH_SECRET`, and a local `SESSION_SECRET`. `wrangler.local.jsonc` sets `ENVIRONMENT=local` and the matching test site key. The test Turnstile secret and `http://localhost` are allowed only when `ENVIRONMENT=local`.
 
 In the UI:
 
@@ -90,11 +93,12 @@ Do **not** deploy from this PR unless the owner asks. When it is time:
 | Name | Where | What |
 | --- | --- | --- |
 | D1 `tech-demos-byok-playground` | `wrangler d1 create` then paste `database_id` into `wrangler.jsonc` | Compare budget table. Apply `migrations/0001_init.sql`. |
-| `TURNSTILE_SITE_KEY` | `wrangler.jsonc` `vars` (public) | Production widget site key. Local uses the test key. |
+| `TURNSTILE_SITE_KEY` | `wrangler.jsonc` `vars` (public) | Production widget site key. `REPLACE_ME` means compare is off. Local uses the test key. |
 | `TURNSTILE_SECRET` | Worker secret / `.dev.vars` | Widget secret. Never commit it. |
 | `IP_HASH_SECRET` | Worker secret / `.dev.vars` | HMAC key for `ip_key`. Never commit it. |
+| `SESSION_SECRET` | Worker secret / `.dev.vars` | HMAC key for the session cookie. Never commit it. |
 | Rate limit namespaces | `7461` chat, `7462` models, `7463` compare | Unique in this account. Do not reuse. |
-| Routes | hub path + subdomain | Same pattern as the other standalone demos. |
+| Routes | hub path 308s to the subdomain | Key storage is origin-isolated. |
 
 ```bash
 cd demos/byok-playground
@@ -102,9 +106,16 @@ bunx wrangler d1 create tech-demos-byok-playground
 # put the database_id in wrangler.jsonc, then:
 bunx wrangler secret put TURNSTILE_SECRET
 bunx wrangler secret put IP_HASH_SECRET
+bunx wrangler secret put SESSION_SECRET
 # bun run deploy   # owner only
 ```
 
-Then redeploy the hub so the gallery card is registered.
+### Deploy checklist (after the owner deploys)
+
+1. Confirm the hub path 308s to `https://byok-playground.tech-demos.theserverless.dev/`.
+2. **Workers Logs:** open Observability → Logs for this Worker and confirm invocation logs are off. Send one chat request, then search logs for the pasted key and for `x-byok-key`. Until that live check is done, do not claim the key is never logged.
+3. Confirm traces are off (so `url.full` cannot carry a key). Keys are in the JSON body, not the URL.
+4. Confirm Turnstile uses a production widget, not `REPLACE_ME` or the always-pass test keys.
+5. Redeploy the hub so the gallery card is registered.
 
 Needs Workers Paid (Workers AI, D1, rate limiting, Turnstile). No Durable Objects, R2, Queues, Containers, or Workers for Platforms.

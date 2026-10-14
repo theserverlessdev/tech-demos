@@ -34,6 +34,38 @@ export async function withStream<T>(ip: string, work: () => Promise<T>): Promise
   }
 }
 
+/** Hold a concurrency slot until the body closes, is cancelled, or errors. */
+export function holdUntilClose(ip: string, stream: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
+  acquireStream(ip);
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    releaseStream(ip);
+  };
+  const reader = stream.getReader();
+  return new ReadableStream({
+    async pull(controller) {
+      try {
+        const chunk = await reader.read();
+        if (chunk.done) {
+          release();
+          controller.close();
+          return;
+        }
+        controller.enqueue(chunk.value);
+      } catch {
+        release();
+        controller.close();
+      }
+    },
+    cancel() {
+      release();
+      return reader.cancel();
+    },
+  });
+}
+
 /** Test helper. */
 export function resetConcurrency(): void {
   state.total = 0;

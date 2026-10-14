@@ -1,26 +1,34 @@
-import { KEY_HEADER, LIMITS } from "../shared/limits";
+import { LIMITS } from "../shared/limits";
 import type { PublicConfig, SideMetrics } from "../shared/types";
 import { runWorkersAi } from "./ai";
 import { claimCompare, hashIpKey, parseCap, usedToday } from "./budget";
 import { runCapabilities } from "./capabilities";
-import { withStream } from "./concurrency";
-import type { DemoEnv } from "./env";
+import { holdUntilClose, withStream } from "./concurrency";
+import { isLocalEnv, publicSiteKey } from "./env";
 import { HttpError } from "./errors";
-import { assertSameOrigin, clientIp, isLocalRequest, limit } from "./origin";
+import { apiHeaders } from "./headers";
+import { assertSameOrigin, clientIp, limit } from "./origin";
 import { parseMaxTokens, parseMessages, parseModel, parseSystem, parseTemperature, promptFrom, readJson } from "./parse";
-import { failFromUpstream, passThrough, proxyFetch, readApiKey, readBaseUrl, readCappedText, resolveTarget } from "./proxy";
+import {
+  failFromUpstream,
+  jsonBody,
+  proxyFetch,
+  readApiKey,
+  readBaseUrl,
+  readCappedText,
+  requireUpstreamType,
+  resolveTarget,
+  ssePassThrough,
+  validateChatJson,
+  validateModelsPayload,
+} from "./proxy";
 import { createLogger, jsonError, redact } from "./redact";
-import { requireSession } from "./session";
+import { finish, mintSignedSession, requireSession } from "./session";
 import { consumeSse, encodeSse } from "./stream";
 import { aiStatus, isTestSiteKey, requireTurnstile } from "./turnstile";
 
 function json(data: unknown, status = 200): Response {
-  return Response.json(data, { status, headers: { "cache-control": "no-store" } });
-}
-
-function secretsFrom(request: Request): string[] {
-  const key = (request.headers.get(KEY_HEADER) ?? "").trim();
-  return key ? [key] : [];
+  return new Response(JSON.stringify(data), { status, headers: apiHeaders("json") });
 }
 
 export function errorResponse(err: unknown, secrets: readonly string[] = []): Response {
@@ -29,8 +37,8 @@ export function errorResponse(err: unknown, secrets: readonly string[] = []): Re
   return jsonError(500, "internal", "The server failed. Try again.", secrets);
 }
 
-async function config(env: DemoEnv, request: Request): Promise<PublicConfig> {
-  const ai = aiStatus(env, request);
+async function config(env: Env): Promise<PublicConfig> {
+  const ai = aiStatus(env);
   const dailyCap = parseCap(env.DAILY_COMPARE_CAP, LIMITS.dailyCompareCap);
   let used = 0;
   try {
@@ -38,38 +46,40 @@ async function config(env: DemoEnv, request: Request): Promise<PublicConfig> {
   } catch {
     used = 0;
   }
-  const siteKey = env.TURNSTILE_SITE_KEY?.trim() || null;
+  const siteKey = ai === "off" ? null : publicSiteKey(env);
   return {
     ok: true,
     model: env.AI_MODEL,
     ai,
-    siteKey: ai === "off" ? null : siteKey,
-    testSiteKey: isTestSiteKey(siteKey ?? undefined),
+    siteKey,
+    testSiteKey: isTestSiteKey(siteKey),
     budget: { dailyCap, used, remaining: Math.max(0, dailyCap - used) },
     limits: {
       maxTokensMax: LIMITS.maxTokensMax,
       compareMaxTokens: LIMITS.compareMaxTokens,
       requestBytes: LIMITS.requestBytes,
       timeoutMs: LIMITS.timeoutMs,
+      maxMessages: LIMITS.maxMessages,
+      maxMessageChars: LIMITS.maxMessageChars,
     },
   };
 }
 
-function assessOptions(request: Request) {
-  return { allowLocalhost: isLocalRequest(request) };
+function assessOptions(env: Env) {
+  return { allowLocalhost: isLocalEnv(env) };
 }
 
-function requireProxyGate(request: Request): void {
-  requireSession(request);
+async function requireProxyGate(request: Request, env: Env): Promise<void> {
+  await requireSession(request, env);
   assertSameOrigin(request);
 }
 
-async function visitorChat(env: DemoEnv, request: Request, stream: boolean): Promise<Response> {
-  requireProxyGate(request);
+async function visitorChat(env: Env, request: Request, stream: boolean): Promise<Response> {
+  await requireProxyGate(request, env);
   await limit(env.CHAT_LIMIT, request, "chat requests");
-  const apiKey = readApiKey(request);
   const body = await readJson(request);
-  const target = await resolveTarget(readBaseUrl(body), "/chat/completions", assessOptions(request));
+  const apiKey = readApiKey(body);
+  const target = await resolveTarget(readBaseUrl(body), "/chat/completions", assessOptions(env));
   const model = parseModel(body.model);
   const messages = parseMessages(body.messages, parseSystem(body.system));
   const temperature = parseTemperature(body.temperature);
@@ -81,31 +91,61 @@ async function visitorChat(env: DemoEnv, request: Request, stream: boolean): Pro
     max_tokens: maxTokens,
     stream,
   });
-  return withStream(clientIp(request), async () => {
-    const upstream = await proxyFetch({
-      url: target.url,
-      method: "POST",
-      apiKey,
-      body: payload,
-      accept: stream ? "text/event-stream" : "application/json",
+  const ip = clientIp(request);
+  if (!stream) {
+    return withStream(ip, async () => {
+      const upstream = await proxyFetch({
+        url: target.url,
+        method: "POST",
+        apiKey,
+        body: payload,
+        accept: "application/json",
+      });
+      if (upstream.status >= 400) {
+        const text = await readCappedText(upstream, [apiKey], LIMITS.errorBytes);
+        throw failFromUpstream(upstream.status, text, [apiKey]);
+      }
+      try {
+        requireUpstreamType(upstream, "application/json");
+      } catch (err) {
+        await upstream.body?.cancel().catch(() => undefined);
+        throw err;
+      }
+      const text = await readCappedText(upstream, [apiKey], LIMITS.responseBytes);
+      return jsonBody(validateChatJson(text), [apiKey], upstream.status);
     });
-    if (upstream.status >= 400) {
-      const text = await readCappedText(upstream, [apiKey], 16_384);
-      throw failFromUpstream(upstream.status, text, [apiKey]);
-    }
-    if (stream) {
-      return passThrough(upstream, [apiKey], { "content-type": "text/event-stream; charset=utf-8" });
-    }
-    return passThrough(upstream, [apiKey]);
+  }
+
+  const upstream = await proxyFetch({
+    url: target.url,
+    method: "POST",
+    apiKey,
+    body: payload,
+    accept: "text/event-stream",
+  });
+  if (upstream.status >= 400) {
+    const text = await readCappedText(upstream, [apiKey], LIMITS.errorBytes);
+    throw failFromUpstream(upstream.status, text, [apiKey]);
+  }
+  try {
+    requireUpstreamType(upstream, "text/event-stream");
+  } catch (err) {
+    await upstream.body?.cancel().catch(() => undefined);
+    throw err;
+  }
+  const passed = ssePassThrough(upstream, [apiKey]);
+  return new Response(holdUntilClose(ip, passed.body ?? new ReadableStream()), {
+    status: passed.status,
+    headers: passed.headers,
   });
 }
 
-async function visitorModels(env: DemoEnv, request: Request): Promise<Response> {
-  requireProxyGate(request);
+async function visitorModels(env: Env, request: Request): Promise<Response> {
+  await requireProxyGate(request, env);
   await limit(env.MODELS_LIMIT, request, "model list requests");
-  const apiKey = readApiKey(request);
   const body = await readJson(request);
-  const target = await resolveTarget(readBaseUrl(body), "/models", assessOptions(request));
+  const apiKey = readApiKey(body);
+  const target = await resolveTarget(readBaseUrl(body), "/models", assessOptions(env));
   return withStream(clientIp(request), async () => {
     const upstream = await proxyFetch({
       url: target.url,
@@ -114,32 +154,48 @@ async function visitorModels(env: DemoEnv, request: Request): Promise<Response> 
       accept: "application/json",
     });
     if (upstream.status >= 400) {
-      const text = await readCappedText(upstream, [apiKey], 16_384);
+      const text = await readCappedText(upstream, [apiKey], LIMITS.errorBytes);
       throw failFromUpstream(upstream.status, text, [apiKey]);
     }
-    return passThrough(upstream, [apiKey]);
+    try {
+      requireUpstreamType(upstream, "application/json");
+    } catch (err) {
+      await upstream.body?.cancel().catch(() => undefined);
+      throw err;
+    }
+    const text = await readCappedText(upstream, [apiKey], LIMITS.responseBytes);
+    return jsonBody(validateModelsPayload(text), [apiKey]);
   });
 }
 
-async function compare(env: DemoEnv, request: Request): Promise<Response> {
-  requireProxyGate(request);
+async function compare(env: Env, request: Request): Promise<Response> {
+  await requireProxyGate(request, env);
   await limit(env.COMPARE_LIMIT, request, "compare requests");
-  const apiKey = readApiKey(request);
   const body = await readJson(request);
-  await requireTurnstile(env, request, body.turnstileToken);
-  const secret = env.IP_HASH_SECRET?.trim() ?? (isLocalRequest(request) ? "local-byok-ip-hash-not-for-production" : "");
-  const ipKey = await hashIpKey(clientIp(request), secret);
-  await claimCompare(env, ipKey);
-  const target = await resolveTarget(readBaseUrl(body), "/chat/completions", assessOptions(request));
+  const apiKey = readApiKey(body);
+  const target = await resolveTarget(readBaseUrl(body), "/chat/completions", assessOptions(env));
   const model = parseModel(body.model);
   const messages = parseMessages(body.messages, parseSystem(body.system));
   const temperature = parseTemperature(body.temperature);
   const maxTokens = parseMaxTokens(body.max_tokens, LIMITS.compareMaxTokens);
+  await requireTurnstile(env, request, body.turnstileToken, "compare");
+  const secret = env.IP_HASH_SECRET?.trim() ?? (isLocalEnv(env) ? "local-byok-ip-hash-not-for-production" : "");
+  const ipKey = await hashIpKey(clientIp(request), secret);
+  await claimCompare(env, ipKey);
   const encoder = new TextEncoder();
+  const ac = new AbortController();
+  const stop = () => ac.abort();
+  request.signal.addEventListener("abort", stop);
 
   const stream = new ReadableStream({
     async start(controller) {
-      const send = (event: string, data: unknown) => controller.enqueue(encoder.encode(encodeSse(event, data)));
+      const send = (event: string, data: unknown) => {
+        try {
+          controller.enqueue(encoder.encode(encodeSse(event, data)));
+        } catch {
+          /* closed */
+        }
+      };
       const yours = (async (): Promise<SideMetrics> => {
         const started = Date.now();
         try {
@@ -149,12 +205,19 @@ async function compare(env: DemoEnv, request: Request): Promise<Response> {
             apiKey,
             body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens, stream: true }),
             accept: "text/event-stream",
+            signal: ac.signal,
           });
           if (upstream.status >= 400) {
-            const text = await readCappedText(upstream, [apiKey], 8_192);
+            const text = await readCappedText(upstream, [apiKey], LIMITS.errorBytes);
             throw failFromUpstream(upstream.status, text, [apiKey]);
           }
-          const stats = await consumeSse(upstream.body, [apiKey], started);
+          try {
+            requireUpstreamType(upstream, "text/event-stream");
+          } catch (err) {
+            await upstream.body?.cancel().catch(() => undefined);
+            throw err;
+          }
+          const stats = await consumeSse(upstream.body, [apiKey], started, ac.signal);
           return {
             side: "yours",
             source: model,
@@ -173,7 +236,7 @@ async function compare(env: DemoEnv, request: Request): Promise<Response> {
       const ours = (async (): Promise<SideMetrics> => {
         const started = Date.now();
         try {
-          const stats = await runWorkersAi(env, messages, maxTokens);
+          const stats = await runWorkersAi(env, messages, maxTokens, ac.signal);
           return {
             side: "ours",
             source: stats.source,
@@ -183,7 +246,7 @@ async function compare(env: DemoEnv, request: Request): Promise<Response> {
             text: stats.text,
             error: null,
           };
-        } catch (err) {
+        } catch {
           return {
             side: "ours",
             source: env.AI_MODEL,
@@ -191,48 +254,64 @@ async function compare(env: DemoEnv, request: Request): Promise<Response> {
             ttftMs: null,
             tokens: null,
             text: "",
-            error: err instanceof Error ? err.message : "Workers AI failed.",
+            error: "Workers AI failed.",
           };
         }
       })();
 
-      const [yoursResult, oursResult] = await Promise.all([yours, ours]);
-      send("yours", yoursResult);
-      send("ours", oursResult);
-      send("done", { prompt: promptFrom(messages) });
-      controller.close();
+      try {
+        const sendSide = async (pending: Promise<SideMetrics>) => {
+          const result = await pending;
+          send(result.side, result);
+        };
+        await Promise.all([sendSide(yours), sendSide(ours)]);
+        send("done", { prompt: promptFrom(messages) });
+        controller.close();
+      } catch {
+        send("error", { message: "Compare failed." });
+        controller.close();
+      } finally {
+        request.signal.removeEventListener("abort", stop);
+      }
+    },
+    cancel() {
+      ac.abort();
+      request.signal.removeEventListener("abort", stop);
     },
   });
 
-  return new Response(stream, {
-    headers: {
-      "content-type": "text/event-stream; charset=utf-8",
-      "cache-control": "no-store",
-      "x-content-type-options": "nosniff",
-    },
-  });
+  return new Response(stream, { headers: apiHeaders("sse") });
 }
 
-async function capabilities(env: DemoEnv, request: Request): Promise<Response> {
-  requireProxyGate(request);
+async function capabilities(env: Env, request: Request): Promise<Response> {
+  await requireProxyGate(request, env);
   await limit(env.MODELS_LIMIT, request, "capability probes");
-  const apiKey = readApiKey(request);
   const body = await readJson(request);
-  const target = await resolveTarget(readBaseUrl(body), "/chat/completions", assessOptions(request));
+  const apiKey = readApiKey(body);
+  const target = await resolveTarget(readBaseUrl(body), "/chat/completions", assessOptions(env));
   const model = parseModel(body.model);
   const messages = parseMessages(body.messages ?? [{ role: "user", content: "Reply with the word ok." }], parseSystem(body.system));
   const results = await withStream(clientIp(request), () => runCapabilities({ url: target.url, apiKey, model, messages }));
   return json({ results });
 }
 
-export async function handleApi(request: Request, env: DemoEnv, path: string): Promise<Response> {
+async function mintSession(env: Env, request: Request): Promise<Response> {
+  assertSameOrigin(request);
+  const body = await readJson(request);
+  await requireTurnstile(env, request, body.turnstileToken, "session");
+  const minted = await mintSignedSession(env, request);
+  return finish(json({ ok: true }), minted.cookie);
+}
+
+export async function handleApi(request: Request, env: Env, path: string): Promise<Response> {
   const method = request.method;
-  if (method === "OPTIONS") return new Response(null, { status: 204, headers: { "cache-control": "no-store" } });
+  if (method === "OPTIONS") return new Response(null, { status: 204, headers: apiHeaders("json") });
 
   if (path === "/api/health" && method === "GET") {
-    return json({ ok: true, model: env.AI_MODEL, ai: aiStatus(env, request) });
+    return json({ ok: true, model: env.AI_MODEL, ai: aiStatus(env) });
   }
-  if (path === "/api/config" && method === "GET") return json(await config(env, request));
+  if (path === "/api/config" && method === "GET") return json(await config(env));
+  if (path === "/api/session" && method === "POST") return mintSession(env, request);
 
   if (path === "/api/proxy/chat" && method === "POST") return visitorChat(env, request, false);
   if (path === "/api/proxy/chat/stream" && method === "POST") return visitorChat(env, request, true);
@@ -242,5 +321,3 @@ export async function handleApi(request: Request, env: DemoEnv, path: string): P
 
   throw new HttpError(404, "not_found", "Unknown API route.");
 }
-
-export { secretsFrom };

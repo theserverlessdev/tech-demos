@@ -25,7 +25,7 @@ async function chat(req: Request): Promise<Response> {
   }
   const content = Array.isArray(body.messages)
     ? body.messages.some((message) => Array.isArray(message.content) && message.content.some((part) => typeof part === "object" && part && "image_url" in part))
-      ? "I see a tiny image."
+      ? "red"
       : "Hello from the mock OpenAI-compatible server."
     : "Hello from the mock OpenAI-compatible server.";
 

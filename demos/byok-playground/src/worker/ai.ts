@@ -1,6 +1,6 @@
 import { LIMITS } from "../shared/limits";
 import type { ChatMessage } from "../shared/types";
-import type { DemoEnv } from "./env";
+import { HttpError } from "./errors";
 import { consumeSse, type StreamStats } from "./stream";
 
 const STUB_TEXT = "Workers AI is stubbed in local wrangler. This labelled reply is not a model.";
@@ -23,11 +23,17 @@ function stubStream(): ReadableStream<Uint8Array> {
   });
 }
 
-export async function runWorkersAi(env: DemoEnv, messages: ChatMessage[], maxTokens: number): Promise<StreamStats & { source: string }> {
+export async function runWorkersAi(
+  env: Env,
+  messages: ChatMessage[],
+  maxTokens: number,
+  signal?: AbortSignal,
+): Promise<StreamStats & { source: string }> {
   const started = Date.now();
   const cap = Math.min(Math.max(maxTokens, LIMITS.maxTokensMin), LIMITS.compareMaxTokens);
+  if (signal?.aborted) throw new HttpError(499, "cancelled", "Compare was cancelled.");
   if (!env.AI) {
-    const stats = await consumeSse(stubStream(), [], started);
+    const stats = await consumeSse(stubStream(), [], started, signal);
     return { ...stats, source: "workers-ai-stub" };
   }
   try {
@@ -37,21 +43,10 @@ export async function runWorkersAi(env: DemoEnv, messages: ChatMessage[], maxTok
       temperature: 0.2,
       stream: true,
     })) as unknown as ReadableStream<Uint8Array>;
-    const stats = await consumeSse(stream, [], started);
+    const stats = await consumeSse(stream, [], started, signal);
     return { ...stats, source: env.AI_MODEL };
-  } catch {
-    const out = (await env.AI.run(env.AI_MODEL, {
-      messages,
-      max_tokens: cap,
-      temperature: 0.2,
-    })) as { response?: string; choices?: { message?: { content?: string } }[] };
-    const text = typeof out.response === "string" ? out.response : (out.choices?.[0]?.message?.content ?? "");
-    return {
-      text: text.trim(),
-      ttftMs: Date.now() - started,
-      tokens: null,
-      latencyMs: Date.now() - started,
-      source: env.AI_MODEL,
-    };
+  } catch (err) {
+    if (err instanceof HttpError) throw err;
+    throw new HttpError(502, "workers_ai", "Workers AI failed.");
   }
 }

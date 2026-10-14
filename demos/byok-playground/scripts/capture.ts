@@ -4,7 +4,7 @@ import { mkdir } from "node:fs/promises";
 
 const base = (process.argv.find((arg) => arg.startsWith("http")) ?? "http://127.0.0.1:8787").replace(/\/$/, "");
 const out = new URL("../artifacts/", import.meta.url).pathname;
-const url = base.includes("/demos/byok-playground") ? `${base}/` : `${base}/demos/byok-playground/`;
+const url = `${base}/`;
 
 async function fillEndpoint(page: Page) {
   await page.locator("#api-key").fill("sk-mock-local-key");

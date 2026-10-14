@@ -216,7 +216,7 @@ const byokPlaygroundFallbackSource = `export default {
   fetch(request) {
     const url = new URL(request.url);
     const rest = url.pathname.replace(/^\\/demos\\/byok-playground/, "") || "/";
-    return Response.redirect("https://byok-playground.tech-demos.theserverless.dev" + rest + url.search, 302);
+    return Response.redirect("https://byok-playground.tech-demos.theserverless.dev" + rest + url.search, 308);
   },
 };
 `;
@@ -225,14 +225,14 @@ export const demos: DemoEntry[] = [
   {
     slug: "byok-playground",
     title: "BYOK playground",
-    description: "Paste an OpenAI-compatible key and talk to your model. The Worker never stores it.",
+    description: "Paste an OpenAI-compatible key and talk to your model. The Worker does not store it.",
     demonstrates:
-      "A Worker can proxy a visitor’s OpenAI-compatible key without becoming an open proxy: the key stays in the browser, SSRF is blocked, and Workers AI comparison is Turnstile-gated with a daily budget.",
+      "Not a general-purpose proxy: only /models and /chat/completions, https:443, no redirects, rate-limited. The key stays in the browser, SSRF is blocked, DNS is best-effort, and Workers AI comparison is Turnstile-gated with a daily budget.",
     capabilities: [
       "Paste a key, an https base URL, and a model id, then stream a chat",
       "List models from GET /models on that endpoint",
       "Send the same prompt to your model and to Workers AI; read latency, time to first token, and tokens",
-      "Probe streaming, tools, JSON schema, and vision — pass, fail, or unsupported, with the raw error",
+      "Probe streaming, tools, JSON schema, and vision — pass only with evidence, otherwise fail, unsupported, or inconclusive",
     ],
     useCases: [
       "A product that accepts a customer’s OpenAI-compatible key without writing it to disk",
