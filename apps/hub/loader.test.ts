@@ -27,10 +27,14 @@ test("forwardToLoader strips cookie and authorization and sets x-dynamic-worker"
 });
 
 test("wrapDemoResponse sets sandbox CSP, nosniff, and the loader id", async () => {
-  const res = wrapDemoResponse(new Response("ok", { headers: { "content-type": "text/html" } }), "hello-dynamic:abc");
+  const res = wrapDemoResponse(
+    new Response("ok", { headers: { "content-type": "text/html", "set-cookie": "sid=abc" } }),
+    "hello-dynamic:abc",
+  );
   expect(res.headers.get("content-security-policy")).toBe(DEMO_RESPONSE_CSP);
   expect(res.headers.get("x-content-type-options")).toBe("nosniff");
   expect(res.headers.get("x-dynamic-worker")).toBe("hello-dynamic:abc");
+  expect(res.headers.get("set-cookie")).toBeNull();
   expect(await res.text()).toBe("ok");
 });
 

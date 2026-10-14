@@ -88,7 +88,8 @@ async function runDemo(request: Request, env: Env, slug: string): Promise<Respon
 
     const res = await worker.getEntrypoint().fetch(forwardToLoader(request, id));
     return wrapDemoResponse(res, id);
-  } catch {
+  } catch (err) {
+    console.error(err);
     return new Response("Dynamic Worker failed", { status: 502, headers: TEXT_HEADERS });
   }
 }

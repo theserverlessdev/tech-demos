@@ -174,7 +174,7 @@ export const demos: DemoEntry[] = [
     capabilities: [
       "Hold to talk, type, or tap a suggested turn",
       "Save a fact, a list item, or a timer, then refresh and see them return",
-      "Ask it to change the volume; the brain calls the MCP server in the desk",
+      "Ask it to change the volume; the brain calls an MCP-style JSON-RPC tool server in the desk",
       "Ask it to forget everything and confirm or cancel within 30 seconds",
       "Open the console for the SQLite transcript, vector scores, and the turn trace",
     ],
@@ -319,11 +319,11 @@ export const demos: DemoEntry[] = [
     title: "Clef Gate",
     description: "A desk where every sandboxed tool call stops for a Clef decision.",
     demonstrates:
-      "Every tool call is a choice from Clef or Clef-flash: allow, deny, or ask-human, with probabilities. Ask-human and low-confidence calls wait in the session Durable Object until you approve or deny. The five tools are fakes — nothing is sent, fetched, or deleted — and each verdict is written to D1.",
+      "Every tool call is a choice from Clef or Clef-flash: allow, deny, or ask-human, with probabilities. Ask-human and low-confidence calls wait in the session Durable Object until you approve or deny, or ten minutes pass. The five tools are fakes — nothing is sent, fetched, or deleted — and each verdict is written to D1.",
     capabilities: [
       "Ask the desk to use one of the five sandboxed tools",
       "Read the verdict and the probabilities",
-      "Approve or deny a paused call, or ten minutes pass",
+      "Approve or deny a paused call; it resumes in the same Durable Object, or ten minutes pass",
       "Open the audit list for the tool, the decision, and the model",
       "See that send, delete, and SQL tools only describe what they would have done",
     ],
@@ -405,7 +405,7 @@ export const demos: DemoEntry[] = [
     title: "Memory repo",
     description: "An agent's memory is markdown in a git repo. Facts and dreams are commits you can diff.",
     demonstrates:
-      "One ChatAgent Durable Object per thread recalls an FTS5 index, then Workers AI replies. One MemoryAgent per visitor owns an Artifacts git repo of markdown. Every memory write is a commit, and a dream alarm consolidates the files into another commit. If the model output is unusable, nothing is committed. The repo and rows are deleted 24 h after the last activity.",
+      "One ChatAgent Durable Object per visitor recalls an FTS5 index, then Workers AI replies. One MemoryAgent per visitor owns an Artifacts git repo of markdown. Every memory write is a commit, and a dream alarm consolidates the files into another commit. If the model output is unusable, nothing is committed. The repo and rows are deleted 24 h after the last activity.",
     capabilities: [
       "Pass Turnstile and open a memory repo for this browser",
       "State a name, preference, or project and see the commit",

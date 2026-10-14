@@ -34,7 +34,7 @@ and register a **fallback** in `apps/hub/src/registry.ts` via `redirectSource(sl
 ```bash
 bun install
 bun run dev      # hub at http://127.0.0.1:8787
-bun test         # hub + shared + demo helper tests
+bun test         # hub + shared + demo helpers (hello-dynamic is a second bun test run)
 bun run deploy   # wrangler deploy hub (owner only)
 ```
 

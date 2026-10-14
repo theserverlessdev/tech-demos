@@ -1,5 +1,3 @@
-/// <reference lib="dom" />
-
 /** Strip a `/demos/<slug>` prefix only when the next char is `/` or end-of-string. */
 export function rewriteDemoPath(pathname: string, slug: string): string {
   const prefix = `/demos/${slug}`;

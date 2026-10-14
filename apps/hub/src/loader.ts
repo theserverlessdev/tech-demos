@@ -28,6 +28,7 @@ export function forwardToLoader(request: Request, loaderId: string): Request {
 
 export function wrapDemoResponse(response: Response, loaderId: string): Response {
   const headers = new Headers(response.headers);
+  headers.delete("set-cookie");
   headers.set("content-security-policy", DEMO_RESPONSE_CSP);
   headers.set("x-content-type-options", "nosniff");
   headers.set("x-dynamic-worker", loaderId);
