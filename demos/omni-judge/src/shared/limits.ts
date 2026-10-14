@@ -9,6 +9,9 @@ export const LIMITS = {
   maxImageBytes: 2 * 1024 * 1024,
   /** Width times height, read from the image header. */
   maxImagePixels: 16_000_000,
+  /** The classic vision call sends the raw image array, so it is capped tighter than omni. */
+  maxCompareImageBytes: 512 * 1024,
+  maxCompareImagePixels: 2_000_000,
   maxAudioBytes: Math.floor(1.5 * 1024 * 1024),
   maxAudioMs: 15_000,
   maxVideoBytes: 6 * 1024 * 1024,

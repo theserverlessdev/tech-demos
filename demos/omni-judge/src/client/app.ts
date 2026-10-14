@@ -89,9 +89,14 @@ function guessKind(file: File): "image" | "audio" | "video" | null {
   return null;
 }
 
+function enableJudge(): void {
+  $<HTMLButtonElement>("judge").disabled = false;
+}
+
 function selectSample(id: SampleId): void {
   stopTracks();
   picked = { source: "sample", sampleId: id };
+  enableJudge();
   const sample = SAMPLES[id];
   const kind = id === "clip" ? "video" : id === "gallery" || id === "package" ? "image" : "audio";
   showPreview(api(`samples/${sample.file}`), kind);
@@ -106,6 +111,12 @@ function selectSample(id: SampleId): void {
   }
 }
 
+function stemName(name: string): string {
+  const trimmed = name.trim() || "photo";
+  const dot = trimmed.lastIndexOf(".");
+  return dot > 0 ? trimmed.slice(0, dot) : trimmed;
+}
+
 async function downscaleImage(file: File): Promise<File> {
   const bitmap = await createImageBitmap(file);
   try {
@@ -118,10 +129,28 @@ async function downscaleImage(file: File): Promise<File> {
     canvas.height = height;
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("canvas");
+    ctx.clearRect(0, 0, width, height);
+    ctx.drawImage(bitmap, 0, 0, width, height);
+    const pixels = ctx.getImageData(0, 0, width, height).data;
+    let hasAlpha = false;
+    for (let i = 3; i < pixels.length; i += 4) {
+      if ((pixels[i] ?? 255) < 255) {
+        hasAlpha = true;
+        break;
+      }
+    }
+    const stem = stemName(file.name);
+    if (hasAlpha) {
+      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+      if (!blob) throw new Error("blob");
+      return new File([blob], `${stem}.png`, { type: "image/png" });
+    }
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, width, height);
     ctx.drawImage(bitmap, 0, 0, width, height);
     const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85));
     if (!blob) throw new Error("blob");
-    return new File([blob], "photo.jpg", { type: "image/jpeg" });
+    return new File([blob], `${stem}.jpg`, { type: "image/jpeg" });
   } finally {
     bitmap.close();
   }
@@ -143,6 +172,7 @@ async function selectFile(file: File): Promise<void> {
     }
   }
   picked = { source: "file", file: chosen, note: chosen.name || "Upload" };
+  enableJudge();
   showPreview(URL.createObjectURL(chosen), kind);
   setText(mediaNote, `${chosen.name || "Upload"} · ${(chosen.size / 1024).toFixed(0)} KB. The server checks the bytes.`);
   permEl.hidden = true;
@@ -403,11 +433,38 @@ function renderHistory(items: JudgmentView[]): void {
     button.addEventListener("click", () => {
       const compare = items.find((other) => other.kind === "compare" && other.pairId !== null && other.pairId === item.pairId);
       renderOutcome(item, compare ?? null);
-      if (item.mediaId) showPreview(api(`api/media/${item.mediaId}`), item.modality);
-      else if (item.sampleId && Object.hasOwn(SAMPLES, item.sampleId)) selectSample(item.sampleId as SampleId);
+      picked = null;
+      $<HTMLButtonElement>("judge").disabled = true;
+      void restoreHistoryPick(item);
     });
     li.append(button);
     historyEl.append(li);
+  }
+}
+
+async function restoreHistoryPick(item: JudgmentView): Promise<void> {
+  if (item.sampleId && Object.hasOwn(SAMPLES, item.sampleId)) {
+    selectSample(item.sampleId as SampleId);
+    return;
+  }
+  if (!item.mediaId) return;
+  try {
+    const res = await fetch(api(`api/media/${item.mediaId}`));
+    if (!res.ok) throw new Error("media");
+    const blob = await res.blob();
+    const type = blob.type || (item.modality === "image" ? "image/jpeg" : item.modality === "audio" ? "audio/wav" : "video/webm");
+    const ext = type.includes("png") ? "png" : type.includes("webp") ? "webp" : type.includes("wav") ? "wav" : type.includes("mpeg") ? "mp3" : type.includes("mp4") ? "mp4" : "webm";
+    const file = new File([blob], `${stemName(item.label || "upload")}.${ext}`, { type });
+    picked = { source: "file", file, note: item.label || file.name };
+    enableJudge();
+    showPreview(URL.createObjectURL(file), item.modality);
+    setText(mediaNote, `${item.label}. The server checks the bytes.`);
+    markSamples(null);
+    showError("");
+  } catch {
+    picked = null;
+    $<HTMLButtonElement>("judge").disabled = true;
+    showError("That file is no longer available. Choose a sample or a file before judging.");
   }
 }
 
@@ -541,7 +598,7 @@ async function grabFrame(video: HTMLVideoElement): Promise<Blob | null> {
 async function startCapture(kind: "audio" | "video" | "photo"): Promise<void> {
   showError("");
   permEl.hidden = true;
-  if (kind === "photo" && navigator.maxTouchPoints > 0) {
+  if (kind === "photo" && window.matchMedia("(pointer: coarse)").matches) {
     $<HTMLInputElement>("snap-cam").click();
     return;
   }
@@ -665,7 +722,26 @@ async function finishRecording(kind: "audio" | "video", mime: string): Promise<v
   }
 }
 
+let turnstileTimer = 0;
+
+function reinjectTurnstile(force = false): void {
+  if (typeof turnstile !== "undefined") return;
+  const scripts = document.querySelectorAll("script[src*='challenges.cloudflare.com/turnstile']");
+  if (force) {
+    for (const node of scripts) node.remove();
+  } else if (scripts.length > 0) {
+    return;
+  }
+  const script = document.createElement("script");
+  script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+  script.async = true;
+  script.dataset.turnstileRetry = "1";
+  document.head.append(script);
+}
+
 function showTurnstileFailure(host: HTMLElement): void {
+  if (turnstileTimer) window.clearInterval(turnstileTimer);
+  turnstileTimer = 0;
   widgetId = "";
   host.replaceChildren();
   const note = document.createElement("p");
@@ -676,6 +752,7 @@ function showTurnstileFailure(host: HTMLElement): void {
   retry.type = "button";
   setText(retry, "Retry");
   retry.addEventListener("click", () => {
+    reinjectTurnstile(true);
     host.replaceChildren();
     void mountTurnstile();
   });
@@ -683,37 +760,63 @@ function showTurnstileFailure(host: HTMLElement): void {
 }
 
 async function mountTurnstile(): Promise<void> {
-  const res = await fetch(api("api/session"));
+  const host = $("turnstile");
+  let res: Response;
+  try {
+    res = await fetch(api("api/session"));
+  } catch {
+    showTurnstileFailure(host);
+    return;
+  }
   if (!res.ok) {
-    showError("The session could not be loaded.");
+    showTurnstileFailure(host);
     return;
   }
   session = (await res.json()) as SessionPayload;
   testNote.hidden = !(session.stub || session.testWidget);
-  const host = $("turnstile");
   if (!session.siteKey) {
     setText(host, "Turnstile site key is not set.");
     return;
   }
+  if (typeof turnstile === "undefined") reinjectTurnstile();
   const render = () => {
-    if (widgetId || typeof turnstile === "undefined") return;
-    widgetId = turnstile.render(host, {
-      sitekey: session!.siteKey,
-      action: "judge",
-      size: window.innerWidth < 360 ? "compact" : "flexible",
-      theme: document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark",
-    });
+    if (widgetId) return;
+    if (typeof turnstile === "undefined") {
+      reinjectTurnstile();
+      return;
+    }
+    try {
+      widgetId = turnstile.render(host, {
+        sitekey: session!.siteKey,
+        action: "judge",
+        size: window.innerWidth < 360 ? "compact" : "flexible",
+        theme: document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark",
+        "error-callback": () => showTurnstileFailure(host),
+        "expired-callback": () => {
+          try {
+            if (widgetId && typeof turnstile !== "undefined") turnstile.reset(widgetId);
+          } catch {
+            showTurnstileFailure(host);
+          }
+        },
+      });
+    } catch {
+      showTurnstileFailure(host);
+    }
   };
   render();
   const started = Date.now();
-  const timer = window.setInterval(() => {
+  if (turnstileTimer) window.clearInterval(turnstileTimer);
+  turnstileTimer = window.setInterval(() => {
     render();
     if (widgetId) {
-      window.clearInterval(timer);
+      window.clearInterval(turnstileTimer);
+      turnstileTimer = 0;
       return;
     }
     if (Date.now() - started >= 30_000) {
-      window.clearInterval(timer);
+      window.clearInterval(turnstileTimer);
+      turnstileTimer = 0;
       showTurnstileFailure(host);
     }
   }, 200);

@@ -88,11 +88,15 @@ describe("clef-omni request and response", () => {
     expect("images" in body).toBe(false);
   });
 
-  test("base64 is chunked and reused, and vision sends a byte array", () => {
+  test("base64 uses the view's own bytes and vision sends a byte array", () => {
     const bytes = new Uint8Array(30_000);
     for (let i = 0; i < bytes.length; i++) bytes[i] = i & 0xff;
     const encoded = toBase64(bytes);
     expect(encoded).toBe(Buffer.from(bytes).toString("base64"));
+    const parent = Uint8Array.of(9, 8, 7, 6, 5, 4);
+    const view = parent.subarray(1, 4);
+    expect(toBase64(view)).toBe(Buffer.from(view.buffer, view.byteOffset, view.length).toString("base64"));
+    expect(toBase64(view)).not.toBe(Buffer.from(parent).toString("base64"));
     const media = { kind: "audio" as const, contentType: "audio/wav", bytes, durationMs: 1000, encoded };
     const omni = buildOmniRequest(media, questions);
     expect(buildWhisperRequest(media).audio).toBe(encoded);

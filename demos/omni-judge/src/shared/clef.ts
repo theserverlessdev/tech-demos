@@ -22,17 +22,13 @@ export type OmniRequest = {
   videos?: string[];
 };
 
-/** Encode in 3-byte groups so each btoa chunk is valid on its own. Avoids one giant binary string. */
+declare const Buffer: {
+  from(buffer: ArrayBufferLike, byteOffset: number, length: number): { toString(encoding: "base64"): string };
+};
+
+/** nodejs_compat Buffer, sliced to this view so a subarray does not encode its parent. */
 export function toBase64(bytes: Uint8Array): string {
-  const step = 3 * 8192;
-  let out = "";
-  for (let i = 0; i < bytes.length; i += step) {
-    const slice = bytes.subarray(i, Math.min(bytes.length, i + step));
-    let binary = "";
-    for (let j = 0; j < slice.length; j++) binary += String.fromCharCode(slice[j] ?? 0);
-    out += btoa(binary);
-  }
-  return out;
+  return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.length).toString("base64");
 }
 
 export function mediaBase64(media: OmniMedia): string {

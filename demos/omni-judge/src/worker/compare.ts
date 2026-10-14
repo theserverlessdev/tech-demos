@@ -1,5 +1,6 @@
 import { buildClefRequest, mediaBase64, parseOmniResponse, stubAnswers, type OmniMedia } from "../shared/clef";
 import { LIMITS, PRICES } from "../shared/limits";
+import { compareImageBlock } from "../shared/media";
 import type { ChoiceQuestion, CostNote, JudgmentResult } from "../shared/types";
 import { runModel } from "./judge";
 import { environmentName } from "./turnstile";
@@ -88,6 +89,10 @@ function sumCosts(parts: CostNote[]): CostNote {
 
 export async function runCompare(env: Env, media: OmniMedia, questions: ChoiceQuestion[], seed: string): Promise<{ ok: true; result: JudgmentResult } | { ok: false; message: string }> {
   if (media.kind === "video") return { ok: false, message: VIDEO_COMPARE_REASON };
+  if (media.kind === "image") {
+    const blocked = compareImageBlock(media.bytes);
+    if (blocked) return { ok: false, message: blocked };
+  }
   if (environmentName(env) === "local") {
     const started = Date.now();
     const answers = stubAnswers(questions, `${seed}:chain`);

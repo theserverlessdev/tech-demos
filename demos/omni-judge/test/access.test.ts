@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { handleApi, HttpError } from "../src/worker/api";
-import { finishJudgment, insertJudgment, insertMedia } from "../src/worker/db";
+import { failJudgment, finishJudgment, getJudgment, insertJudgment, insertMedia } from "../src/worker/db";
 import type { JudgmentResult } from "../src/shared/types";
 
 const OWNER = "a".repeat(32);
@@ -58,23 +58,29 @@ function apiEnv(db: Database, objects: Map<string, Uint8Array>): Env {
     JUDGE_LIMIT: { limit: async () => ({ success: true }) },
     COMPARE_LIMIT: { limit: async () => ({ success: true }) },
     BUCKET: {
-      get: async (key: string, options?: { range?: Headers }) => {
+      head: async (key: string) => {
         const stored = objects.get(key);
         if (!stored) return null;
-        const header = options?.range instanceof Headers ? options.range.get("range") : null;
+        return { key, size: stored.length, httpEtag: '"etag"', uploaded: new Date() };
+      },
+      get: async (key: string, options?: { range?: { offset?: number; length?: number; suffix?: number } }) => {
+        const stored = objects.get(key);
+        if (!stored) return null;
+        const range = options?.range;
         let offset = 0;
         let length = stored.length;
-        if (header?.startsWith("bytes=")) {
-          const [startRaw, endRaw] = header.slice(6).split("-");
-          offset = Number(startRaw || 0);
-          const end = endRaw ? Number(endRaw) : stored.length - 1;
-          length = end - offset + 1;
+        if (range && typeof range.suffix === "number") {
+          length = Math.min(range.suffix, stored.length);
+          offset = stored.length - length;
+        } else if (range) {
+          offset = range.offset ?? 0;
+          length = range.length ?? stored.length - offset;
         }
         const slice = stored.subarray(offset, offset + length);
         return {
           size: stored.length,
           httpEtag: '"etag"',
-          range: header ? { offset, length: slice.length } : undefined,
+          range: range ? { offset, length: slice.length } : undefined,
           body: new ReadableStream<Uint8Array>({
             start(controller) {
               controller.enqueue(slice);
@@ -152,6 +158,9 @@ describe("owner-only access", () => {
     expect(ownFile.headers.get("x-robots-tag")).toBe("noindex");
     expect(ownFile.headers.get("content-security-policy")).toBe("sandbox; default-src 'none'");
     expect(ownFile.headers.get("content-type")).toBe("image/png");
+    const maxAge = Number((ownFile.headers.get("cache-control") ?? "").split("max-age=")[1]);
+    expect(maxAge).toBeGreaterThan(80_000);
+    expect(maxAge).toBeLessThanOrEqual(86_400);
 
     const foreignFile = await call(env, `/api/media/${MEDIA}`, OTHER);
     expect(foreignFile.status).toBe(404);
@@ -228,5 +237,102 @@ describe("owner-only access", () => {
     const listed = await call(env, "/api/judgments", OWNER);
     const list = (await listed.json()) as { judgments: { id: string }[] };
     expect(list.judgments.some((row) => row.id === oldJudgment)).toBe(false);
+  });
+
+  test("a bad range is 416, a failed precondition is 412, and HEAD has no body", async () => {
+    const db = memoryDb();
+    const objects = new Map<string, Uint8Array>([["media/" + MEDIA, PNG]]);
+    const env = apiEnv(db, objects);
+    const now = Date.now();
+    await insertMedia(env, {
+      id: MEDIA,
+      visitor_id: OWNER,
+      kind: "image",
+      content_type: "image/png",
+      bytes: PNG.length,
+      duration_ms: null,
+      r2_key: `media/${MEDIA}`,
+      now,
+    });
+    const headers = { cookie: `__Host-oj_vid=${OWNER}` };
+    const bad = await handleApi(
+      new Request(`http://127.0.0.1/api/media/${MEDIA}`, { headers: { ...headers, range: "bytes=nope" } }),
+      env,
+      `/api/media/${MEDIA}`,
+    );
+    expect(bad.status).toBe(416);
+    expect(bad.headers.get("content-range")).toBe(`bytes */${PNG.length}`);
+    const unsatisfiable = await handleApi(
+      new Request(`http://127.0.0.1/api/media/${MEDIA}`, { headers: { ...headers, range: `bytes=${PNG.length}-` } }),
+      env,
+      `/api/media/${MEDIA}`,
+    );
+    expect(unsatisfiable.status).toBe(416);
+    const precondition = await handleApi(
+      new Request(`http://127.0.0.1/api/media/${MEDIA}`, { headers: { ...headers, "if-match": '"nope"' } }),
+      env,
+      `/api/media/${MEDIA}`,
+    );
+    expect(precondition.status).toBe(412);
+    const stale = await handleApi(
+      new Request(`http://127.0.0.1/api/media/${MEDIA}`, { headers: { ...headers, "if-unmodified-since": "Thu, 01 Jan 1970 00:00:00 GMT" } }),
+      env,
+      `/api/media/${MEDIA}`,
+    );
+    expect(stale.status).toBe(412);
+    const head = await handleApi(
+      new Request(`http://127.0.0.1/api/media/${MEDIA}`, { method: "HEAD", headers }),
+      env,
+      `/api/media/${MEDIA}`,
+    );
+    expect(head.status).toBe(200);
+    expect(head.headers.get("content-type")).toBe("image/png");
+    expect(head.headers.get("accept-ranges")).toBe("bytes");
+    expect(head.headers.get("content-length")).toBe(String(PNG.length));
+    expect(await head.arrayBuffer()).toHaveLength(0);
+  });
+
+  test("a storage failure clears media_id and a model failure keeps it", async () => {
+    const db = memoryDb();
+    const env = apiEnv(db, new Map());
+    const now = Date.now();
+    expect(
+      await insertJudgment(env, {
+        id: JUDGMENT,
+        visitorId: OWNER,
+        mediaId: MEDIA,
+        sampleId: null,
+        pairId: "pair-1",
+        kind: "omni",
+        modality: "image",
+        label: "Upload",
+        ipKey: "hashed",
+        questionsJson: "[]",
+        now,
+      }),
+    ).toBe(true);
+    await failJudgment(env, JUDGMENT, "The file could not be stored.", { clearMedia: true });
+    const cleared = await getJudgment(env, JUDGMENT, now);
+    expect(cleared?.status).toBe("error");
+    expect(cleared?.media_id).toBeNull();
+    const other = "1".repeat(32);
+    expect(
+      await insertJudgment(env, {
+        id: other,
+        visitorId: OWNER,
+        mediaId: MEDIA,
+        sampleId: null,
+        pairId: "pair-2",
+        kind: "omni",
+        modality: "image",
+        label: "Upload",
+        ipKey: "hashed",
+        questionsJson: "[]",
+        now,
+      }),
+    ).toBe(true);
+    await failJudgment(env, other, "The model did not answer.");
+    const kept = await getJudgment(env, other, now);
+    expect(kept?.media_id).toBe(MEDIA);
   });
 });

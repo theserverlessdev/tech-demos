@@ -1,5 +1,5 @@
 import { LIMITS } from "../shared/limits";
-import { sniffMedia } from "../shared/media";
+import { compareImageBlock, sniffMedia } from "../shared/media";
 import { SAMPLES, validateQuestions } from "../shared/questions";
 import type { JudgmentView, SampleId, SessionPayload } from "../shared/types";
 import { runCompare, VIDEO_COMPARE_REASON } from "./compare";
@@ -221,10 +221,11 @@ function ownedJudgment(row: JudgmentRow | null, visitorId: string): JudgmentRow 
   return row;
 }
 
-function fileHeaders(contentType: string): Headers {
+function fileHeaders(contentType: string, expiresAt: number, now: number): Headers {
   const headers = new Headers();
   headers.set("content-type", contentType);
-  headers.set("cache-control", "private, max-age=3600");
+  const remain = Math.max(0, Math.floor((expiresAt - now) / 1000));
+  headers.set("cache-control", remain > 0 ? `private, max-age=${remain}` : "no-store");
   headers.set("x-content-type-options", "nosniff");
   headers.set("cross-origin-resource-policy", "same-origin");
   headers.set("x-robots-tag", "noindex");
@@ -237,15 +238,48 @@ function isStoredBody(object: R2Object | R2ObjectBody): object is R2ObjectBody {
   return "body" in object && object.body != null;
 }
 
-function contentRange(size: number, range: { offset?: number; length?: number; suffix?: number }): string {
-  if (range.suffix !== undefined && range.offset === undefined) {
-    const length = Math.min(range.suffix, size);
-    const start = Math.max(0, size - length);
-    return `bytes ${start}-${Math.max(start, size - 1)}/${size}`;
+type ParsedRange =
+  | { kind: "none" }
+  | { kind: "bad" }
+  | { kind: "span"; offset: number; length: number }
+  | { kind: "suffix"; suffix: number };
+
+function parseByteRange(header: string | null, size: number): ParsedRange {
+  if (header === null || header === "") return { kind: "none" };
+  const match = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
+  if (!match || size < 0) return { kind: "bad" };
+  const startRaw = match[1] ?? "";
+  const endRaw = match[2] ?? "";
+  if (startRaw === "" && endRaw === "") return { kind: "bad" };
+  if (startRaw === "") {
+    const suffix = Number(endRaw);
+    if (!Number.isSafeInteger(suffix) || suffix <= 0 || size === 0) return { kind: "bad" };
+    return { kind: "suffix", suffix };
   }
-  const start = range.offset ?? 0;
-  const end = range.length !== undefined ? start + range.length - 1 : size - 1;
-  return `bytes ${start}-${end}/${size}`;
+  const start = Number(startRaw);
+  if (!Number.isSafeInteger(start) || start < 0 || start >= size) return { kind: "bad" };
+  if (endRaw === "") return { kind: "span", offset: start, length: size - start };
+  const end = Number(endRaw);
+  if (!Number.isSafeInteger(end) || end < start) return { kind: "bad" };
+  const last = Math.min(end, size - 1);
+  return { kind: "span", offset: start, length: last - start + 1 };
+}
+
+function etagMatches(httpEtag: string, header: string): boolean {
+  const tags = header
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+  if (tags.includes("*")) return true;
+  const bare = httpEtag.replace(/^W\//, "").replaceAll('"', "");
+  return tags.some((tag) => tag === httpEtag || tag.replace(/^W\//, "").replaceAll('"', "") === bare);
+}
+
+function unmodifiedSinceOk(uploaded: Date | undefined, header: string): boolean {
+  const since = Date.parse(header);
+  if (Number.isNaN(since)) return false;
+  if (!uploaded) return true;
+  return uploaded.getTime() <= since;
 }
 
 async function spend(env: Env, visitorId: string, ipKey: string, now: number): Promise<[number, number, number]> {
@@ -298,22 +332,50 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
   }
 
   const mediaMatch = /^\/api\/media\/([a-f0-9]{32})$/.exec(path);
-  if (request.method === "GET" && mediaMatch) {
+  if ((request.method === "GET" || request.method === "HEAD") && mediaMatch) {
     await limit(env.READ_LIMIT, request, "Too many reads from this address. Wait a minute.");
     const id = mediaMatch[1] ?? "";
     const now = Date.now();
     const row = ownedMedia(await getMedia(env, id, now), visitor.id, now);
-    const object = await env.BUCKET.get(row.r2_key, { range: request.headers, onlyIf: request.headers });
-    if (!object) throw new HttpError(404, "not_found", "That file does not exist.");
-    const headers = fileHeaders(row.content_type);
-    if (object.httpEtag) headers.set("etag", object.httpEtag);
-    if (!isStoredBody(object)) return withVisitor(request, new Response(null, { status: 304, headers }), visitor);
-    const asked = request.headers.get("range");
-    if (asked && object.range) {
-      headers.set("content-range", contentRange(object.size, object.range));
-      return withVisitor(request, new Response(object.body, { status: 206, headers }), visitor);
+    const head = await env.BUCKET.head(row.r2_key);
+    if (!head) throw new HttpError(404, "not_found", "That file does not exist.");
+    const headers = fileHeaders(row.content_type, row.expires_at, now);
+    if (head.httpEtag) headers.set("etag", head.httpEtag);
+    const ifMatch = request.headers.get("if-match");
+    const ifUnmodified = request.headers.get("if-unmodified-since");
+    if ((ifMatch !== null && !etagMatches(head.httpEtag, ifMatch)) || (ifUnmodified !== null && !unmodifiedSinceOk(head.uploaded, ifUnmodified))) {
+      return withVisitor(request, new Response(null, { status: 412, headers }), visitor);
     }
-    return withVisitor(request, new Response(object.body, { status: 200, headers }), visitor);
+    const ifNone = request.headers.get("if-none-match");
+    if (ifNone !== null && etagMatches(head.httpEtag, ifNone)) {
+      return withVisitor(request, new Response(null, { status: 304, headers }), visitor);
+    }
+    const parsed = parseByteRange(request.headers.get("range"), head.size);
+    if (parsed.kind === "bad") {
+      headers.set("content-range", `bytes */${head.size}`);
+      return withVisitor(request, new Response(null, { status: 416, headers }), visitor);
+    }
+    let status = 200;
+    let length = head.size;
+    let range: { offset: number; length: number } | { suffix: number } | undefined;
+    if (parsed.kind === "span") {
+      status = 206;
+      length = parsed.length;
+      range = { offset: parsed.offset, length: parsed.length };
+      headers.set("content-range", `bytes ${parsed.offset}-${parsed.offset + parsed.length - 1}/${head.size}`);
+    } else if (parsed.kind === "suffix") {
+      status = 206;
+      const suffixLength = Math.min(parsed.suffix, head.size);
+      const start = head.size - suffixLength;
+      length = suffixLength;
+      range = { suffix: parsed.suffix };
+      headers.set("content-range", `bytes ${start}-${Math.max(start, head.size - 1)}/${head.size}`);
+    }
+    headers.set("content-length", String(length));
+    if (request.method === "HEAD") return withVisitor(request, new Response(null, { status, headers }), visitor);
+    const object = await env.BUCKET.get(row.r2_key, range ? { range } : undefined);
+    if (!object || !isStoredBody(object)) throw new HttpError(404, "not_found", "That file does not exist.");
+    return withVisitor(request, new Response(object.body, { status, headers }), visitor);
   }
 
   const judgmentMatch = /^\/api\/judgments\/([a-f0-9]{32})$/.exec(path);
@@ -357,7 +419,8 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
     const sniffed = sniffMedia(bytes);
     if (!sniffed.ok) throw new HttpError(400, "media", sniffed.message);
 
-    const wantCompare = upload.compare && sniffed.kind !== "video";
+    const compareImageReason = upload.compare && sniffed.kind === "image" ? compareImageBlock(bytes) : null;
+    const wantCompare = upload.compare && sniffed.kind !== "video" && !compareImageReason;
     if (wantCompare) await limit(env.COMPARE_LIMIT, request, "Too many comparisons from this network. Wait a minute.");
 
     const now = Date.now();
@@ -412,7 +475,7 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
         } catch (deleteErr) {
           console.error(JSON.stringify({ event: "r2_delete_failed", error: deleteErr instanceof Error ? deleteErr.name : "error" }));
         }
-        await failJudgment(env, omniId, "The file could not be stored.");
+        await failJudgment(env, omniId, "The file could not be stored.", { clearMedia: true });
         throw new HttpError(503, "storage", "The file could not be stored.");
       }
     }
@@ -432,6 +495,8 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
       comparison = null;
     } else if (sniffed.kind === "video" && upload.compare) {
       comparison = { available: false, reason: VIDEO_COMPARE_REASON };
+    } else if (compareImageReason) {
+      comparison = { available: false, reason: compareImageReason };
     } else if (wantCompare) {
       const compareNow = Date.now();
       const [cVisitor, cNetwork, cDaily] = await spend(env, visitor.id, ipKey, compareNow);

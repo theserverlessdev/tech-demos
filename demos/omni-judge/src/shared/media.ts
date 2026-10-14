@@ -41,8 +41,9 @@ function readWav(bytes: Uint8Array): { durationMs: number } | null {
       rate = u32(bytes, start + 4);
       bits = u16(bytes, start + 14);
     } else if (id === "data") {
-      dataBytes = size;
-      break;
+      const next = dataBytes + size;
+      if (!Number.isFinite(next) || next < dataBytes) return null;
+      dataBytes = next;
     }
     offset = start + size + (size % 2);
   }
@@ -114,24 +115,34 @@ function readMp3(bytes: Uint8Array): { durationMs: number } | null {
     }
   }
   if (!frame) return null;
-  // Xing/Info and a bitrate-times-length guess are both header fields a caller can set.
-  // The cap uses the frames that are actually in the file.
+  // Xing/Info is just another frame. Junk between frames is skipped, and each
+  // frame adds its own sample count at its own rate.
+  let durationMs = 0;
   let frames = 0;
   let cursor = offset;
   let guard = 0;
-  while (cursor + 4 <= bytes.length && guard < 20_000) {
+  while (cursor + 4 <= bytes.length && guard < bytes.length) {
     const next = frameAt(bytes, cursor);
-    if (!next) break;
+    if (!next) {
+      cursor += 1;
+      guard += 1;
+      continue;
+    }
+    const frameMs = (next.samples * 1000) / next.rate;
+    if (!Number.isFinite(frameMs) || frameMs < 0) return null;
+    durationMs += frameMs;
+    if (!Number.isFinite(durationMs) || durationMs < 0) return null;
     frames += 1;
     cursor += next.size;
     guard += 1;
+    if (durationMs > LIMITS.maxAudioMs) break;
   }
   if (frames < 1) return null;
-  return { durationMs: Math.round((frames * frame.samples * 1000) / frame.rate) };
+  return { durationMs: Math.round(durationMs) };
 }
 
 function u32be(bytes: Uint8Array, o: number): number {
-  return ((bytes[o] ?? 0) << 24) | ((bytes[o + 1] ?? 0) << 16) | ((bytes[o + 2] ?? 0) << 8) | (bytes[o + 3] ?? 0);
+  return (((bytes[o] ?? 0) << 24) | ((bytes[o + 1] ?? 0) << 16) | ((bytes[o + 2] ?? 0) << 8) | (bytes[o + 3] ?? 0)) >>> 0;
 }
 
 function readId(bytes: Uint8Array, offset: number): { id: number; next: number } | null {
@@ -166,8 +177,11 @@ function readSize(bytes: Uint8Array, offset: number): { value: number; next: num
     value = value * 256 + byte;
     if (byte !== 0xff) unknown = false;
   }
-  if (!Number.isSafeInteger(value)) return null;
-  return { value, next: offset + length, unknown };
+  // An all-ones vint is "unknown size" (Chrome writes 01 FF FF FF FF FF FF FF).
+  // 2^56-1 is not a safe integer, so this check has to win before that test.
+  if (unknown) return { value: 0, next: offset + length, unknown: true };
+  if (!Number.isFinite(value) || !Number.isSafeInteger(value)) return null;
+  return { value, next: offset + length, unknown: false };
 }
 
 function readUint(bytes: Uint8Array, start: number, end: number): number | null {
@@ -177,11 +191,17 @@ function readUint(bytes: Uint8Array, start: number, end: number): number | null 
   return value;
 }
 
+const ID_EBML = 0x1a45dfa3;
+const ID_SEGMENT = 0x18538067;
+const ID_INFO = 0x1549a966;
+const ID_TIMECODE_SCALE = 0x2ad7b1;
+const ID_CLUSTER = 0x1f43b675;
 const ID_TIMECODE = 0xe7;
 const ID_SIMPLE_BLOCK = 0xa3;
 const ID_BLOCK = 0xa1;
 const ID_BLOCK_GROUP = 0xa0;
 const CLUSTER_ID = Uint8Array.of(0x1f, 0x43, 0xb6, 0x75);
+const MAX_BOXES = 50_000;
 
 function indexOfBytes(bytes: Uint8Array, needle: Uint8Array, from: number): number {
   const start = Math.max(0, from);
@@ -192,15 +212,6 @@ function indexOfBytes(bytes: Uint8Array, needle: Uint8Array, from: number): numb
   return -1;
 }
 
-function readTimecodeScale(bytes: Uint8Array): number {
-  const at = indexOfBytes(bytes, Uint8Array.of(0x2a, 0xd7, 0xb1), 0);
-  if (at < 0) return 1_000_000;
-  const size = readSize(bytes, at + 3);
-  if (!size || size.unknown) return 1_000_000;
-  const value = readUint(bytes, size.next, size.next + size.value);
-  return value && value > 0 ? value : 1_000_000;
-}
-
 /** Relative timecode is a signed int16 after the track-number vint. */
 function blockRel(bytes: Uint8Array, start: number, end: number): number | null {
   const track = readSize(bytes, start);
@@ -209,190 +220,396 @@ function blockRel(bytes: Uint8Array, start: number, end: number): number | null 
   return view.getInt16(0, false);
 }
 
+type Span = { min: number; max: number; found: boolean };
+
+function noteTimestamp(span: Span, ts: number): void {
+  if (!Number.isFinite(ts)) return;
+  if (!span.found) {
+    span.min = ts;
+    span.max = ts;
+    span.found = true;
+    return;
+  }
+  if (ts < span.min) span.min = ts;
+  if (ts > span.max) span.max = ts;
+}
+
+/** TimecodeScale is valid only as a child of Info. A bad value fails closed. */
+function infoScale(bytes: Uint8Array, start: number, end: number): number | "absent" | "bad" {
+  let offset = start;
+  let scale: number | null = null;
+  while (offset + 2 <= end) {
+    const id = readId(bytes, offset);
+    if (!id || id.next > end) break;
+    const size = readSize(bytes, id.next);
+    if (!size || size.unknown || size.next > end) break;
+    const childEnd = size.next + size.value;
+    if (childEnd < size.next || childEnd > end) break;
+    if (id.id === ID_TIMECODE_SCALE) {
+      const value = readUint(bytes, size.next, childEnd);
+      if (value === null || value <= 0 || !Number.isFinite(value)) return "bad";
+      scale = value;
+    }
+    offset = childEnd;
+  }
+  return scale === null ? "absent" : scale;
+}
+
+function readCluster(bytes: Uint8Array, start: number, end: number, span: Span): void {
+  let clusterTc = 0;
+  let offset = start;
+  while (offset + 2 <= end) {
+    const id = readId(bytes, offset);
+    if (!id || id.next > end) break;
+    const child = readSize(bytes, id.next);
+    if (!child) break;
+    const childEnd = child.unknown ? end : child.next + child.value;
+    if (childEnd < child.next || childEnd > end) break;
+    if (id.id === ID_TIMECODE) {
+      const value = readUint(bytes, child.next, childEnd);
+      if (value !== null) clusterTc = value;
+    } else if (id.id === ID_SIMPLE_BLOCK || id.id === ID_BLOCK) {
+      const rel = blockRel(bytes, child.next, childEnd);
+      if (rel !== null) noteTimestamp(span, clusterTc + rel);
+    } else if (id.id === ID_BLOCK_GROUP && !child.unknown) {
+      let inner = child.next;
+      while (inner + 2 <= childEnd) {
+        const blockId = readId(bytes, inner);
+        if (!blockId || blockId.next > childEnd) break;
+        const blockSize = readSize(bytes, blockId.next);
+        if (!blockSize || blockSize.unknown) break;
+        const blockEnd = blockSize.next + blockSize.value;
+        if (blockEnd > childEnd) break;
+        if (blockId.id === ID_BLOCK || blockId.id === ID_SIMPLE_BLOCK) {
+          const rel = blockRel(bytes, blockSize.next, blockEnd);
+          if (rel !== null) noteTimestamp(span, clusterTc + rel);
+        }
+        inner = blockEnd;
+      }
+    }
+    if (child.unknown) break;
+    offset = childEnd;
+  }
+}
+
 /**
- * Chrome MediaRecorder writes Cluster at segment depth with an unknown size.
- * Timecode lives in that cluster (depth >= 2 from the file root). The Duration
- * element is ignored: the cap is the last block timecode.
+ * Chrome MediaRecorder writes Segment and Cluster with an unknown size.
+ * TimecodeScale is taken only from Segment > Info. The Duration element is
+ * ignored. The cap is the span from the earliest block timecode to the latest.
  */
 function readWebm(bytes: Uint8Array): { durationMs: number } | null {
   if (!EBML(bytes)) return null;
-  const scale = readTimecodeScale(bytes);
-  let maxTs = 0;
-  let found = false;
-  let cursor = 0;
-  while (cursor < bytes.length) {
-    const at = indexOfBytes(bytes, CLUSTER_ID, cursor);
-    if (at < 0) break;
-    const size = readSize(bytes, at + CLUSTER_ID.length);
-    if (!size) {
-      cursor = at + CLUSTER_ID.length;
+  const ebmlId = readId(bytes, 0);
+  if (!ebmlId || ebmlId.id !== ID_EBML) return null;
+  const ebmlSize = readSize(bytes, ebmlId.next);
+  if (!ebmlSize || ebmlSize.unknown) return null;
+  const ebmlEnd = ebmlSize.next + ebmlSize.value;
+  if (ebmlEnd < ebmlSize.next || ebmlEnd > bytes.length) return null;
+  const segmentId = readId(bytes, ebmlEnd);
+  if (!segmentId || segmentId.id !== ID_SEGMENT) return null;
+  const segmentSize = readSize(bytes, segmentId.next);
+  if (!segmentSize) return null;
+  const segmentEnd = segmentSize.unknown ? bytes.length : segmentSize.next + segmentSize.value;
+  if (segmentEnd < segmentSize.next || segmentEnd > bytes.length) return null;
+
+  let scale = 1_000_000;
+  const span: Span = { min: 0, max: 0, found: false };
+  let offset = segmentSize.next;
+  while (offset + 2 <= segmentEnd) {
+    const id = readId(bytes, offset);
+    if (!id || id.next > segmentEnd) break;
+    const size = readSize(bytes, id.next);
+    if (!size || size.next > segmentEnd) break;
+    if (id.id === ID_INFO && !size.unknown) {
+      const infoEnd = size.next + size.value;
+      if (infoEnd < size.next || infoEnd > segmentEnd) break;
+      const found = infoScale(bytes, size.next, infoEnd);
+      if (found === "bad") return null;
+      if (found !== "absent") scale = found;
+      offset = infoEnd;
       continue;
     }
-    let dataEnd: number;
-    if (size.unknown) {
-      const next = indexOfBytes(bytes, CLUSTER_ID, size.next);
-      dataEnd = next < 0 ? bytes.length : next;
-    } else {
-      dataEnd = Math.min(bytes.length, size.next + size.value);
-    }
-    if (dataEnd < size.next) {
-      cursor = at + CLUSTER_ID.length;
-      continue;
-    }
-    let clusterTc = 0;
-    let offset = size.next;
-    while (offset + 2 <= dataEnd) {
-      const id = readId(bytes, offset);
-      if (!id || id.next > dataEnd) break;
-      const child = readSize(bytes, id.next);
-      if (!child) break;
-      const childEnd = child.unknown ? dataEnd : child.next + child.value;
-      if (childEnd < child.next || childEnd > dataEnd) break;
-      if (id.id === ID_TIMECODE) {
-        const value = readUint(bytes, child.next, childEnd);
-        if (value !== null) clusterTc = value;
-      } else if (id.id === ID_SIMPLE_BLOCK || id.id === ID_BLOCK) {
-        const rel = blockRel(bytes, child.next, childEnd);
-        if (rel !== null) {
-          found = true;
-          maxTs = Math.max(maxTs, clusterTc + rel);
-        }
-      } else if (id.id === ID_BLOCK_GROUP && !child.unknown) {
-        let inner = child.next;
-        while (inner + 2 <= childEnd) {
-          const blockId = readId(bytes, inner);
-          if (!blockId || blockId.next > childEnd) break;
-          const blockSize = readSize(bytes, blockId.next);
-          if (!blockSize || blockSize.unknown) break;
-          const blockEnd = blockSize.next + blockSize.value;
-          if (blockEnd > childEnd) break;
-          if (blockId.id === ID_BLOCK || blockId.id === ID_SIMPLE_BLOCK) {
-            const rel = blockRel(bytes, blockSize.next, blockEnd);
-            if (rel !== null) {
-              found = true;
-              maxTs = Math.max(maxTs, clusterTc + rel);
-            }
-          }
-          inner = blockEnd;
-        }
+    if (id.id === ID_CLUSTER) {
+      let dataEnd: number;
+      if (size.unknown) {
+        const next = indexOfBytes(bytes, CLUSTER_ID, size.next);
+        dataEnd = next < 0 ? segmentEnd : Math.min(segmentEnd, next);
+      } else {
+        dataEnd = size.next + size.value;
+        if (dataEnd < size.next || dataEnd > segmentEnd) break;
       }
-      if (child.unknown) break;
-      offset = childEnd;
+      readCluster(bytes, size.next, dataEnd, span);
+      offset = Math.max(dataEnd, size.next);
+      continue;
     }
-    cursor = Math.max(dataEnd, at + CLUSTER_ID.length);
+    if (size.unknown) break;
+    const childEnd = size.next + size.value;
+    if (childEnd < size.next || childEnd > segmentEnd) break;
+    offset = childEnd;
   }
-  if (!found || maxTs <= 0) return null;
-  const durationMs = Math.round((maxTs * scale) / 1_000_000);
-  return durationMs > 0 ? { durationMs } : null;
+  if (!span.found) return null;
+  const delta = span.max - span.min;
+  if (!Number.isFinite(delta) || delta <= 0 || !Number.isFinite(scale) || scale <= 0) return null;
+  const durationMs = Math.round((delta * scale) / 1_000_000);
+  return Number.isFinite(durationMs) && durationMs > 0 ? { durationMs } : null;
 }
 
-function readAtom(bytes: Uint8Array, offset: number): { type: string; start: number; end: number; header: number } | null {
-  if (offset + 8 > bytes.length) return null;
+type Atom = { type: string; start: number; end: number };
+
+function readAtom(bytes: Uint8Array, offset: number, parentEnd: number): Atom | null {
+  const limit = Math.min(bytes.length, parentEnd);
+  if (offset + 8 > limit) return null;
   let size = u32be(bytes, offset);
   const type = String.fromCharCode(bytes[offset + 4] ?? 0, bytes[offset + 5] ?? 0, bytes[offset + 6] ?? 0, bytes[offset + 7] ?? 0);
   let header = 8;
   if (size === 1) {
-    if (offset + 16 > bytes.length) return null;
+    if (offset + 16 > limit) return null;
     const hi = u32be(bytes, offset + 8);
     const lo = u32be(bytes, offset + 12);
-    size = hi * 2 ** 32 + lo;
     header = 16;
+    // 0xFFFFFFFFFFFFFFFF is the 64-bit "extends to the parent end" size Chrome writes.
+    if (hi === 0xffffffff && lo === 0xffffffff) size = limit - offset;
+    else {
+      const wide = hi * 2 ** 32 + lo;
+      if (!Number.isFinite(wide) || wide < header) return null;
+      size = wide;
+    }
   } else if (size === 0) {
-    size = bytes.length - offset;
+    size = limit - offset;
   }
-  if (size < header || offset + size > bytes.length) return null;
-  return { type, start: offset + header, end: offset + size, header };
+  if (!Number.isFinite(size) || size < header || offset + size > limit) return null;
+  return { type, start: offset + header, end: offset + size };
 }
 
-const MP4_CONTAINERS = new Set(["moov", "trak", "mdia", "minf", "stbl", "mvex", "moof", "traf"]);
-
-function ticksToMs(ticks: number, scale: number): number {
-  if (ticks <= 0 || scale <= 0) return 0;
-  return Math.round((ticks * 1000) / scale);
+function ticksToMs(ticks: number, scale: number): number | null {
+  if (!Number.isFinite(ticks) || !Number.isFinite(scale) || ticks < 0 || scale <= 0) return null;
+  if (ticks === 0) return 0;
+  const ms = Math.round((ticks * 1000) / scale);
+  if (!Number.isFinite(ms) || ms < 0) return null;
+  return ms;
 }
+
+function addFinite(total: number, extra: number): number | null {
+  if (!Number.isFinite(total) || !Number.isFinite(extra) || total < 0 || extra < 0) return null;
+  const next = total + extra;
+  if (!Number.isFinite(next) || next < 0) return null;
+  return next;
+}
+
+type Trak = { id: number; scale: number; ticks: number; samples: number };
+type RawTrun = { track: number; samples: number; ticks: number; needsTrex: boolean };
 
 /**
- * mvhd.duration is not used. Safari's fMP4 leaves it at 0.
- * The cap is the longest of mehd (movie timescale), the stts sample table,
- * and the trun sample durations (mdhd timescale).
+ * mvhd.duration is not used. Each trak keeps its own id, timescale, and sample
+ * table, in whatever child order the file uses. A second moov, a repeated
+ * track id, or samples with no duration fail closed. fMP4 sample duration
+ * comes from the trun, then tfhd, then that track's trex default.
  */
 function readMp4(bytes: Uint8Array): { durationMs: number } | null {
   if (!FTYP(bytes)) return null;
+  let boxes = 0;
+  let failed = false;
+  let moovCount = 0;
   let movieScale = 0;
   let mehdTicks = 0;
-  let currentTrack = 0;
-  const trackScale = new Map<number, number>();
-  const sttsTicks = new Map<number, number>();
-  const trunTicks = new Map<number, number>();
+  const trexDuration = new Map<number, number>();
+  const traks: Trak[] = [];
+  const truns: RawTrun[] = [];
 
-  const walk = (start: number, end: number, depth: number): void => {
+  const walk = (start: number, end: number, depth: number, visit: (box: Atom) => void): void => {
+    if (depth > 8 || failed) return;
     let offset = start;
-    let trafTrack = 0;
-    let defaultDuration = 0;
-    while (offset + 8 <= end && depth < 8) {
-      const box = readAtom(bytes, offset);
-      if (!box) break;
-      const version = bytes[box.start] ?? 0;
-      if (box.type === "mvhd") {
-        const scaleAt = version === 1 ? 20 : 12;
-        if (box.start + scaleAt + 4 <= box.end) movieScale = u32be(bytes, box.start + scaleAt);
-      } else if (box.type === "tkhd") {
-        const idAt = version === 1 ? 20 : 12;
-        if (box.start + idAt + 4 <= box.end) currentTrack = u32be(bytes, box.start + idAt);
-      } else if (box.type === "mdhd" && currentTrack > 0) {
-        const scaleAt = version === 1 ? 20 : 12;
-        if (box.start + scaleAt + 4 <= box.end) trackScale.set(currentTrack, u32be(bytes, box.start + scaleAt));
-      } else if (box.type === "stts" && currentTrack > 0) {
-        const count = u32be(bytes, box.start + 4);
-        let ticks = 0;
-        let cursor = box.start + 8;
-        const entries = Math.min(count, 100_000);
-        for (let i = 0; i < entries && cursor + 8 <= box.end; i++) {
-          ticks += u32be(bytes, cursor) * u32be(bytes, cursor + 4);
-          cursor += 8;
-        }
-        sttsTicks.set(currentTrack, (sttsTicks.get(currentTrack) ?? 0) + ticks);
-      } else if (box.type === "mehd") {
-        if (version === 1 && box.start + 12 <= box.end) mehdTicks = u32be(bytes, box.start + 4) * 2 ** 32 + u32be(bytes, box.start + 8);
-        else if (box.start + 8 <= box.end) mehdTicks = u32be(bytes, box.start + 4);
-      } else if (box.type === "tfhd") {
-        const flags = u32be(bytes, box.start) & 0xffffff;
-        if (box.start + 8 <= box.end) trafTrack = u32be(bytes, box.start + 4);
-        let cursor = box.start + 8;
-        if (flags & 0x000001) cursor += 8;
-        if (flags & 0x000002) cursor += 4;
-        if ((flags & 0x000008) !== 0 && cursor + 4 <= box.end) defaultDuration = u32be(bytes, cursor);
-      } else if (box.type === "trun" && trafTrack > 0) {
-        const flags = u32be(bytes, box.start) & 0xffffff;
-        const samples = u32be(bytes, box.start + 4);
-        let cursor = box.start + 8;
-        if (flags & 0x000001) cursor += 4;
-        if (flags & 0x000004) cursor += 4;
-        const sampleBytes = (flags & 0x100 ? 4 : 0) + (flags & 0x200 ? 4 : 0) + (flags & 0x400 ? 4 : 0) + (flags & 0x800 ? 4 : 0);
-        let ticks = 0;
-        if ((flags & 0x100) !== 0) {
-          const n = Math.min(samples, 200_000);
-          for (let i = 0; i < n && cursor + 4 <= box.end; i++) {
-            ticks += u32be(bytes, cursor);
-            cursor += sampleBytes || 4;
-          }
-        } else if (defaultDuration > 0) {
-          ticks = samples * defaultDuration;
-        }
-        trunTicks.set(trafTrack, (trunTicks.get(trafTrack) ?? 0) + ticks);
-      } else if (MP4_CONTAINERS.has(box.type)) {
-        const trackBefore = currentTrack;
-        walk(box.start, box.end, depth + 1);
-        if (box.type === "trak") currentTrack = trackBefore;
+    while (offset + 8 <= end) {
+      boxes += 1;
+      if (boxes > MAX_BOXES) {
+        failed = true;
+        return;
       }
+      const box = readAtom(bytes, offset, end);
+      if (!box) break;
+      visit(box);
+      if (failed || box.end <= offset) break;
       offset = box.end;
     }
   };
-  walk(0, bytes.length, 0);
 
-  let best = ticksToMs(mehdTicks, movieScale);
-  for (const [id, ticks] of sttsTicks) best = Math.max(best, ticksToMs(ticks, trackScale.get(id) ?? 0));
-  for (const [id, ticks] of trunTicks) best = Math.max(best, ticksToMs(ticks, trackScale.get(id) ?? movieScale));
+  const readTrak = (start: number, end: number): void => {
+    let id = 0;
+    let scale = 0;
+    let ticks = 0;
+    let samples = 0;
+    const level = (from: number, to: number, depth: number): void => {
+      walk(from, to, depth, (box) => {
+        const version = bytes[box.start] ?? 0;
+        if (box.type === "tkhd") {
+          const idAt = version === 1 ? 20 : 12;
+          if (box.start + idAt + 4 <= box.end) id = u32be(bytes, box.start + idAt);
+        } else if (box.type === "mdhd") {
+          const scaleAt = version === 1 ? 20 : 12;
+          if (box.start + scaleAt + 4 <= box.end) scale = u32be(bytes, box.start + scaleAt);
+        } else if (box.type === "stts") {
+          const count = u32be(bytes, box.start + 4);
+          let cursor = box.start + 8;
+          const entries = Math.min(count, 100_000);
+          for (let i = 0; i < entries && cursor + 8 <= box.end; i++) {
+            const sampleCount = u32be(bytes, cursor);
+            const delta = u32be(bytes, cursor + 4);
+            cursor += 8;
+            const nextSamples = addFinite(samples, sampleCount);
+            const nextTicks = addFinite(ticks, sampleCount * delta);
+            if (nextSamples === null || nextTicks === null) {
+              failed = true;
+              return;
+            }
+            samples = nextSamples;
+            ticks = nextTicks;
+          }
+        } else if (box.type === "mdia" || box.type === "minf" || box.type === "stbl" || box.type === "edts") {
+          level(box.start, box.end, depth + 1);
+        }
+      });
+    };
+    level(start, end, 0);
+    if (failed) return;
+    if (samples > 0 && (ticks <= 0 || scale <= 0 || id <= 0)) {
+      failed = true;
+      return;
+    }
+    if (id > 0) traks.push({ id, scale, ticks, samples });
+  };
+
+  const readTrun = (box: Atom, track: number, tfhdPresent: boolean, tfhdDuration: number): void => {
+    const flags = u32be(bytes, box.start) & 0xffffff;
+    const samples = u32be(bytes, box.start + 4);
+    if (!Number.isFinite(samples) || samples < 0 || track <= 0) {
+      if (samples > 0) failed = true;
+      return;
+    }
+    let ticks = 0;
+    let resolved = false;
+    if ((flags & 0x100) !== 0) {
+      let cursor = box.start + 8;
+      if (flags & 0x000001) cursor += 4;
+      if (flags & 0x000004) cursor += 4;
+      const sampleBytes = (flags & 0x100 ? 4 : 0) + (flags & 0x200 ? 4 : 0) + (flags & 0x400 ? 4 : 0) + (flags & 0x800 ? 4 : 0);
+      const n = Math.min(samples, 200_000);
+      for (let i = 0; i < n && cursor + 4 <= box.end; i++) {
+        const next = addFinite(ticks, u32be(bytes, cursor));
+        if (next === null) {
+          failed = true;
+          return;
+        }
+        ticks = next;
+        cursor += sampleBytes || 4;
+      }
+      resolved = true;
+    } else if (tfhdPresent) {
+      const next = addFinite(0, samples * tfhdDuration);
+      if (next === null) {
+        failed = true;
+        return;
+      }
+      ticks = next;
+      resolved = true;
+    } else {
+      if (samples > 0) truns.push({ track, samples, ticks: 0, needsTrex: true });
+      return;
+    }
+    if (samples > 0 && (!resolved || ticks <= 0)) {
+      failed = true;
+      return;
+    }
+    if (samples > 0) truns.push({ track, samples, ticks, needsTrex: false });
+  };
+
+  walk(0, bytes.length, 0, (box) => {
+    if (box.type === "moov") {
+      moovCount += 1;
+      if (moovCount > 1) {
+        failed = true;
+        return;
+      }
+      walk(box.start, box.end, 1, (child) => {
+        const version = bytes[child.start] ?? 0;
+        if (child.type === "mvhd") {
+          const scaleAt = version === 1 ? 20 : 12;
+          if (child.start + scaleAt + 4 <= child.end) movieScale = u32be(bytes, child.start + scaleAt);
+        } else if (child.type === "trak") {
+          readTrak(child.start, child.end);
+        } else if (child.type === "mvex") {
+          walk(child.start, child.end, 2, (inner) => {
+            const innerVersion = bytes[inner.start] ?? 0;
+            if (inner.type === "mehd") {
+              let ticks = 0;
+              if (innerVersion === 1 && inner.start + 12 <= inner.end) ticks = u32be(bytes, inner.start + 4) * 2 ** 32 + u32be(bytes, inner.start + 8);
+              else if (inner.start + 8 <= inner.end) ticks = u32be(bytes, inner.start + 4);
+              if (!Number.isFinite(ticks) || ticks < 0) failed = true;
+              else mehdTicks = ticks;
+            } else if (inner.type === "trex" && inner.start + 16 <= inner.end) {
+              const trackId = u32be(bytes, inner.start + 4);
+              const duration = u32be(bytes, inner.start + 12);
+              if (trackId > 0) trexDuration.set(trackId, duration);
+            }
+          });
+        }
+      });
+    } else if (box.type === "moof") {
+      walk(box.start, box.end, 1, (child) => {
+        if (child.type !== "traf") return;
+        let track = 0;
+        let tfhdDuration = 0;
+        let tfhdPresent = false;
+        const pending: Atom[] = [];
+        walk(child.start, child.end, 2, (inner) => {
+          if (inner.type === "tfhd") {
+            const flags = u32be(bytes, inner.start) & 0xffffff;
+            if (inner.start + 8 <= inner.end) track = u32be(bytes, inner.start + 4);
+            let cursor = inner.start + 8;
+            if (flags & 0x000001) cursor += 8;
+            if (flags & 0x000002) cursor += 4;
+            if ((flags & 0x000008) !== 0 && cursor + 4 <= inner.end) {
+              tfhdDuration = u32be(bytes, cursor);
+              tfhdPresent = true;
+            }
+          } else if (inner.type === "trun") {
+            pending.push(inner);
+          }
+        });
+        for (const trun of pending) readTrun(trun, track, tfhdPresent, tfhdDuration);
+      });
+    }
+  });
+
+  if (failed || moovCount > 1) return null;
+  const seen = new Set<number>();
+  let best = 0;
+  if (mehdTicks > 0) {
+    const ms = ticksToMs(mehdTicks, movieScale);
+    if (ms === null || ms <= 0) return null;
+    best = ms;
+  }
+  for (const trak of traks) {
+    if (seen.has(trak.id)) return null;
+    seen.add(trak.id);
+    if (trak.samples > 0) {
+      const ms = ticksToMs(trak.ticks, trak.scale);
+      if (ms === null || ms <= 0) return null;
+      best = Math.max(best, ms);
+    }
+  }
+  for (const trun of truns) {
+    let ticks = trun.ticks;
+    if (trun.needsTrex) {
+      const fallback = trexDuration.get(trun.track) ?? 0;
+      const next = addFinite(0, trun.samples * fallback);
+      if (next === null || next <= 0) return null;
+      ticks = next;
+    }
+    const scale = traks.find((trak) => trak.id === trun.track)?.scale || movieScale;
+    const ms = ticksToMs(ticks, scale);
+    if (ms === null || ms <= 0) return null;
+    best = Math.max(best, ms);
+  }
   return best > 0 ? { durationMs: best } : null;
 }
 
@@ -485,6 +702,21 @@ function webpPixels(bytes: Uint8Array): number | null {
     }
     offset = data + size + (size % 2);
   }
+  return null;
+}
+
+export function imagePixelCount(bytes: Uint8Array): number | null {
+  if (PNG(bytes)) return pngPixels(bytes);
+  if (JPEG(bytes)) return jpegPixels(bytes);
+  if (WEBP(bytes)) return webpPixels(bytes);
+  return null;
+}
+
+/** Comparison uses the deprecated vision `image` array, so it gets a tighter cap than the omni call. */
+export function compareImageBlock(bytes: Uint8Array): string | null {
+  if (bytes.length > LIMITS.maxCompareImageBytes) return "Comparison images must be 512 KB or smaller.";
+  const pixels = imagePixelCount(bytes);
+  if (pixels !== null && pixels > LIMITS.maxCompareImagePixels) return "Comparison images must be 2 megapixels or smaller.";
   return null;
 }
 

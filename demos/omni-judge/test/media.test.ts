@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { LIMITS } from "../src/shared/limits";
-import { sniffMedia } from "../src/shared/media";
+import { compareImageBlock, sniffMedia } from "../src/shared/media";
 
 function concat(...parts: Uint8Array[]): Uint8Array {
   const out = new Uint8Array(parts.reduce((n, part) => n + part.length, 0));
@@ -141,7 +141,11 @@ function chromeWebm(clusters: { tc: number; rel: number[] }[], liedDurationMs?: 
 }
 
 function webm(durationMs: number): Uint8Array {
-  return chromeWebm([{ tc: 0, rel: [durationMs] }], 60_000);
+  return chromeWebm([{ tc: 0, rel: [0, durationMs] }], 60_000);
+}
+
+function unknown8(): Uint8Array {
+  return Uint8Array.of(0x01, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff);
 }
 
 const PNG = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="), (char) => char.charCodeAt(0));
@@ -215,7 +219,7 @@ describe("media caps", () => {
     const clip = sniffMedia(chromeWebm([{ tc: 0, rel: [0, 400] }, { tc: 800, rel: [200] }], 60_000));
     expect(clip).toMatchObject({ ok: true, contentType: "video/webm" });
     if (clip.ok) expect(clip.durationMs).toBe(1000);
-    const hidden = sniffMedia(chromeWebm([{ tc: 0, rel: [12_000] }], 1));
+    const hidden = sniffMedia(chromeWebm([{ tc: 0, rel: [0, 12_000] }], 1));
     expect(hidden.ok).toBe(false);
     if (!hidden.ok) expect(hidden.message).toContain("10 seconds");
   });
@@ -259,5 +263,133 @@ describe("media caps", () => {
     expect(webmSniff).toMatchObject({ ok: true, contentType: "video/webm" });
     if (webmSniff.ok) expect(webmSniff.durationMs).toBeGreaterThan(500);
     if (webmSniff.ok) expect(webmSniff.durationMs).toBeLessThan(2_000);
+  });
+
+  test("a nested size-zero trak finishes inside the time budget", () => {
+    const ftyp = atom("ftyp", concat(ascii("isom"), u32be(0), ascii("isom")));
+    const unit = concat(u32be(16), ascii("moov"), u32be(0), ascii("trak"));
+    const repeats = Math.ceil(6400 / unit.length);
+    const bomb = new Uint8Array(repeats * unit.length);
+    for (let i = 0; i < repeats; i++) bomb.set(unit, i * unit.length);
+    const file = concat(ftyp, bomb);
+    expect(file.length).toBeGreaterThanOrEqual(6400);
+    const started = performance.now();
+    const sniffed = sniffMedia(file);
+    expect(performance.now() - started).toBeLessThan(200);
+    expect(sniffed.ok).toBe(false);
+  });
+
+  test("a Chrome timeslice WebM uses an 8-byte unknown size and ignores a decoy scale", () => {
+    const decoy = element([0x2a, 0xd7, 0xb1], Uint8Array.of(0x01));
+    const header = element([0x1a, 0x45, 0xdf, 0xa3], concat(element([0x42, 0x86], Uint8Array.of(1)), decoy));
+    const scale = element([0x2a, 0xd7, 0xb1], Uint8Array.of(0x0f, 0x42, 0x40));
+    const info = element([0x15, 0x49, 0xa9, 0x66], scale);
+    const tc = new Uint8Array(2);
+    new DataView(tc.buffer).setUint16(0, 0, false);
+    const cluster = concat(Uint8Array.of(0x1f, 0x43, 0xb6, 0x75), unknown8(), element([0xe7], tc), simpleBlock(0), simpleBlock(1000));
+    const file = concat(header, Uint8Array.of(0x18, 0x53, 0x80, 0x67), unknown8(), info, cluster);
+    const sniffed = sniffMedia(file);
+    expect(sniffed).toMatchObject({ ok: true, contentType: "video/webm" });
+    if (sniffed.ok) expect(sniffed.durationMs).toBe(1000);
+    const onePoint = sniffMedia(chromeWebm([{ tc: 0, rel: [1000] }], 60_000));
+    expect(onePoint.ok).toBe(false);
+    if (!onePoint.ok) expect(onePoint.message).toContain("no readable duration");
+  });
+
+  test("a Chrome fMP4 reads trex when tfhd and trun omit sample duration", () => {
+    const ftyp = atom("ftyp", concat(ascii("iso5"), u32be(0), ascii("iso5")));
+    const mvhd = new Uint8Array(100);
+    new DataView(mvhd.buffer).setUint32(12, 1000);
+    const mdhd = new Uint8Array(24);
+    new DataView(mdhd.buffer).setUint32(12, 1000);
+    const tkhd = new Uint8Array(84);
+    new DataView(tkhd.buffer).setUint32(12, 1);
+    const trak = atom("trak", concat(atom("mdia", atom("mdhd", mdhd)), atom("tkhd", tkhd)));
+    const trex = concat(u32be(0), u32be(1), u32be(1), u32be(100), u32be(0), u32be(0));
+    const moov = atom("moov", concat(atom("mvhd", mvhd), trak, atom("mvex", atom("trex", trex))));
+    const tfhd = concat(u32be(0), u32be(1));
+    const trun = concat(u32be(0), u32be(10));
+    const traf = atom("traf", concat(atom("trun", trun), atom("tfhd", tfhd)));
+    const moof = concat(u32be(1), ascii("moof"), new Uint8Array(8).fill(0xff), traf);
+    const sniffed = sniffMedia(concat(ftyp, moov, moof));
+    expect(sniffed).toMatchObject({ ok: true, contentType: "video/mp4" });
+    if (sniffed.ok) expect(sniffed.durationMs).toBe(1000);
+  });
+
+  test("a second moov, a duplicate track id, or samples without duration are rejected", () => {
+    expect(sniffMedia(concat(mp4(1000), mp4(1000))).ok).toBe(false);
+    const ftyp = atom("ftyp", concat(ascii("isom"), u32be(0), ascii("isom")));
+    const mvhd = new Uint8Array(100);
+    new DataView(mvhd.buffer).setUint32(12, 1000);
+    const trak = (id: number, delta: number) => {
+      const tkhd = new Uint8Array(84);
+      new DataView(tkhd.buffer).setUint32(12, id);
+      const mdhd = new Uint8Array(24);
+      new DataView(mdhd.buffer).setUint32(12, 1000);
+      const stts = concat(u32be(0), u32be(1), u32be(1), u32be(delta));
+      return atom("trak", concat(atom("tkhd", tkhd), atom("mdia", concat(atom("mdhd", mdhd), atom("minf", atom("stbl", atom("stts", stts)))))));
+    };
+    expect(sniffMedia(concat(ftyp, atom("moov", concat(atom("mvhd", mvhd), trak(1, 1000), trak(1, 500))))).ok).toBe(false);
+    expect(sniffMedia(concat(ftyp, atom("moov", concat(atom("mvhd", mvhd), trak(1, 0))))).ok).toBe(false);
+  });
+
+  test("a high-bit timescale stays unsigned", () => {
+    const ftyp = atom("ftyp", concat(ascii("isom"), u32be(0), ascii("isom")));
+    const mvhd = new Uint8Array(100);
+    new DataView(mvhd.buffer).setUint32(12, 0x80000000);
+    const tkhd = new Uint8Array(84);
+    new DataView(tkhd.buffer).setUint32(12, 1);
+    const mdhd = new Uint8Array(24);
+    new DataView(mdhd.buffer).setUint32(12, 0x80000000);
+    const stts = concat(u32be(0), u32be(1), u32be(1), u32be(0x80000000));
+    const trak = atom("trak", concat(atom("mdhd", mdhd), atom("tkhd", tkhd), atom("mdia", atom("minf", atom("stbl", atom("stts", stts))))));
+    const sniffed = sniffMedia(concat(ftyp, atom("moov", concat(atom("mvhd", mvhd), trak))));
+    expect(sniffed).toMatchObject({ ok: true, kind: "video" });
+    if (sniffed.ok) expect(sniffed.durationMs).toBe(1000);
+  });
+
+  test("mp3 keeps counting after junk and sums mixed sample rates", () => {
+    const mpeg1 = mp3Frame();
+    const mpeg48 = new Uint8Array(384);
+    mpeg48[0] = 0xff;
+    mpeg48[1] = 0xfb;
+    mpeg48[2] = 0x94;
+    const junk = new Uint8Array(64);
+    const file = concat(mpeg1, mpeg1, junk, mpeg48, mpeg48);
+    const sniffed = sniffMedia(file);
+    expect(sniffed.ok).toBe(true);
+    if (sniffed.ok) {
+      const expected = Math.round((2 * 1152 * 1000) / 44100 + (2 * 1152 * 1000) / 48000);
+      expect(sniffed.durationMs).toBe(expected);
+    }
+  });
+
+  test("wav duration sums every data chunk", () => {
+    const fmt = concat(u16le(1), u16le(1), u32le(8000), u32le(8000), u16le(1), u16le(8));
+    const chunk = (seconds: number) => {
+      const data = new Uint8Array(Math.round(seconds * 8000));
+      return concat(ascii("data"), u32le(data.length), data);
+    };
+    const body = concat(ascii("fmt "), u32le(fmt.length), fmt, chunk(0.5), chunk(0.5));
+    const both = concat(ascii("RIFF"), u32le(4 + body.length), ascii("WAVE"), body);
+    const sniffed = sniffMedia(both);
+    expect(sniffed).toMatchObject({ ok: true, kind: "audio" });
+    if (sniffed.ok) expect(sniffed.durationMs).toBe(1000);
+    const longBody = concat(ascii("fmt "), u32le(fmt.length), fmt, chunk(1), chunk(16));
+    const long = sniffMedia(concat(ascii("RIFF"), u32le(4 + longBody.length), ascii("WAVE"), longBody));
+    expect(long.ok).toBe(false);
+    if (!long.ok) expect(long.message).toContain("15 seconds");
+  });
+
+  test("comparison images stop at 512 KB or 2 megapixels", () => {
+    expect(compareImageBlock(PNG)).toBeNull();
+    const wide = new Uint8Array(PNG);
+    const view = new DataView(wide.buffer);
+    view.setUint32(16, 2000);
+    view.setUint32(20, 1001);
+    expect(compareImageBlock(wide)).toContain("2 megapixels");
+    const padded = new Uint8Array(LIMITS.maxCompareImageBytes + 1);
+    padded.set(PNG);
+    expect(compareImageBlock(padded)).toContain("512 KB");
   });
 });

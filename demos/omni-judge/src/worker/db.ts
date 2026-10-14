@@ -130,7 +130,11 @@ export async function finishJudgment(env: Env, id: string, result: JudgmentResul
     .run();
 }
 
-export async function failJudgment(env: Env, id: string, message: string): Promise<void> {
+export async function failJudgment(env: Env, id: string, message: string, options?: { clearMedia?: boolean }): Promise<void> {
+  if (options?.clearMedia) {
+    await env.DB.prepare(`UPDATE judgments SET status = 'error', error = ?, media_id = NULL WHERE id = ?`).bind(message.slice(0, 300), id).run();
+    return;
+  }
   await env.DB.prepare(`UPDATE judgments SET status = 'error', error = ? WHERE id = ?`).bind(message.slice(0, 300), id).run();
 }
 

@@ -51,6 +51,7 @@
     { "pattern": "omni-judge.tech-demos.theserverless.dev/*", "zone_name": "theserverless.dev" }
   ],
   "workers_dev": false,
+  "limits": { "cpu_ms": 2000 },
   "observability": {
     "enabled": true,
     "logs": { "enabled": true, "head_sampling_rate": 1 },

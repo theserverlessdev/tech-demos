@@ -38,5 +38,6 @@
     "TURNSTILE_SITE_KEY": "1x00000000000000000000AA"
   },
   "secrets": { "required": ["TURNSTILE_SECRET", "IP_HASH_SECRET"] },
-  "workers_dev": true
+  "workers_dev": true,
+  "limits": { "cpu_ms": 2000 }
 }

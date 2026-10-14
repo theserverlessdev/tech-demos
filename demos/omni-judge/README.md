@@ -26,7 +26,7 @@ One Workers AI call decides a photo, a voice note, or a short video. Clef-omni r
 
 **Limits**
 
-- Image ≤ 2 MB and ≤ 16 megapixels (PNG, JPEG, or WebP). Audio ≤ 15 seconds and ≤ 1.5 MB (WAV or MP3). Video ≤ 10 seconds and ≤ 6 MB (MP4 or WebM), with about 500 ms of slack so a clip stopped near 9.5 seconds still passes. The server sniffs the bytes. The declared Content-Type is ignored. Duration comes from MP3 frames, WebM block timecodes, and MP4 `mehd` / `stts` / `trun` sums.
+- Image ≤ 2 MB and ≤ 16 megapixels (PNG, JPEG, or WebP). Audio ≤ 15 seconds and ≤ 1.5 MB (WAV or MP3). Video ≤ 10 seconds and ≤ 6 MB (MP4 or WebM), with about 500 ms of slack so a clip stopped near 9.5 seconds still passes. The server sniffs the bytes. The declared Content-Type is ignored. WebM duration is the span from the earliest block timecode to the latest, and TimecodeScale is read only from Segment > Info. MP4 duration is per track from `stts`, `trun`, and the track's `trex` default sample duration (`mehd` still counts). A second `moov`, a repeated track id, or a track that has samples but no duration is rejected. MP3 duration sums each frame at that frame's sample rate and keeps going after junk. WAV duration sums every `data` chunk. The MP4 box walk stops at the parent box and at 50,000 boxes. The Worker sets `limits.cpu_ms` to 2000.
 - 8 model actions per browser per hour, 8 per network per hour, and 80 per rolling 24 hours. The network key is an HMAC of the IPv4 address or the IPv6 /56. The address is not stored. The visitor cookie is `__Host-oj_vid` (Secure, Path=/, no Domain).
 - Burst limits use Workers rate-limit namespaces `7451` (judge), `7452` (compare), and `7453` (read).
 - Turnstile runs before any model call. A missing secret, or the test secret on a public host, fails closed.
@@ -66,7 +66,8 @@ bun run dev
 - `bun test` and `bun run typecheck`.
 - `bun run dev`, then `bun run smoke` against the local stub. Results must say the local stub was used.
 - A judge POST with no `Content-Length` returns 411, and the judge rate limit runs before the body is parsed or Turnstile is checked.
-- Uploads are base64-encoded once, in 3-byte chunks, and that string is reused if comparison also needs it. A 6 MB video should not encode the bytes twice.
+- Uploads are base64-encoded once with `Buffer.from(bytes.buffer, bytes.byteOffset, bytes.length)`, and that string is reused if comparison also needs it. A 6 MB video should not encode the bytes twice.
+- The Llama 3.2 11B Vision `image` field in the model schema is an integer array or a binary string. Both forms are deprecated in favor of `messages`. This demo still sends the integer array. Comparison images are also capped at 512 KB and 2 megapixels, which is tighter than the omni image cap.
 
 ## Deploy
 

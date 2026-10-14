@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.2
+
+- The MP4 box walk stays inside the parent box, treats a zero size as that end, and stops after 50,000 boxes. `limits.cpu_ms` is 2000.
+- An 8-byte all-ones EBML size is unknown, not a rejected integer. Chrome timeslice WebM and fMP4 durations read, including `trex` defaults.
+- WebM duration is the block-timecode span, and TimecodeScale comes only from Segment > Info. MP3 resyncs and sums each frame's own rate. WAV sums every data chunk.
+- Comparison images are capped at 512 KB and 2 megapixels. Media responses are private until `expires_at`, and a bad Range or a failed precondition returns 416 or 412.
+
 ## 0.1.1
 
 - Video duration is read from WebM block timecodes and from fMP4 `mehd` or `trun`, so a browser recording is not rejected for a missing header.
