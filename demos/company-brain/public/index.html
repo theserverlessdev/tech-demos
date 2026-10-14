@@ -78,12 +78,13 @@
         </header>
         <div class="token" id="token" hidden>
           <p class="token__title">Ingest token</p>
-          <p>Shown once. The server stores only a hash. Webhooks send it as <span class="mono">X-Ingest-Token</span>.</p>
+          <p>Shown once by the server. This tab keeps it until you dismiss it. The server stores only a hash. Webhooks send it as <span class="mono">X-Ingest-Token</span>.</p>
           <input id="token-value" type="password" readonly autocomplete="off" spellcheck="false" />
           <div class="token__row">
             <button class="btn" id="token-copy" type="button">Copy token</button>
             <button class="btn btn-ghost" id="token-dismiss" type="button">Dismiss</button>
           </div>
+          <p class="hint" id="token-status" role="status"></p>
         </div>
         <section>
           <h3>Facts</h3>

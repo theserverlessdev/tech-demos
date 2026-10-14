@@ -25,7 +25,9 @@
   "vars": {
     "AI_MODEL": "@cf/zai-org/glm-5.3-flash",
     "ORG_TTL_HOURS": "24",
-    "TURNSTILE_SITE_KEY": "1x00000000000000000000AA"
+    "TURNSTILE_SITE_KEY": "1x00000000000000000000AA",
+    // Local-only HMAC key so unsigned org ids 404 before a Durable Object is created.
+    "ORG_ID_KEY": "local-dev-org-id-key-not-for-production"
   },
   "workers_dev": true,
   "observability": { "enabled": true }

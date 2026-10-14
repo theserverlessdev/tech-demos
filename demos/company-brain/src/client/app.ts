@@ -2,6 +2,7 @@ import type { ApiError, AppConfig, ChatMessage, ChatResult, CreatedOrg, MemoryIt
 
 const ORG_KEY = "company-brain-org";
 const INGEST_KEY = "company-brain-ingest";
+const DROP_STATUSES = new Set([401, 403, 404, 410]);
 
 type TurnstileApi = {
   render: (el: HTMLElement, opts: { sitekey: string; action?: string; callback?: (token: string) => void }) => string;
@@ -73,6 +74,7 @@ const stripText = $("strip-text");
 const gateError = $("gate-error");
 const chatError = $("chat-error");
 const addError = $("add-error");
+const tokenStatus = $("token-status");
 const log = $("log");
 const facts = $("facts");
 const decisions = $("decisions");
@@ -141,10 +143,21 @@ function showIngest(token: string | null): void {
   if (!token) {
     tokenBox.hidden = true;
     tokenValue.value = "";
+    tokenStatus.textContent = "";
     return;
   }
   tokenBox.hidden = false;
   tokenValue.value = token;
+}
+
+function dropOrg(message: string): void {
+  sessionStorage.removeItem(ORG_KEY);
+  sessionStorage.removeItem(INGEST_KEY);
+  org = null;
+  gate.hidden = false;
+  workspace.hidden = true;
+  showIngest(null);
+  gateError.textContent = message;
 }
 
 async function mountWidget(el: HTMLElement, current: string | null, onToken: () => void): Promise<string | null> {
@@ -161,7 +174,7 @@ function widgetToken(id: string | null): string {
   return turnstileApi()?.getResponse(id) || "";
 }
 
-async function refresh(orgId: string): Promise<boolean> {
+async function refresh(orgId: string, errEl: HTMLElement): Promise<boolean> {
   const res = await call<OrgView>(`/api/orgs/${orgId}`);
   if (res.status === 200 && res.data && "facts" in res.data) {
     org = res.data;
@@ -170,12 +183,12 @@ async function refresh(orgId: string): Promise<boolean> {
     paint();
     return true;
   }
-  sessionStorage.removeItem(ORG_KEY);
-  sessionStorage.removeItem(INGEST_KEY);
-  org = null;
-  gate.hidden = false;
-  workspace.hidden = true;
-  gateError.textContent = messageOf(res.data, "This sandbox is gone. Create another.");
+  const message = messageOf(res.data, "This sandbox is gone. Create another.");
+  if (DROP_STATUSES.has(res.status)) {
+    dropOrg(message);
+    return false;
+  }
+  errEl.textContent = message;
   return false;
 }
 
@@ -188,7 +201,7 @@ async function boot(): Promise<void> {
   });
   if (!gateWidget) createBtn.disabled = false;
   const saved = sessionStorage.getItem(ORG_KEY);
-  if (saved && (await refresh(saved))) {
+  if (saved && (await refresh(saved, gateError))) {
     showIngest(sessionStorage.getItem(INGEST_KEY));
     sendBtn.disabled = true;
     chatWidget = await mountWidget($("chat-turnstile"), null, () => {
@@ -206,26 +219,31 @@ createBtn.addEventListener("click", async () => {
     return;
   }
   createBtn.disabled = true;
-  const res = await call<CreatedOrg>("/api/orgs", { method: "POST", body: { turnstileToken } });
-  createBtn.disabled = false;
-  turnstileApi()?.reset(gateWidget ?? undefined);
-  if (res.status !== 201 || !res.data || !("sessionToken" in res.data)) {
-    gateError.textContent = messageOf(res.data, "Could not create the org.");
-    return;
+  try {
+    const res = await call<CreatedOrg>("/api/orgs", { method: "POST", body: { turnstileToken } });
+    if (res.status !== 201 || !res.data || !("sessionToken" in res.data)) {
+      gateError.textContent = messageOf(res.data, "Could not create the org.");
+      return;
+    }
+    sessionStorage.setItem(ORG_KEY, res.data.id);
+    sessionStorage.setItem(INGEST_KEY, res.data.ingestToken);
+    org = res.data;
+    gate.hidden = true;
+    workspace.hidden = false;
+    showIngest(res.data.ingestToken);
+    paint();
+    sendBtn.disabled = true;
+    chatWidget = await mountWidget($("chat-turnstile"), chatWidget, () => {
+      sendBtn.disabled = false;
+    });
+    if (!chatWidget) sendBtn.disabled = false;
+    question.focus();
+  } catch {
+    gateError.textContent = "Could not reach the Worker. Try again.";
+  } finally {
+    createBtn.disabled = false;
+    turnstileApi()?.reset(gateWidget ?? undefined);
   }
-  sessionStorage.setItem(ORG_KEY, res.data.id);
-  sessionStorage.setItem(INGEST_KEY, res.data.ingestToken);
-  org = res.data;
-  gate.hidden = true;
-  workspace.hidden = false;
-  showIngest(res.data.ingestToken);
-  paint();
-  sendBtn.disabled = true;
-  chatWidget = await mountWidget($("chat-turnstile"), chatWidget, () => {
-    sendBtn.disabled = false;
-  });
-  if (!chatWidget) sendBtn.disabled = false;
-  question.focus();
 });
 
 document.querySelectorAll<HTMLButtonElement>("[data-ask]").forEach((button) => {
@@ -247,14 +265,20 @@ $("composer").addEventListener("submit", async (event) => {
     return;
   }
   sendBtn.disabled = true;
-  const res = await call<ChatResult>(`/api/orgs/${org.id}/chat`, { method: "POST", body: { message, turnstileToken } });
-  turnstileApi()?.reset(chatWidget ?? undefined);
-  if (res.status !== 200 || !res.data || !("answer" in res.data)) {
-    chatError.textContent = messageOf(res.data, "The question did not go through.");
-    return;
+  try {
+    const res = await call<ChatResult>(`/api/orgs/${org.id}/chat`, { method: "POST", body: { message, turnstileToken } });
+    if (res.status !== 200 || !res.data || !("answer" in res.data)) {
+      chatError.textContent = messageOf(res.data, "The question did not go through.");
+      return;
+    }
+    question.value = "";
+    await refresh(org.id, chatError);
+  } catch {
+    chatError.textContent = "Could not reach the Worker. Try again.";
+  } finally {
+    sendBtn.disabled = false;
+    turnstileApi()?.reset(chatWidget ?? undefined);
   }
-  question.value = "";
-  await refresh(org.id);
 });
 
 $("add").addEventListener("submit", async (event) => {
@@ -268,17 +292,22 @@ $("add").addEventListener("submit", async (event) => {
   if (!text) return;
   const button = $("add-btn") as HTMLButtonElement;
   button.disabled = true;
-  const res = await call<{ item: MemoryItem }>(`/api/orgs/${org.id}/${kind === "decision" ? "decisions" : "facts"}`, {
-    method: "POST",
-    body: { text, author: author || undefined, source: source || undefined },
-  });
-  button.disabled = false;
-  if (res.status !== 201) {
-    addError.textContent = messageOf(res.data, "Could not save that.");
-    return;
+  try {
+    const res = await call<{ item: MemoryItem }>(`/api/orgs/${org.id}/${kind === "decision" ? "decisions" : "facts"}`, {
+      method: "POST",
+      body: { text, author: author || undefined, source: source || undefined },
+    });
+    if (res.status !== 201) {
+      addError.textContent = messageOf(res.data, "Could not save that.");
+      return;
+    }
+    ($("add-text") as HTMLTextAreaElement).value = "";
+    await refresh(org.id, addError);
+  } catch {
+    addError.textContent = "Could not reach the Worker. Try again.";
+  } finally {
+    button.disabled = false;
   }
-  ($("add-text") as HTMLTextAreaElement).value = "";
-  await refresh(org.id);
 });
 
 $("token-copy").addEventListener("click", async () => {
@@ -286,10 +315,11 @@ $("token-copy").addEventListener("click", async () => {
   if (!value) return;
   try {
     await navigator.clipboard.writeText(value);
-    stripText.textContent = "Ingest token copied.";
+    tokenStatus.textContent = "Ingest token copied.";
   } catch {
     tokenValue.type = "text";
     tokenValue.select();
+    tokenStatus.textContent = "Select the token and copy it.";
   }
 });
 

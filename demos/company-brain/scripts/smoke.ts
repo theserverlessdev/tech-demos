@@ -1,8 +1,9 @@
-// Smoke: bun run scripts/smoke.ts [baseUrl]
+// Smoke: bun run scripts/smoke.ts [baseUrl] [--require-ai]
 // Uses Cloudflare's published Turnstile dummy token. Prints no session or ingest secrets.
 import type { AppConfig, ChatResult, CreatedOrg, MemoryItem, OrgView } from "../src/shared/types";
 
 const base = (process.argv.find((arg) => arg.startsWith("http")) ?? "http://127.0.0.1:8787").replace(/\/$/, "");
+const requireAi = process.argv.includes("--require-ai");
 const DUMMY = "XXXX.DUMMY.TOKEN.XXXX";
 
 let failures = 0;
@@ -14,11 +15,13 @@ function check(label: string, ok: unknown, detail?: unknown) {
   if (!ok) failures++;
 }
 
-async function call<T>(path: string, init: { method?: string; body?: unknown; session?: string; ingest?: string } = {}) {
+async function call<T>(path: string, init: { method?: string; body?: unknown; session?: string; ingest?: string; contentType?: string | null } = {}) {
   const headers: Record<string, string> = {};
   if (init.session) headers.authorization = `Bearer ${init.session}`;
   if (init.ingest) headers["x-ingest-token"] = init.ingest;
-  if (init.body !== undefined) headers["content-type"] = "application/json";
+  if (init.body !== undefined && init.contentType !== null) {
+    headers["content-type"] = init.contentType ?? "application/json";
+  }
   const res = await fetch(`${base}${path}`, {
     method: init.method ?? "GET",
     headers,
@@ -28,7 +31,7 @@ async function call<T>(path: string, init: { method?: string; body?: unknown; se
   return { status: res.status, data };
 }
 
-console.log(`Target: ${base}`);
+console.log(`Target: ${base}${requireAi ? " (--require-ai)" : ""}`);
 
 const health = await call<{ ok: boolean; model: string }>("/api/health");
 check("health is ok", health.status === 200 && health.data?.ok === true, health.data);
@@ -53,12 +56,19 @@ if (!a?.id || !b?.id || !a.sessionToken || !b.sessionToken || !a.ingestToken || 
   process.exit(1);
 }
 
+check("org ids keep the org_ + 32 hex shape", /^org_[0-9a-f]{32}$/.test(a.id) && /^org_[0-9a-f]{32}$/.test(b.id), { a: a.id, b: b.id });
 check("seed includes the Thursday warehouse fact", a.facts.some((fact) => fact.text.includes("Thursdays")), a.facts.map((fact) => fact.id));
 check("seed includes a refund decision", a.decisions.some((item) => item.text.includes("$200")));
 check("create response does not include the hash columns", !("session_hash" in a) && !("ingest_hash" in a));
+const seededCite = a.messages.find((message) => message.role === "assistant" && message.sources.some((source) => source.snippet.includes("Thursday")));
+check("seed transcript includes a cited shipping answer", Boolean(seededCite), a.messages.map((message) => message.role));
 
 const bare = await call<OrgView>(`/api/orgs/${a.id}`);
 check("read without a session is 401", bare.status === 401, bare.data);
+
+const unsigned = `org_${"ab".repeat(16)}`;
+const unsignedRes = await call<OrgView>(`/api/orgs/${unsigned}`);
+check("unsigned org id is 404 before a Durable Object is created", unsignedRes.status === 404, unsignedRes.status);
 
 const crossed = await call<OrgView>(`/api/orgs/${a.id}`, { session: b.sessionToken });
 check("org B's session cannot read org A", crossed.status === 403, crossed.data);
@@ -66,6 +76,14 @@ check("org B's session cannot read org A", crossed.status === 403, crossed.data)
 const own = await call<OrgView>(`/api/orgs/${a.id}/memory`, { session: a.sessionToken });
 check("org A's session can read its memory", own.status === 200 && (own.data?.facts.length ?? 0) >= 3, own.status);
 check("a later read does not echo the ingest token", own.data ? !JSON.stringify(own.data).includes(a.ingestToken) : false);
+
+const plain = await call(`/api/orgs/${a.id}/facts`, {
+  method: "POST",
+  session: a.sessionToken,
+  contentType: "text/plain",
+  body: { text: "This should not land.", author: "Smoke", source: "smoke" },
+});
+check("cookie-authenticated write without JSON content-type is 415", plain.status === 415, plain.status);
 
 const added = await call<{ item: MemoryItem }>(`/api/orgs/${a.id}/facts`, {
   method: "POST",
@@ -130,12 +148,21 @@ const known = await call<ChatResult>(`/api/orgs/${a.id}/chat`, {
 });
 const cited = known.status === 200 && known.data?.sources.some((source) => source.kind === "fact" && source.snippet.includes("Thursday"));
 const unavailable = known.status === 503 && known.data?.error?.code === "ai_unavailable";
-check("shipping question cites the Thursday fact, or Workers AI is unavailable", Boolean(cited || unavailable), {
-  status: known.status,
-  answer: known.data?.answer?.slice(0, 140),
-  sources: known.data?.sources?.map((source) => source.id),
-  code: known.data?.error?.code,
-});
+if (requireAi) {
+  check("shipping question cites the Thursday fact", Boolean(cited), {
+    status: known.status,
+    answer: known.data?.answer?.slice(0, 140),
+    sources: known.data?.sources?.map((source) => source.id),
+    code: known.data?.error?.code,
+  });
+} else {
+  check("shipping question cites the Thursday fact, or Workers AI is unavailable", Boolean(cited || unavailable), {
+    status: known.status,
+    answer: known.data?.answer?.slice(0, 140),
+    sources: known.data?.sources?.map((source) => source.id),
+    code: known.data?.error?.code,
+  });
+}
 if (cited) console.log(`      grounded: ${known.data?.answer.slice(0, 120)}`);
 if (unavailable) console.log("      Workers AI binding did not answer; no guess was stored.");
 
@@ -143,11 +170,18 @@ const after = await call<OrgView>(`/api/orgs/${a.id}`, { session: a.sessionToken
 const leaked = after.data?.messages.some((message) => message.text.includes(a.ingestToken) || message.text.includes(a.sessionToken));
 check("transcript does not contain tokens", after.status === 200 && !leaked);
 
-const missing = await call(`/api/orgs/org_${"ab".repeat(16)}`, { session: a.sessionToken });
-check("unknown org id is 404", missing.status === 404, missing.status);
+const missing = await call(`/api/orgs/org_${"cd".repeat(16)}`, { session: a.sessionToken });
+check("unknown unsigned org id is 404", missing.status === 404, missing.status);
 
 const malformed = await call("/api/orgs/not-an-org");
 check("malformed org id is 400", malformed.status === 400, malformed.status);
+
+const badPath = await fetch(`${base}/api/orgs/%E0%A4%A`);
+check("malformed percent-encoding is 400", badPath.status === 400, badPath.status);
+
+const nested = await fetch(`${base}/foo/assets/app.js`);
+check("unknown nested path is 404", nested.status === 404, nested.status);
+check("unknown nested path is not HTML", !(nested.headers.get("content-type") ?? "").includes("text/html"), nested.headers.get("content-type"));
 
 if (failures) {
   console.error(`\n${failures} check(s) failed.`);
