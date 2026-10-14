@@ -68,7 +68,7 @@ export async function claimCompare(env: Env, ipKey: string, now = Date.now()): P
     if (globalUsed >= dailyCap) {
       throw new HttpError(503, "daily", "The shared Workers AI budget for today is used up. Try again tomorrow.");
     }
-    throw new HttpError(429, "daily", "This network has used its compare budget for today.");
+    throw new HttpError(429, "ip_daily", "This network has used its compare budget for today.");
   }
   return id;
 }

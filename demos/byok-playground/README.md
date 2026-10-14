@@ -18,7 +18,7 @@ Walkthrough stills and a short video: [artifacts/](./artifacts/).
 - Paste a key, an https base URL, and a model id, then stream a chat. Multi-turn sends the transcript (at most 15 turns, 4000 characters each).
 - List models from `GET /models`. The Worker returns only `{ data: [{ id }] }`.
 - Send the same prompt to your model and to Workers AI. Read latency, time to first token, and tokens where the endpoint reports them. Each compare spends one of today’s shared runs.
-- Probe streaming, tools / function calling, JSON schema `response_format`, and vision. Tools pass only with `tool_calls`; JSON schema pass only if the content parses and `ok` is a boolean; vision asks about a known-colour pixel. Otherwise the result is fail, unsupported, or inconclusive.
+- Probe streaming, tools / function calling, JSON schema `response_format`, and vision. Tools pass only with `tool_calls`; JSON schema pass only with the required keys and a nonce; vision must name the left pixel of a two-pixel image. A missing model is reported once. Otherwise the result is fail, unsupported, or inconclusive.
 
 **What you could build**
 
@@ -31,8 +31,8 @@ Walkthrough stills and a short video: [artifacts/](./artifacts/).
 - Only `/chat/completions` and `/models` under the pasted base. https on port 443 (`http://localhost` only when `ENVIRONMENT=local`).
 - No redirects. Hop-by-hop headers and cookies are stripped. Visitor cookies are never forwarded.
 - DNS to the visitor URL is best-effort against rebinding. `global_fetch_strictly_public` (platform egress) is the backstop.
-- Compare spends the shared Workers AI budget and requires Turnstile action `compare`. Chat is not stored; D1 holds only the compare budget.
-- Concurrent stream caps are per isolate, not a global cluster lock.
+- Compare spends the shared Workers AI budget and requires Turnstile action `compare`. Chat is not stored; D1 holds only the compare budget. `TURNSTILE_SITE_KEY=REPLACE_ME` (or `ai: off`) disables compare only — chat and model listing still work.
+- Streams are rate-limited per network (`IPv4 /32`, `IPv6 /64`). There is no per-isolate concurrency lock.
 - Local `bun run dev` omits the Workers AI binding and uses a labelled stub.
 
 ## What it proves
@@ -42,7 +42,7 @@ Walkthrough stills and a short video: [artifacts/](./artifacts/).
 | **Workers + Static Assets** | Serves the playground and the proxy API from one Worker on the demo subdomain. |
 | **SSRF guard** | Blocks private, loopback, link-local, CGNAT, metadata, internal hostnames (including `.svc`, `.home.arpa`, `theserverless.dev`, `*.workers.dev`), and IP literals. DNS is best-effort; egress is the backstop. |
 | **Rate limiting** | Chat `7461`, models `7462`, compare `7463`, keyed by network (`IPv4 /32`, `IPv6 /64`). |
-| **Turnstile** | One pass mints an HMAC-signed session cookie. Compare requires action `compare`. Fails closed without a real secret when `ENVIRONMENT` is not `local`. `TURNSTILE_SITE_KEY=REPLACE_ME` is off. |
+| **Turnstile** | One pass mints an HMAC-signed session cookie (issued-at + network key, 12h, rejected on network change). Compare requires action `compare`. Fails closed without a real secret when `ENVIRONMENT` is not `local`. The test secret also requires a localhost request. `TURNSTILE_SITE_KEY=REPLACE_ME` turns compare off, not the proxy. |
 | **D1** | Atomic daily compare budget. Rows store an HMAC’d `ip_key`, never the address. |
 | **Workers AI** | The “ours” side of compare. Local wrangler config stubs it. |
 
@@ -93,7 +93,7 @@ Do **not** deploy from this PR unless the owner asks. When it is time:
 | Name | Where | What |
 | --- | --- | --- |
 | D1 `tech-demos-byok-playground` | `wrangler d1 create` then paste `database_id` into `wrangler.jsonc` | Compare budget table. Apply `migrations/0001_init.sql`. |
-| `TURNSTILE_SITE_KEY` | `wrangler.jsonc` `vars` (public) | Production widget site key. `REPLACE_ME` means compare is off. Local uses the test key. |
+| `TURNSTILE_SITE_KEY` | `wrangler.jsonc` `vars` (public) | Production widget site key. `REPLACE_ME` means compare is off; the proxy still runs. Local uses the test key. |
 | `TURNSTILE_SECRET` | Worker secret / `.dev.vars` | Widget secret. Never commit it. |
 | `IP_HASH_SECRET` | Worker secret / `.dev.vars` | HMAC key for `ip_key`. Never commit it. |
 | `SESSION_SECRET` | Worker secret / `.dev.vars` | HMAC key for the session cookie. Never commit it. |

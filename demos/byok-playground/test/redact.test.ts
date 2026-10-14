@@ -13,6 +13,10 @@ describe("key never appears in logs or errors", () => {
     expect(cleaned).toContain("[redacted]");
   });
 
+  test("generic Bearer/sk- patterns are not applied by exact-key success redaction", () => {
+    expect(redactExact("Bearer other-token-not-the-key sk-not-the-pasted-key", [KEY])).toBe("Bearer other-token-not-the-key sk-not-the-pasted-key");
+  });
+
   test("success-body redactor only replaces the exact key, holding a prefix across chunks", () => {
     const redactor = createExactRedactor([KEY]);
     const prefix = KEY.slice(0, 8);

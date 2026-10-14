@@ -1,6 +1,7 @@
 import { LIMITS } from "../shared/limits";
+import { redactExact } from "../shared/text";
+import { readWithIdle } from "./bytes";
 import { HttpError } from "./errors";
-import { redact } from "./redact";
 
 export type StreamStats = {
   text: string;
@@ -26,7 +27,7 @@ function contentFromJson(parsed: unknown): { text: string; tokens: number | null
 }
 
 function takeLine(line: string, secrets: readonly string[], acc: StreamStats, started: number): void {
-  const cleaned = redact(line, secrets);
+  const cleaned = redactExact(line, secrets);
   const trimmed = cleaned.trim();
   if (!trimmed || trimmed === "data: [DONE]") return;
   const payload = trimmed.startsWith("data:") ? trimmed.slice(5).trim() : trimmed;
@@ -43,13 +44,43 @@ function takeLine(line: string, secrets: readonly string[], acc: StreamStats, st
   }
 }
 
-/** Parse OpenAI-style SSE into text + TTFT. Caps total bytes and a carry without a newline. */
+/** Split a buffer into complete SSE events (blank-line terminated) and the leftover carry. */
+export function splitSseEvents(buffer: string): { events: string[]; rest: string } {
+  const events: string[] = [];
+  let rest = buffer;
+  while (true) {
+    const idxN = rest.indexOf("\n\n");
+    const idxR = rest.indexOf("\r\n\r\n");
+    let idx = -1;
+    let sep = 2;
+    if (idxR !== -1 && (idxN === -1 || idxR <= idxN)) {
+      idx = idxR;
+      sep = 4;
+    } else if (idxN !== -1) {
+      idx = idxN;
+      sep = 2;
+    }
+    if (idx === -1) break;
+    events.push(rest.slice(0, idx + sep));
+    rest = rest.slice(idx + sep);
+  }
+  return { events, rest };
+}
+
+export type ConsumeSseOptions = {
+  idleMs?: number;
+  overallMs?: number;
+  signal?: AbortSignal;
+};
+
+/** Parse OpenAI-style SSE into text + TTFT. Caps total bytes and a carry without a newline. Idle + overall timeouts. */
 export async function consumeSse(
   stream: ReadableStream<Uint8Array> | null,
   secrets: readonly string[],
   started: number,
-  signal?: AbortSignal,
+  signalOrOptions?: AbortSignal | ConsumeSseOptions,
 ): Promise<StreamStats> {
+  const options: ConsumeSseOptions = signalOrOptions instanceof AbortSignal ? { signal: signalOrOptions } : (signalOrOptions ?? {});
   const acc: StreamStats = { text: "", ttftMs: null, tokens: null, latencyMs: 0 };
   if (!stream) {
     acc.latencyMs = Date.now() - started;
@@ -59,13 +90,29 @@ export async function consumeSse(
   const decoder = new TextDecoder();
   let carry = "";
   let seen = 0;
+  const idleMs = options.idleMs ?? LIMITS.idleTimeoutMs;
+  const overallMs = options.overallMs ?? LIMITS.overallTimeoutMs;
   try {
     while (true) {
-      if (signal?.aborted) {
+      if (options.signal?.aborted) {
         await reader.cancel().catch(() => undefined);
         throw new HttpError(499, "cancelled", "The stream was cancelled.");
       }
-      const chunk = await reader.read();
+      const remaining = overallMs - (Date.now() - started);
+      if (remaining <= 0) {
+        await reader.cancel().catch(() => undefined);
+        throw new HttpError(504, "timeout", "The stream reached the overall time cap.");
+      }
+      let chunk: ReadableStreamReadResult<Uint8Array>;
+      try {
+        chunk = await readWithIdle(reader, Math.min(idleMs, remaining), options.signal);
+      } catch (err) {
+        await reader.cancel().catch(() => undefined);
+        const message = err instanceof Error ? err.message : "socket";
+        if (message === "cancelled") throw new HttpError(499, "cancelled", "The stream was cancelled.");
+        if (message === "idle") throw new HttpError(504, "timeout", "The endpoint timed out waiting for the next chunk.");
+        throw new HttpError(502, "upstream", "The endpoint connection was lost.");
+      }
       if (chunk.done) break;
       seen += chunk.value.byteLength;
       if (seen > LIMITS.sseBytes) {
@@ -86,10 +133,19 @@ export async function consumeSse(
   } finally {
     acc.latencyMs = Date.now() - started;
   }
-  acc.text = redact(acc.text, secrets);
+  acc.text = redactExact(acc.text, secrets);
   return acc;
 }
 
 export function encodeSse(event: string, data: unknown): string {
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 }
+
+export function classifyStreamError(err: unknown): { socket: boolean; overall: boolean; idle: boolean; message: string } {
+  const message = err instanceof Error ? err.message : "socket";
+  if (message === "idle") return { socket: false, overall: false, idle: true, message: "The endpoint timed out waiting for the next chunk." };
+  if (message === "cancelled") return { socket: false, overall: false, idle: false, message: "The stream was cancelled." };
+  if (message === "overall") return { socket: false, overall: true, idle: false, message: "The stream reached the overall time cap." };
+  return { socket: true, overall: false, idle: false, message: "The endpoint connection was lost." };
+}
+

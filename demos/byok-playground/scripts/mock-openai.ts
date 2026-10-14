@@ -17,11 +17,14 @@ async function chat(req: Request): Promise<Response> {
     model?: string;
     stream?: boolean;
     tools?: unknown;
-    response_format?: { type?: string };
+    response_format?: { type?: string; json_schema?: { schema?: { properties?: { nonce?: { const?: string } } } } };
     messages?: { content?: unknown }[];
   };
   if (body.model === "fail-model") {
     return json({ error: { message: "Incorrect API key provided: sk-should-never-leak" } }, 401);
+  }
+  if (body.model === "missing-model") {
+    return json({ error: { message: "model_not_found", code: "model_not_found" } }, 404);
   }
   const content = Array.isArray(body.messages)
     ? body.messages.some((message) => Array.isArray(message.content) && message.content.some((part) => typeof part === "object" && part && "image_url" in part))
@@ -35,7 +38,8 @@ async function chat(req: Request): Promise<Response> {
     });
   }
   if (body.response_format?.type === "json_schema") {
-    return json({ choices: [{ message: { role: "assistant", content: "{\"ok\":true}" } }] });
+    const nonce = body.response_format.json_schema?.schema?.properties?.nonce?.const ?? "nonce";
+    return json({ choices: [{ message: { role: "assistant", content: JSON.stringify({ ok: true, nonce }) } }] });
   }
   if (body.stream) {
     const words = content.split(" ");

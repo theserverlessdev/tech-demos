@@ -1,6 +1,6 @@
 import { HttpError } from "./errors";
 import { isLocalEnv, publicSiteKey } from "./env";
-import { clientIp } from "./origin";
+import { clientIp, isLocalRequest } from "./origin";
 
 export const TURNSTILE_TEST_SECRET = "1x0000000000000000000000000000000AA";
 export const TURNSTILE_TEST_SITE_KEY = "1x00000000000000000000AA";
@@ -67,6 +67,9 @@ export async function requireTurnstile(env: Env, request: Request, token: unknow
   const resolved = resolveTurnstileSecret(env.ENVIRONMENT, env.TURNSTILE_SECRET);
   if (!resolved.ok) {
     throw new HttpError(503, "turnstile_unconfigured", "Compare is off until TURNSTILE_SECRET is set to a real widget secret.");
+  }
+  if (resolved.test && !isLocalRequest(request)) {
+    throw new HttpError(503, "turnstile_unconfigured", "The test Turnstile secret is only valid on localhost when ENVIRONMENT is local.");
   }
   const value = typeof token === "string" ? token.trim() : "";
   const ok = await verifyTurnstile(resolved.secret, value, clientIp(request), new URL(request.url).hostname, action);

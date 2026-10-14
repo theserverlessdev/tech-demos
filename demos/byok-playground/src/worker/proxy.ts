@@ -1,17 +1,18 @@
 import { LIMITS, type AllowedSuffix } from "../shared/limits";
-import { readCappedBytes, rejectOversizedContentLength } from "./bytes";
+import { isPrintableAsciiKey, redactExact } from "../shared/text";
+import { readCappedBytes, readWithIdle, rejectOversizedContentLength } from "./bytes";
 import { HttpError } from "./errors";
 import { apiHeaders, mimeType, outboundHeaders } from "./headers";
 import { isRecord } from "./parse";
-import { createExactRedactor, redact, redactExact } from "./redact";
+import { redact } from "./redact";
 import { authorizeNavigation, cloudflareDoh, decisionToError, joinAllowedPath, type AssessOptions, type Lookup } from "./ssrf";
-import { encodeSse } from "./stream";
+import { classifyStreamError, encodeSse, splitSseEvents } from "./stream";
 
 export function readApiKey(body: Record<string, unknown>): string {
   const key = typeof body.apiKey === "string" ? body.apiKey.trim() : "";
   if (!key) throw new HttpError(400, "key", "Paste an API key. It is sent in the JSON body, not stored.");
   if (key.length > LIMITS.maxKeyChars) throw new HttpError(400, "key", "That API key is too long.");
-  if (/[\r\n]/.test(key)) throw new HttpError(400, "key", "That API key is not allowed.");
+  if (!isPrintableAsciiKey(key)) throw new HttpError(400, "key", "That API key may only contain printable ASCII.");
   return key;
 }
 
@@ -77,88 +78,145 @@ type CapOptions = {
   sse?: boolean;
   exact?: boolean;
   signal?: AbortSignal;
+  idleMs?: number;
+  overallMs?: number;
 };
 
-function failFrame(controller: ReadableStreamDefaultController<Uint8Array>, sse: boolean, message: string): void {
-  if (sse) controller.enqueue(new TextEncoder().encode(encodeSse("error", { message })));
-  controller.close();
+function encodeText(encoder: TextEncoder, text: string): Uint8Array {
+  return encoder.encode(text);
 }
 
+/**
+ * SSE passthrough: parse complete events, redact each event (a key cannot straddle
+ * events we forward), and loop in pull() until something is enqueued or the stream ends.
+ * Keep-alive comment lines (`: ping`) are forwarded as their own events.
+ */
 export function cappedBody(upstream: Response, secrets: readonly string[], options: CapOptions = {}): ReadableStream<Uint8Array> {
   const maxBytes = options.maxBytes ?? LIMITS.responseBytes;
   const reader = upstream.body?.getReader();
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
-  const redactor = options.exact ? createExactRedactor(secrets) : null;
   const started = Date.now();
+  const idleMs = options.idleMs ?? LIMITS.idleTimeoutMs;
+  const overallMs = options.overallMs ?? LIMITS.overallTimeoutMs;
+  const sse = Boolean(options.sse);
+  const exact = options.exact !== false;
   let seen = 0;
   let stopped = false;
+  let carry = "";
+
+  const redactChunk = (text: string): string => (exact ? redactExact(text, secrets) : redact(text, secrets));
+
+  const flushCompleteEvents = (controller: ReadableStreamDefaultController<Uint8Array>) => {
+    if (!sse || !carry) return;
+    const split = splitSseEvents(carry);
+    for (const event of split.events) {
+      const out = redactChunk(event);
+      if (out) controller.enqueue(encodeText(encoder, out));
+    }
+    carry = split.rest;
+  };
+
+  const failFrame = (controller: ReadableStreamDefaultController<Uint8Array>, message: string) => {
+    flushCompleteEvents(controller);
+    if (sse) {
+      if (carry) controller.enqueue(encodeText(encoder, "\n\n"));
+      controller.enqueue(encodeText(encoder, encodeSse("error", { message })));
+    }
+    controller.close();
+  };
 
   const stop = async (controller: ReadableStreamDefaultController<Uint8Array>, message?: string) => {
     if (stopped) return;
     stopped = true;
-    if (message) failFrame(controller, Boolean(options.sse), message);
-    else controller.close();
+    if (message) failFrame(controller, message);
+    else {
+      flushCompleteEvents(controller);
+      if (carry) {
+        const out = redactChunk(carry);
+        if (out) controller.enqueue(encodeText(encoder, out));
+      }
+      controller.close();
+    }
+    carry = "";
     await reader?.cancel().catch(() => undefined);
   };
 
   if (!reader) {
     return new ReadableStream({
       start(controller) {
-        if (redactor) {
-          const tail = redactor.flush();
-          if (tail) controller.enqueue(encoder.encode(tail));
-        }
         controller.close();
       },
     });
   }
 
+  const emitEvents = (controller: ReadableStreamDefaultController<Uint8Array>, buffer: string, last: boolean): boolean => {
+    if (sse) {
+      const split = splitSseEvents(buffer);
+      carry = split.rest;
+      let emitted = false;
+      for (const event of split.events) {
+        const out = redactChunk(event);
+        if (out) {
+          controller.enqueue(encodeText(encoder, out));
+          emitted = true;
+        }
+      }
+      if (last && carry) {
+        const out = redactChunk(carry);
+        carry = "";
+        if (out) {
+          controller.enqueue(encodeText(encoder, out));
+          emitted = true;
+        }
+      }
+      return emitted;
+    }
+    const out = redactChunk(buffer);
+    carry = "";
+    if (out) {
+      controller.enqueue(encodeText(encoder, out));
+      return true;
+    }
+    return false;
+  };
+
   return new ReadableStream({
     async pull(controller) {
       if (stopped) return;
-      const remaining = LIMITS.overallTimeoutMs - (Date.now() - started);
-      if (remaining <= 0) {
-        await stop(controller, "The endpoint took too long.");
-        return;
+      while (!stopped) {
+        const remaining = overallMs - (Date.now() - started);
+        if (remaining <= 0) {
+          await stop(controller, "The stream reached the overall time cap.");
+          return;
+        }
+        if (options.signal?.aborted) {
+          await stop(controller, "The stream was cancelled.");
+          return;
+        }
+        let chunk: ReadableStreamReadResult<Uint8Array>;
+        try {
+          chunk = await readWithIdle(reader, Math.min(idleMs, remaining), options.signal);
+        } catch (err) {
+          await stop(controller, classifyStreamError(err).message);
+          return;
+        }
+        if (chunk.done) {
+          carry += decoder.decode();
+          emitEvents(controller, carry, true);
+          await stop(controller);
+          return;
+        }
+        seen += chunk.value.byteLength;
+        if (seen > maxBytes) {
+          await stop(controller, "The endpoint response was too large.");
+          return;
+        }
+        const text = decoder.decode(chunk.value, { stream: true });
+        const buffer = sse ? carry + text : text;
+        const emitted = emitEvents(controller, buffer, false);
+        if (emitted) return;
       }
-      if (options.signal?.aborted) {
-        await stop(controller, "The stream was cancelled.");
-        return;
-      }
-      const wait = Math.min(LIMITS.idleTimeoutMs, remaining);
-      let chunk: ReadableStreamReadResult<Uint8Array>;
-      try {
-        chunk = await Promise.race([
-          reader.read(),
-          new Promise<never>((_, reject) => {
-            const timer = setTimeout(() => reject(new Error("idle")), wait);
-            options.signal?.addEventListener("abort", () => {
-              clearTimeout(timer);
-              reject(new Error("cancelled"));
-            });
-          }),
-        ]);
-      } catch (err) {
-        const message = err instanceof Error && err.message === "cancelled" ? "The stream was cancelled." : "The endpoint timed out waiting for the next chunk.";
-        await stop(controller, message);
-        return;
-      }
-      if (chunk.done) {
-        const tail = decoder.decode();
-        const flushed = redactor ? redactor.push(tail, true) : redact(tail, secrets);
-        if (flushed) controller.enqueue(encoder.encode(flushed));
-        await stop(controller);
-        return;
-      }
-      seen += chunk.value.byteLength;
-      if (seen > maxBytes) {
-        await stop(controller, "The endpoint response was too large.");
-        return;
-      }
-      const text = decoder.decode(chunk.value, { stream: true });
-      const out = redactor ? redactor.push(text) : redact(text, secrets);
-      if (out) controller.enqueue(encoder.encode(out));
     },
     cancel() {
       stopped = true;
@@ -167,14 +225,25 @@ export function cappedBody(upstream: Response, secrets: readonly string[], optio
   });
 }
 
-export async function readCappedText(upstream: Response, secrets: readonly string[], maxBytes: number = LIMITS.responseBytes): Promise<string> {
-  rejectOversizedContentLength(upstream.headers, maxBytes, "The endpoint response was too large.");
+export async function readCappedText(
+  upstream: Response,
+  secrets: readonly string[],
+  maxBytes: number = LIMITS.responseBytes,
+  options: { exact?: boolean; idleMs?: number; overallMs?: number; signal?: AbortSignal } = {},
+): Promise<string> {
+  rejectOversizedContentLength(upstream.headers, maxBytes, "The endpoint response was too large.", 502);
   const bytes = await readCappedBytes(
     upstream.body,
     maxBytes,
     new HttpError(502, "too_large", "The endpoint response was too large."),
+    {
+      idleMs: options.idleMs ?? LIMITS.idleTimeoutMs,
+      overallMs: options.overallMs ?? LIMITS.overallTimeoutMs,
+      signal: options.signal,
+    },
   );
-  return redact(new TextDecoder().decode(bytes), secrets);
+  const text = new TextDecoder().decode(bytes);
+  return options.exact ? redactExact(text, secrets) : redact(text, secrets);
 }
 
 export function jsonBody(data: unknown, secrets: readonly string[], status = 200): Response {
@@ -219,8 +288,8 @@ export function requireUpstreamType(upstream: Response, expected: "application/j
   }
 }
 
-export function ssePassThrough(upstream: Response, secrets: readonly string[]): Response {
-  return new Response(cappedBody(upstream, secrets, { sse: true, exact: true }), {
+export function ssePassThrough(upstream: Response, secrets: readonly string[], signal?: AbortSignal): Response {
+  return new Response(cappedBody(upstream, secrets, { sse: true, exact: true, signal }), {
     status: upstream.status,
     headers: apiHeaders("sse"),
   });
@@ -230,9 +299,10 @@ export function failFromUpstream(status: number, body: string, secrets: readonly
   const redacted = redact(body, secrets).slice(0, 800);
   let message = "The endpoint returned an error.";
   try {
-    const parsed = JSON.parse(redacted) as { error?: { message?: string } | string };
+    const parsed = JSON.parse(redacted) as { error?: { message?: string; code?: string } | string };
     if (typeof parsed.error === "string") message = parsed.error;
     else if (parsed.error?.message) message = parsed.error.message;
+    else if (parsed.error?.code) message = parsed.error.code;
   } catch {
     if (redacted) message = redacted.slice(0, 240);
   }

@@ -3,7 +3,6 @@ import type { PublicConfig, SideMetrics } from "../shared/types";
 import { runWorkersAi } from "./ai";
 import { claimCompare, hashIpKey, parseCap, usedToday } from "./budget";
 import { runCapabilities } from "./capabilities";
-import { holdUntilClose, withStream } from "./concurrency";
 import { isLocalEnv, publicSiteKey } from "./env";
 import { HttpError } from "./errors";
 import { apiHeaders } from "./headers";
@@ -46,7 +45,7 @@ async function config(env: Env): Promise<PublicConfig> {
   } catch {
     used = 0;
   }
-  const siteKey = ai === "off" ? null : publicSiteKey(env);
+  const siteKey = publicSiteKey(env);
   return {
     ok: true,
     model: env.AI_MODEL,
@@ -91,29 +90,26 @@ async function visitorChat(env: Env, request: Request, stream: boolean): Promise
     max_tokens: maxTokens,
     stream,
   });
-  const ip = clientIp(request);
   if (!stream) {
-    return withStream(ip, async () => {
-      const upstream = await proxyFetch({
-        url: target.url,
-        method: "POST",
-        apiKey,
-        body: payload,
-        accept: "application/json",
-      });
-      if (upstream.status >= 400) {
-        const text = await readCappedText(upstream, [apiKey], LIMITS.errorBytes);
-        throw failFromUpstream(upstream.status, text, [apiKey]);
-      }
-      try {
-        requireUpstreamType(upstream, "application/json");
-      } catch (err) {
-        await upstream.body?.cancel().catch(() => undefined);
-        throw err;
-      }
-      const text = await readCappedText(upstream, [apiKey], LIMITS.responseBytes);
-      return jsonBody(validateChatJson(text), [apiKey], upstream.status);
+    const upstream = await proxyFetch({
+      url: target.url,
+      method: "POST",
+      apiKey,
+      body: payload,
+      accept: "application/json",
     });
+    if (upstream.status >= 400) {
+      const text = await readCappedText(upstream, [apiKey], LIMITS.errorBytes);
+      throw failFromUpstream(upstream.status, text, [apiKey]);
+    }
+    try {
+      requireUpstreamType(upstream, "application/json");
+    } catch (err) {
+      await upstream.body?.cancel().catch(() => undefined);
+      throw err;
+    }
+    const text = await readCappedText(upstream, [apiKey], LIMITS.responseBytes, { exact: true });
+    return jsonBody(validateChatJson(text), [apiKey], upstream.status);
   }
 
   const upstream = await proxyFetch({
@@ -133,11 +129,7 @@ async function visitorChat(env: Env, request: Request, stream: boolean): Promise
     await upstream.body?.cancel().catch(() => undefined);
     throw err;
   }
-  const passed = ssePassThrough(upstream, [apiKey]);
-  return new Response(holdUntilClose(ip, passed.body ?? new ReadableStream()), {
-    status: passed.status,
-    headers: passed.headers,
-  });
+  return ssePassThrough(upstream, [apiKey], request.signal);
 }
 
 async function visitorModels(env: Env, request: Request): Promise<Response> {
@@ -146,30 +138,31 @@ async function visitorModels(env: Env, request: Request): Promise<Response> {
   const body = await readJson(request);
   const apiKey = readApiKey(body);
   const target = await resolveTarget(readBaseUrl(body), "/models", assessOptions(env));
-  return withStream(clientIp(request), async () => {
-    const upstream = await proxyFetch({
-      url: target.url,
-      method: "GET",
-      apiKey,
-      accept: "application/json",
-    });
-    if (upstream.status >= 400) {
-      const text = await readCappedText(upstream, [apiKey], LIMITS.errorBytes);
-      throw failFromUpstream(upstream.status, text, [apiKey]);
-    }
-    try {
-      requireUpstreamType(upstream, "application/json");
-    } catch (err) {
-      await upstream.body?.cancel().catch(() => undefined);
-      throw err;
-    }
-    const text = await readCappedText(upstream, [apiKey], LIMITS.responseBytes);
-    return jsonBody(validateModelsPayload(text), [apiKey]);
+  const upstream = await proxyFetch({
+    url: target.url,
+    method: "GET",
+    apiKey,
+    accept: "application/json",
   });
+  if (upstream.status >= 400) {
+    const text = await readCappedText(upstream, [apiKey], LIMITS.errorBytes);
+    throw failFromUpstream(upstream.status, text, [apiKey]);
+  }
+  try {
+    requireUpstreamType(upstream, "application/json");
+  } catch (err) {
+    await upstream.body?.cancel().catch(() => undefined);
+    throw err;
+  }
+  const text = await readCappedText(upstream, [apiKey], LIMITS.responseBytes, { exact: true });
+  return jsonBody(validateModelsPayload(text), [apiKey]);
 }
 
 async function compare(env: Env, request: Request): Promise<Response> {
   await requireProxyGate(request, env);
+  if (aiStatus(env) === "off") {
+    throw new HttpError(503, "compare_off", "Compare is off until Turnstile and Workers AI are configured.");
+  }
   await limit(env.COMPARE_LIMIT, request, "compare requests");
   const body = await readJson(request);
   const apiKey = readApiKey(body);
@@ -186,6 +179,7 @@ async function compare(env: Env, request: Request): Promise<Response> {
   const ac = new AbortController();
   const stop = () => ac.abort();
   request.signal.addEventListener("abort", stop);
+  const overall = setTimeout(() => ac.abort(), LIMITS.overallTimeoutMs);
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -208,7 +202,7 @@ async function compare(env: Env, request: Request): Promise<Response> {
             signal: ac.signal,
           });
           if (upstream.status >= 400) {
-            const text = await readCappedText(upstream, [apiKey], LIMITS.errorBytes);
+            const text = await readCappedText(upstream, [apiKey], LIMITS.errorBytes, { signal: ac.signal });
             throw failFromUpstream(upstream.status, text, [apiKey]);
           }
           try {
@@ -217,7 +211,7 @@ async function compare(env: Env, request: Request): Promise<Response> {
             await upstream.body?.cancel().catch(() => undefined);
             throw err;
           }
-          const stats = await consumeSse(upstream.body, [apiKey], started, ac.signal);
+          const stats = await consumeSse(upstream.body, [apiKey], started, { signal: ac.signal });
           return {
             side: "yours",
             source: model,
@@ -271,10 +265,12 @@ async function compare(env: Env, request: Request): Promise<Response> {
         send("error", { message: "Compare failed." });
         controller.close();
       } finally {
+        clearTimeout(overall);
         request.signal.removeEventListener("abort", stop);
       }
     },
     cancel() {
+      clearTimeout(overall);
       ac.abort();
       request.signal.removeEventListener("abort", stop);
     },
@@ -291,14 +287,15 @@ async function capabilities(env: Env, request: Request): Promise<Response> {
   const target = await resolveTarget(readBaseUrl(body), "/chat/completions", assessOptions(env));
   const model = parseModel(body.model);
   const messages = parseMessages(body.messages ?? [{ role: "user", content: "Reply with the word ok." }], parseSystem(body.system));
-  const results = await withStream(clientIp(request), () => runCapabilities({ url: target.url, apiKey, model, messages }));
+  const results = await runCapabilities({ url: target.url, apiKey, model, messages });
   return json({ results });
 }
 
 async function mintSession(env: Env, request: Request): Promise<Response> {
   assertSameOrigin(request);
   const body = await readJson(request);
-  await requireTurnstile(env, request, body.turnstileToken, "session");
+  const siteKey = publicSiteKey(env);
+  if (siteKey) await requireTurnstile(env, request, body.turnstileToken, "session");
   const minted = await mintSignedSession(env, request);
   return finish(json({ ok: true }), minted.cookie);
 }

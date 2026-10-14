@@ -33,17 +33,18 @@ export async function runWorkersAi(
   const cap = Math.min(Math.max(maxTokens, LIMITS.maxTokensMin), LIMITS.compareMaxTokens);
   if (signal?.aborted) throw new HttpError(499, "cancelled", "Compare was cancelled.");
   if (!env.AI) {
-    const stats = await consumeSse(stubStream(), [], started, signal);
+    const stats = await consumeSse(stubStream(), [], started, { signal, overallMs: LIMITS.overallTimeoutMs, idleMs: LIMITS.idleTimeoutMs });
     return { ...stats, source: "workers-ai-stub" };
   }
   try {
-    const stream = (await env.AI.run(env.AI_MODEL, {
+    const result = await env.AI.run(env.AI_MODEL, {
       messages,
       max_tokens: cap,
       temperature: 0.2,
       stream: true,
-    })) as unknown as ReadableStream<Uint8Array>;
-    const stats = await consumeSse(stream, [], started, signal);
+    });
+    if (!(result instanceof ReadableStream)) throw new HttpError(502, "workers_ai", "Workers AI failed.");
+    const stats = await consumeSse(result, [], started, { signal, overallMs: LIMITS.overallTimeoutMs, idleMs: LIMITS.idleTimeoutMs });
     return { ...stats, source: env.AI_MODEL };
   } catch (err) {
     if (err instanceof HttpError) throw err;

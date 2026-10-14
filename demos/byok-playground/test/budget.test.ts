@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { dayKey, hashIpKey, networkKey, parseCap } from "../src/worker/budget";
+import { claimCompare, dayKey, hashIpKey, networkKey, parseCap } from "../src/worker/budget";
+import { HttpError } from "../src/worker/errors";
 
 const SECRET = "test-ip-secret";
 
@@ -26,5 +27,24 @@ describe("budget helpers", () => {
     expect(parseCap("200", 10)).toBe(200);
     expect(parseCap("", 12)).toBe(12);
     expect(parseCap("nope", 12)).toBe(12);
+  });
+
+  test("global and per-network compare caps use distinct codes", async () => {
+    const fakeDb = (used: number): D1Database =>
+      ({
+        prepare: () => ({
+          bind: () => ({
+            run: async () => ({ meta: { changes: 0 } }),
+            first: async () => ({ n: used }),
+          }),
+        }),
+      }) as D1Database;
+
+    const global = { DAILY_COMPARE_CAP: "10", IP_COMPARE_CAP: "12", DB: fakeDb(10) } as Env;
+    await expect(claimCompare(global, "ip")).rejects.toMatchObject({ code: "daily", status: 503 });
+
+    const perIp = { DAILY_COMPARE_CAP: "10", IP_COMPARE_CAP: "1", DB: fakeDb(2) } as Env;
+    await expect(claimCompare(perIp, "ip")).rejects.toMatchObject({ code: "ip_daily", status: 429 });
+    expect(new HttpError(429, "ip_daily", "x").code).toBe("ip_daily");
   });
 });

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { LIMITS } from "../src/shared/limits";
+import { isPrintableAsciiKey, trimUtf8, utf8ByteLength } from "../src/shared/text";
 import { HttpError } from "../src/worker/errors";
 import { parseMessages, readJson } from "../src/worker/parse";
 
@@ -17,5 +18,14 @@ describe("request parsing", () => {
     const messages = Array.from({ length: 16 }, (_, i) => ({ role: i % 2 === 0 ? "user" : "assistant", content: `m${i}` }));
     expect(() => parseMessages(messages, "")).toThrow(HttpError);
     expect(parseMessages(messages.slice(0, 15), "")).toHaveLength(15);
+  });
+
+  test("rejects a message over the UTF-8 byte cap", () => {
+    const oversized = "é".repeat(LIMITS.maxMessageChars);
+    expect(utf8ByteLength(oversized)).toBeGreaterThan(LIMITS.maxMessageChars);
+    expect(() => parseMessages([{ role: "user", content: oversized }], "")).toThrow(HttpError);
+    expect(isPrintableAsciiKey("sk-ok")).toBe(true);
+    expect(isPrintableAsciiKey("sk no")).toBe(false);
+    expect(trimUtf8("ééé", 3).length).toBeLessThanOrEqual(2);
   });
 });

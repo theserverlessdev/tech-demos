@@ -34,6 +34,21 @@ describe("canonical origin", () => {
     expect(res.headers.get("location")).toBe(`https://${CANONICAL_HOST}/api/health`);
   });
 
+  test("REPLACE_ME still mints a session so the proxy can run", async () => {
+    const res = await worker.fetch(
+      new Request("https://byok-playground.tech-demos.theserverless.dev/api/session", {
+        method: "POST",
+        headers: { origin: "https://byok-playground.tech-demos.theserverless.dev", "content-type": "application/json" },
+        body: "{}",
+      }),
+      env(),
+      {} as ExecutionContext,
+    );
+    expect(res.status).toBe(200);
+    expect((await res.json() as { ok: boolean }).ok).toBe(true);
+    expect(res.headers.get("set-cookie") ?? "").toContain("byok_session=");
+  });
+
   test("local environment still serves the hub path", async () => {
     const res = await worker.fetch(
       new Request(`http://127.0.0.1:8787${HUB_BASE_PATH}/api/health`, { headers: { "cf-connecting-ip": "127.0.0.1" } }),

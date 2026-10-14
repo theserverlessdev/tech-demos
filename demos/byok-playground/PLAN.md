@@ -9,11 +9,11 @@ A visitor pastes an OpenAI-compatible API key, base URL, and model id, then stre
 - In:
   - Browser-only key storage (`sessionStorage` by default, opt-in `localStorage`, Clear).
   - Worker proxy for `POST /chat/completions` (SSE passthrough) and `GET /models`, with the key in the JSON body.
-  - Hard SSRF guard: https:443 (http://localhost only when `ENVIRONMENT=local`), no redirects, IP/hostname denylist including TSD and workers.dev, path allowlist, size/time/concurrency caps, hop-by-hop and cookie stripping. DNS is best-effort; `global_fetch_strictly_public` is the egress backstop.
-  - Same-origin + HMAC-signed session cookie (minted after one Turnstile pass) on every proxy call.
+  - Hard SSRF guard: https:443 (http://localhost only when `ENVIRONMENT=local`), no redirects, IP/hostname denylist including TSD and workers.dev, path allowlist, size/time caps, hop-by-hop and cookie stripping. DNS is best-effort; `global_fetch_strictly_public` is the egress backstop.
+  - Same-origin + HMAC-signed session cookie (issued-at + network key, 12h; minted after one Turnstile pass when a site key is set) on every proxy call.
   - Per-network rate limits on namespaces 7461–7463 (`IPv4 /32`, `IPv6 /64`).
   - Side-by-side compare vs Workers AI, Turnstile action `compare`, atomic D1 daily budget with HMAC’d `ip_key`.
-  - Capability checks: streaming, tools (`tool_calls`), JSON schema (`ok` boolean), vision (known-colour pixel). Otherwise inconclusive.
+  - Capability checks: streaming, tools (`tool_calls`), JSON schema (required keys + nonce), vision (left pixel of a two-pixel image). A missing model is reported once. Otherwise inconclusive.
   - Served on `byok-playground.tech-demos.theserverless.dev`; the hub path 308s there.
   - Graphite & Ember UI, Contact CTA, hub registry card, tests, README, CHANGELOG.
 - Out: accounts, key vaults, billing, Workers for Platforms, Containers, Browser Run, storing keys, arbitrary URL proxying.
@@ -21,7 +21,7 @@ A visitor pastes an OpenAI-compatible API key, base URL, and model id, then stre
 ## Tasks
 
 1. SSRF, header allowlists, redaction, HMAC session cookie, origin check.
-2. Proxy: chat SSE, list models, byte/time/concurrency caps, response validation.
+2. Proxy: chat SSE, list models, byte/time caps, per-network rate limits, response validation.
 3. Compare path: validate first, then Turnstile action `compare`, D1 budget, Workers AI (stub when the binding is missing).
 4. Capability probes with evidence-based pass / fail / unsupported / inconclusive.
 5. Graphite & Ember UI, 390px layout, text-only model output.

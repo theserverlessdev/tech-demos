@@ -1,13 +1,16 @@
 import { LIMITS } from "../shared/limits";
+import { isPrintableAsciiKey, redactExact, trimUtf8, utf8ByteLength } from "../shared/text";
 import type { CapabilityResult, PublicConfig, SideMetrics } from "../shared/types";
 
 const SESSION_STORE = "byok.session";
 const LOCAL_STORE = "byok.local";
 const REMEMBER_STORE = "byok.remember";
+const SESSION_READY_STORE = "byok.sessionReady";
 const TURNSTILE_DUMMY = "XXXX.DUMMY.TOKEN.XXXX";
 
 type Creds = { key: string; baseUrl: string; model: string };
 type ApiError = { error?: { code?: string; message?: string } };
+type HistoryTurn = { role: "user" | "assistant"; content: string; error: boolean };
 
 const $ = <T extends HTMLElement>(id: string) => {
   const node = document.getElementById(id);
@@ -53,6 +56,9 @@ let readyToken: string | null = null;
 let tokenWaiter: ((token: string) => void) | null = null;
 let busy = false;
 let sessionReady = false;
+let sessionInflight: Promise<void> | null = null;
+let compareOff = false;
+const history: HistoryTurn[] = [];
 
 function api(path: string): string {
   const url = new URL(location.href);
@@ -105,6 +111,7 @@ function credentials(): Creds {
 function requireEndpoint(): Creds {
   const creds = credentials();
   if (!creds.key) throw new Error("Paste an API key. It stays in this browser.");
+  if (!isPrintableAsciiKey(creds.key)) throw new Error("That API key may only contain printable ASCII.");
   if (!creds.baseUrl) throw new Error("Enter an https base URL.");
   return creds;
 }
@@ -129,6 +136,30 @@ function messageOf(data: unknown, fallback: string): string {
   if (!data || typeof data !== "object" || !("error" in data)) return fallback;
   const error = (data as ApiError).error;
   return error?.message || fallback;
+}
+
+function isSessionError(data: unknown): boolean {
+  if (!data || typeof data !== "object" || !("error" in data)) return false;
+  const code = (data as ApiError).error?.code ?? "";
+  return code === "session" || code === "session_expired" || code === "session_network";
+}
+
+function persistSessionReady(value: boolean) {
+  sessionReady = value;
+  try {
+    if (value) sessionStorage.setItem(SESSION_READY_STORE, "1");
+    else sessionStorage.removeItem(SESSION_READY_STORE);
+  } catch {
+    /* private mode */
+  }
+}
+
+function restoreSessionReady() {
+  try {
+    sessionReady = sessionStorage.getItem(SESSION_READY_STORE) === "1";
+  } catch {
+    sessionReady = false;
+  }
 }
 
 type TurnstileApi = {
@@ -188,22 +219,49 @@ function takeToken(): Promise<string> {
   });
 }
 
-async function ensureSession(): Promise<void> {
-  if (sessionReady) return;
-  const token = testSiteKey || !siteKey ? TURNSTILE_DUMMY : widgetAction === "session" && readyToken ? await takeToken() : testSiteKey ? TURNSTILE_DUMMY : await takeToken();
-  const res = await call("api/session", { method: "POST", body: { turnstileToken: token } });
+async function mintSession(): Promise<void> {
+  const body: Record<string, string> = {};
+  if (siteKey) {
+    body.turnstileToken = testSiteKey ? TURNSTILE_DUMMY : widgetAction === "session" && readyToken ? await takeToken() : await takeToken();
+  }
+  const res = await call("api/session", { method: "POST", body });
   if (!res.ok) {
     const data = (await res.json().catch(() => null)) as unknown;
     throw new Error(messageOf(data, "Complete the Turnstile check so this browser can call your endpoint."));
   }
-  sessionReady = true;
-  sessionNote.textContent = "Signed session cookie is set. Compare still needs action compare.";
+  persistSessionReady(true);
+  sessionNote.textContent = siteKey ? "Signed session cookie is set. Compare still needs action compare." : "Signed session cookie is set. Compare is off until Turnstile is configured.";
   if (siteKey && !testSiteKey) mountTurnstile("compare");
 }
 
-function addBubble(role: "user" | "assistant", text: string): HTMLElement {
+async function ensureSession(force = false): Promise<void> {
+  if (sessionReady && !force) return;
+  if (sessionInflight) return sessionInflight;
+  sessionInflight = mintSession().finally(() => {
+    sessionInflight = null;
+  });
+  return sessionInflight;
+}
+
+async function callAuthed(path: string, init: { method?: string; body?: unknown } = {}): Promise<Response> {
+  await ensureSession();
+  let res = await call(path, init);
+  if (res.status === 401) {
+    const data = (await res.clone().json().catch(() => null)) as unknown;
+    if (isSessionError(data)) {
+      persistSessionReady(false);
+      await ensureSession(true);
+      res = await call(path, init);
+    }
+  }
+  return res;
+}
+
+function addBubble(role: "user" | "assistant", text: string, error = false): { body: HTMLElement; index: number } {
+  const index = history.length;
+  history.push({ role, content: text, error });
   const item = document.createElement("li");
-  item.className = `bubble ${role}`;
+  item.className = `bubble ${role}${error ? " error" : ""}`;
   const who = document.createElement("span");
   who.className = "who";
   who.textContent = role === "user" ? "You" : "Model";
@@ -212,17 +270,35 @@ function addBubble(role: "user" | "assistant", text: string): HTMLElement {
   item.append(who, body);
   transcript.append(item);
   item.scrollIntoView({ block: "end" });
-  return body;
+  return { body, index };
+}
+
+function setBubble(index: number, text: string, error = false) {
+  const turn = history[index];
+  if (!turn) return;
+  turn.content = text;
+  turn.error = error;
+  const node = transcript.children[index]?.querySelector("div");
+  if (node) node.textContent = text;
+  transcript.children[index]?.classList.toggle("error", error);
+}
+
+function fitMessages(messages: { role: "user" | "assistant"; content: string }[]): { role: "user" | "assistant"; content: string }[] {
+  const budget = LIMITS.requestBytes - 6_144;
+  const out: { role: "user" | "assistant"; content: string }[] = [];
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const trial = [messages[i]!, ...out];
+    if (utf8ByteLength(JSON.stringify(trial)) > budget) break;
+    out.unshift(messages[i]!);
+  }
+  return out;
 }
 
 function transcriptMessages(): { role: "user" | "assistant"; content: string }[] {
-  const history = [...transcript.querySelectorAll(".bubble")].flatMap((node) => {
-    const role = node.classList.contains("user") ? "user" : "assistant";
-    const content = (node.querySelector("div")?.textContent ?? "").slice(0, LIMITS.maxMessageChars);
-    if (!content.trim()) return [];
-    return [{ role, content } as const];
-  });
-  return history.slice(-LIMITS.maxMessages);
+  const ready = history
+    .filter((turn) => !turn.error && turn.content.trim())
+    .map((turn) => ({ role: turn.role, content: trimUtf8(turn.content, LIMITS.maxMessageChars) }));
+  return fitMessages(ready.slice(-LIMITS.maxMessages));
 }
 
 function chatBody(creds: Creds, extra: Record<string, unknown> = {}) {
@@ -238,67 +314,79 @@ function chatBody(creds: Creds, extra: Record<string, unknown> = {}) {
   };
 }
 
-async function readSseChat(res: Response, target: HTMLElement) {
+function handleSseLine(
+  line: string,
+  state: { eventName: string; text: string; sawDone: boolean; secrets: readonly string[] },
+  target: HTMLElement,
+): boolean {
+  if (line.startsWith("event:")) {
+    state.eventName = line.slice(6).trim();
+    return false;
+  }
+  const trimmed = line.trim();
+  if (!trimmed.startsWith("data:")) return false;
+  const payload = trimmed.slice(5).trim();
+  if (!payload) return false;
+  if (payload === "[DONE]") {
+    state.sawDone = true;
+    return false;
+  }
+  if (state.eventName === "error") {
+    try {
+      const parsed = JSON.parse(payload) as { message?: string };
+      const message = parsed.message || "The stream failed.";
+      target.textContent = state.text ? `${state.text}\n${message}` : message;
+    } catch {
+      target.textContent = state.text ? `${state.text}\n${payload}` : payload;
+    }
+    return true;
+  }
+  try {
+    const parsed = JSON.parse(payload) as { choices?: { delta?: { content?: string }; message?: { content?: string } }[] };
+    const piece = parsed.choices?.[0]?.delta?.content ?? parsed.choices?.[0]?.message?.content ?? "";
+    if (piece) {
+      state.text += piece;
+      target.textContent = redactExact(state.text, state.secrets);
+    }
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
+
+async function readSseChat(res: Response, target: HTMLElement, secrets: readonly string[]) {
   const reader = res.body?.getReader();
   if (!reader) {
     target.textContent = "stream ended early";
-    return;
+    return { text: "", error: true, sawDone: false };
   }
   const decoder = new TextDecoder();
   let carry = "";
-  let text = "";
-  let eventName = "message";
-  let sawDone = false;
+  const state = { eventName: "message", text: "", sawDone: false, secrets };
+  let failed = false;
   while (true) {
     const chunk = await reader.read();
     if (chunk.done) {
       carry += decoder.decode();
+      if (carry) failed = handleSseLine(carry, state, target) || failed;
       break;
     }
     carry += decoder.decode(chunk.value, { stream: true });
     const lines = carry.split(/\r?\n/);
     carry = lines.pop() ?? "";
     for (const line of lines) {
-      if (line.startsWith("event:")) {
-        eventName = line.slice(6).trim();
-        continue;
-      }
-      const trimmed = line.trim();
-      if (!trimmed.startsWith("data:")) continue;
-      const payload = trimmed.slice(5).trim();
-      if (!payload) continue;
-      if (payload === "[DONE]") {
-        sawDone = true;
-        continue;
-      }
-      if (eventName === "error") {
-        try {
-          const parsed = JSON.parse(payload) as { message?: string };
-          const message = parsed.message || "The stream failed.";
-          target.textContent = text ? `${text}\n${message}` : message;
-        } catch {
-          target.textContent = text ? `${text}\n${payload}` : payload;
-        }
-        return;
-      }
-      try {
-        const parsed = JSON.parse(payload) as { choices?: { delta?: { content?: string }; message?: { content?: string } }[] };
-        const piece = parsed.choices?.[0]?.delta?.content ?? parsed.choices?.[0]?.message?.content ?? "";
-        if (piece) {
-          text += piece;
-          target.textContent = text;
-        }
-      } catch {
-        /* ignore */
-      }
+      if (handleSseLine(line, state, target)) failed = true;
     }
   }
-  if (!sawDone) {
+  const display = redactExact(state.text, secrets);
+  if (failed) return { text: target.textContent ?? display, error: true, sawDone: state.sawDone };
+  if (!state.sawDone) {
     const suffix = "stream ended early";
-    target.textContent = text ? `${text}\n${suffix}` : suffix;
-  } else if (!target.textContent) {
-    target.textContent = "(empty reply)";
+    target.textContent = display ? `${display}\n${suffix}` : suffix;
+    return { text: display, error: !display, sawDone: false };
   }
+  if (!target.textContent) target.textContent = "(empty reply)";
+  return { text: display, error: false, sawDone: true };
 }
 
 async function sendChat(event: Event) {
@@ -321,18 +409,20 @@ async function sendChat(event: Event) {
   send.disabled = true;
   say("");
   try {
-    await ensureSession();
-    const res = await call("api/proxy/chat/stream", { method: "POST", body: chatBody(creds) });
+    const res = await callAuthed("api/proxy/chat/stream", { method: "POST", body: chatBody(creds) });
     if (!res.ok) {
       const data = (await res.json().catch(() => null)) as unknown;
-      reply.textContent = messageOf(data, "The endpoint returned an error.");
-      say(reply.textContent);
+      const message = messageOf(data, "The endpoint returned an error.");
+      setBubble(reply.index, message, true);
+      say(message);
       return;
     }
-    await readSseChat(res, reply);
+    const result = await readSseChat(res, reply.body, [creds.key]);
+    setBubble(reply.index, result.text || reply.body.textContent || "", result.error);
   } catch (err) {
-    reply.textContent = err instanceof Error ? err.message : "The chat request failed.";
-    say(reply.textContent);
+    const message = err instanceof Error ? err.message : "The chat request failed.";
+    setBubble(reply.index, message, true);
+    say(message);
   } finally {
     busy = false;
     send.disabled = false;
@@ -350,8 +440,7 @@ async function loadModels() {
   saveCreds();
   modelsNote.textContent = "Listing models…";
   try {
-    await ensureSession();
-    const res = await call("api/proxy/models", { method: "POST", body: { apiKey: creds.key, baseUrl: creds.baseUrl } });
+    const res = await callAuthed("api/proxy/models", { method: "POST", body: { apiKey: creds.key, baseUrl: creds.baseUrl } });
     const data = (await res.json().catch(() => null)) as { data?: { id?: string }[]; error?: { message?: string } } | null;
     if (!res.ok) {
       modelsNote.textContent = messageOf(data, "Could not list models.");
@@ -380,6 +469,29 @@ function setMetrics(node: HTMLElement, side: SideMetrics | null) {
   node.textContent = `${side.latencyMs} ms · TTFT ${ttft} · tokens ${tokens} · ${side.source}`;
 }
 
+function consumeCompareLine(line: string, eventName: { value: string }): void {
+  if (line.startsWith("event:")) {
+    eventName.value = line.slice(6).trim();
+    return;
+  }
+  if (!line.startsWith("data:")) return;
+  const payload = line.slice(5).trim();
+  if (!payload) return;
+  if (eventName.value === "error") {
+    say("Compare failed.");
+    return;
+  }
+  const parsed = JSON.parse(payload) as SideMetrics;
+  if (eventName.value === "yours" || parsed.side === "yours") {
+    yoursOut.textContent = parsed.error || parsed.text;
+    setMetrics(yoursMetrics, parsed);
+  }
+  if (eventName.value === "ours" || parsed.side === "ours") {
+    oursOut.textContent = parsed.error || parsed.text;
+    setMetrics(oursMetrics, parsed);
+  }
+}
+
 async function runCompare() {
   if (busy) return;
   let creds: Creds;
@@ -401,7 +513,7 @@ async function runCompare() {
   try {
     await ensureSession();
     const token = testSiteKey || !siteKey ? TURNSTILE_DUMMY : await takeToken();
-    const res = await call("api/compare", {
+    const res = await callAuthed("api/compare", {
       method: "POST",
       body: {
         ...chatBody(creds, { messages: [{ role: "user", content: text }] }),
@@ -418,45 +530,25 @@ async function runCompare() {
     if (!reader) return;
     const decoder = new TextDecoder();
     let carry = "";
-    let eventName = "message";
+    const eventName = { value: "message" };
     while (true) {
       const chunk = await reader.read();
       if (chunk.done) {
         carry += decoder.decode();
+        if (carry) consumeCompareLine(carry, eventName);
         break;
       }
       carry += decoder.decode(chunk.value, { stream: true });
       const lines = carry.split(/\r?\n/);
       carry = lines.pop() ?? "";
-      for (const line of lines) {
-        if (line.startsWith("event:")) {
-          eventName = line.slice(6).trim();
-          continue;
-        }
-        if (!line.startsWith("data:")) continue;
-        const payload = line.slice(5).trim();
-        if (!payload) continue;
-        if (eventName === "error") {
-          say("Compare failed.");
-          continue;
-        }
-        const parsed = JSON.parse(payload) as SideMetrics;
-        if (eventName === "yours" || parsed.side === "yours") {
-          yoursOut.textContent = parsed.error || parsed.text;
-          setMetrics(yoursMetrics, parsed);
-        }
-        if (eventName === "ours" || parsed.side === "ours") {
-          oursOut.textContent = parsed.error || parsed.text;
-          setMetrics(oursMetrics, parsed);
-        }
-      }
+      for (const line of lines) consumeCompareLine(line, eventName);
     }
     await refreshConfig();
   } catch (err) {
     say(err instanceof Error ? err.message : "Compare failed.");
   } finally {
     busy = false;
-    compareBtn.disabled = false;
+    compareBtn.disabled = compareOff;
   }
 }
 
@@ -494,8 +586,7 @@ async function runCapabilityChecks() {
   caps.replaceChildren();
   say("");
   try {
-    await ensureSession();
-    const res = await call("api/capabilities", {
+    const res = await callAuthed("api/capabilities", {
       method: "POST",
       body: { apiKey: creds.key, baseUrl: creds.baseUrl, model: creds.model, messages: [{ role: "user", content: "Reply with the word ok." }] },
     });
@@ -540,13 +631,14 @@ async function refreshConfig() {
     const data = (await res.json()) as PublicConfig;
     siteKey = data.siteKey ?? "";
     testSiteKey = data.testSiteKey;
+    compareOff = data.ai === "off";
+    compareBtn.disabled = compareOff;
     budgetNote.textContent =
       data.ai === "off"
-        ? "Workers AI compare is off until Turnstile is configured."
+        ? "Workers AI compare is off until Turnstile is configured. Chat and models still work."
         : `${data.budget.remaining} of ${data.budget.dailyCap} compares left today${data.ai === "stub" ? " · local stub" : ""}.`;
     if (data.testSiteKey) budgetNote.textContent += " Test Turnstile key.";
-    if (data.ai === "off") compareBtn.disabled = true;
-    if (testSiteKey) {
+    if (testSiteKey || !siteKey) {
       try {
         await ensureSession();
       } catch (err) {
@@ -561,6 +653,7 @@ async function refreshConfig() {
 }
 
 async function boot() {
+  restoreSessionReady();
   applyCreds(loadCreds());
   temperature.addEventListener("input", () => {
     tempOut.textContent = temperature.value;

@@ -6,14 +6,19 @@ import { failFromUpstream, proxyFetch, readCappedText, requireUpstreamType } fro
 import { redact } from "./redact";
 import { consumeSse } from "./stream";
 
-/** 1×1 red PNG. The vision probe asks for this colour. */
-const RED_PNG =
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+/** 2×1 PNG: left pixel red, right pixel blue. Vision asks for the left colour. */
+const TWO_PIXEL_PNG =
+  "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAIAAAB7QOjdAAAADUlEQVR42mP4zwAE/wEHAAH/PX2MSQAAAABJRU5ErkJggg==";
+
+export function isModelNotFound(status: number, raw: string): boolean {
+  if (status === 404) return true;
+  return /model[_ ]?not[_ ]?found|invalid model|does not exist|no such model|unknown model/i.test(raw);
+}
 
 function classify(raw: string, status: number): CapabilityResult["status"] {
-  const text = raw.toLowerCase();
-  if (status === 404 || status === 405) return "unsupported";
-  if (/(not support|unsupported|unknown parameter|unrecognized|invalid parameter|response_format|does not exist|no such|not enabled|not available)/i.test(text)) {
+  if (isModelNotFound(status, raw)) return "fail";
+  if (status === 405) return "unsupported";
+  if (/(not support|unsupported|unknown parameter|unrecognized|invalid parameter|response_format|not enabled|not available)/i.test(raw)) {
     return "unsupported";
   }
   if (status >= 200 && status < 300) return "inconclusive";
@@ -44,20 +49,30 @@ export function hasToolCalls(text: string): boolean {
   }
 }
 
-export function jsonSchemaOk(text: string): boolean | null {
+export function jsonSchemaOk(text: string, nonce: string): boolean | null {
   const content = messageContent(text);
   if (!content) return null;
   try {
     const parsed = JSON.parse(content) as unknown;
-    if (!isRecord(parsed) || typeof parsed.ok !== "boolean") return null;
+    if (!isRecord(parsed)) return null;
+    const keys = Object.keys(parsed);
+    if (keys.length !== 2 || !keys.includes("ok") || !keys.includes("nonce")) return null;
+    if (typeof parsed.ok !== "boolean") return null;
+    if (parsed.nonce !== nonce) return null;
     return true;
   } catch {
     return null;
   }
 }
 
-export function visionNamesRed(text: string): boolean {
-  return /\bred\b/i.test(messageContent(text) || text);
+export function visionNamesLeftRed(text: string): boolean {
+  const content = (messageContent(text) || text).toLowerCase();
+  if (/\bblue\b/.test(content) && !/\bred\b/.test(content)) return false;
+  return /\bred\b/.test(content);
+}
+
+function missingModelResult(name: CapabilityResult["name"], raw: string, latencyMs: number): CapabilityResult {
+  return { name, status: "fail", detail: "model not found", raw: raw.slice(0, 500), latencyMs };
 }
 
 async function probe(
@@ -66,9 +81,11 @@ async function probe(
   apiKey: string,
   body: unknown,
   check: (status: number, text: string) => { status: CapabilityResult["status"]; detail: string },
+  deadline: number,
 ): Promise<CapabilityResult> {
   const secrets = [apiKey];
   const started = Date.now();
+  const remaining = Math.max(1, deadline - Date.now());
   try {
     const upstream = await proxyFetch({
       url,
@@ -76,11 +93,21 @@ async function probe(
       apiKey,
       body: JSON.stringify(body),
       accept: "application/json",
-      timeoutMs: 12_000,
+      timeoutMs: Math.min(LIMITS.capabilityProbeMs, remaining),
     });
-    const text = await readCappedText(upstream, secrets, LIMITS.probeBytes);
+    const text = await readCappedText(upstream, secrets, LIMITS.probeBytes, {
+      exact: upstream.status < 400,
+      idleMs: Math.min(LIMITS.idleTimeoutMs, remaining),
+      overallMs: Math.min(LIMITS.capabilityProbeMs, remaining),
+    });
+    if (isModelNotFound(upstream.status, text)) {
+      return missingModelResult(name, redact(text, secrets), Date.now() - started);
+    }
     if (upstream.status >= 400) {
       const err = failFromUpstream(upstream.status, text, secrets);
+      if (isModelNotFound(upstream.status, err.message)) {
+        return missingModelResult(name, redact(err.message, secrets), Date.now() - started);
+      }
       const classified = classify(err.message, upstream.status);
       return { name, status: classified, detail: classified === "unsupported" ? "The endpoint rejected this parameter." : "The endpoint returned an error.", raw: redact(err.message, secrets).slice(0, 500), latencyMs: Date.now() - started };
     }
@@ -89,6 +116,7 @@ async function probe(
   } catch (err) {
     const message = err instanceof HttpError ? err.message : "The probe failed.";
     const status = err instanceof HttpError ? err.status : 502;
+    if (isModelNotFound(status, message)) return missingModelResult(name, redact(message, secrets), Date.now() - started);
     const classified = classify(message, status);
     return { name, status: classified === "pass" ? "fail" : classified, detail: message, raw: redact(message, secrets).slice(0, 500), latencyMs: Date.now() - started };
   }
@@ -98,10 +126,13 @@ export async function runCapabilities(input: { url: string; apiKey: string; mode
   const { url, apiKey, model } = input;
   const user = input.messages.find((message) => message.role === "user")?.content ?? "Reply with the word ok.";
   const baseMessages = [{ role: "user", content: user }];
+  const deadline = Date.now() + LIMITS.capabilityTotalMs;
+  const nonce = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
 
   const streaming = await (async (): Promise<CapabilityResult> => {
     const secrets = [apiKey];
     const started = Date.now();
+    const remaining = Math.max(1, deadline - Date.now());
     try {
       const upstream = await proxyFetch({
         url,
@@ -109,11 +140,17 @@ export async function runCapabilities(input: { url: string; apiKey: string; mode
         apiKey,
         body: JSON.stringify({ model, messages: baseMessages, stream: true, max_tokens: 16, temperature: 0 }),
         accept: "text/event-stream",
-        timeoutMs: 12_000,
+        timeoutMs: Math.min(LIMITS.capabilityProbeMs, remaining),
       });
       if (upstream.status >= 400) {
-        const text = await readCappedText(upstream, secrets, LIMITS.errorBytes);
+        const text = await readCappedText(upstream, secrets, LIMITS.errorBytes, {
+          idleMs: Math.min(LIMITS.idleTimeoutMs, remaining),
+          overallMs: Math.min(LIMITS.capabilityProbeMs, remaining),
+        });
         const err = failFromUpstream(upstream.status, text, secrets);
+        if (isModelNotFound(upstream.status, `${err.message} ${text}`)) {
+          return missingModelResult("streaming", redact(err.message, secrets), Date.now() - started);
+        }
         const classified = classify(err.message, upstream.status);
         return { name: "streaming", status: classified, detail: err.message, raw: redact(err.message, secrets).slice(0, 500), latencyMs: Date.now() - started };
       }
@@ -123,87 +160,120 @@ export async function runCapabilities(input: { url: string; apiKey: string; mode
         await upstream.body?.cancel().catch(() => undefined);
         return { name: "streaming", status: "fail", detail: "The response was not SSE.", raw: "", latencyMs: Date.now() - started };
       }
-      const stats = await consumeSse(upstream.body, secrets, started);
+      const stats = await consumeSse(upstream.body, secrets, started, {
+        signal: AbortSignal.timeout(Math.min(LIMITS.capabilityProbeMs, remaining)),
+        idleMs: Math.min(15_000, remaining),
+        overallMs: Math.min(LIMITS.capabilityProbeMs, remaining),
+      });
       const sse = stats.text.length > 0 || stats.ttftMs !== null;
       return {
         name: "streaming",
         status: sse ? "pass" : "inconclusive",
         detail: sse ? `First token in ${stats.ttftMs ?? "?"} ms.` : "The stream did not include visible tokens.",
-        raw: redact(stats.text, secrets).slice(0, 500),
+        raw: stats.text.slice(0, 500),
         latencyMs: Date.now() - started,
       };
     } catch (err) {
       const message = err instanceof HttpError ? err.message : "Streaming probe failed.";
+      if (isModelNotFound(err instanceof HttpError ? err.status : 502, message)) {
+        return missingModelResult("streaming", redact(message, secrets), Date.now() - started);
+      }
       return { name: "streaming", status: classify(message, err instanceof HttpError ? err.status : 502), detail: message, raw: redact(message, secrets).slice(0, 500), latencyMs: Date.now() - started };
     }
   })();
 
-  const tools = await probe(
-    "tools",
-    url,
-    apiKey,
-    {
-      model,
-      messages: [{ role: "user", content: "Call ping if you can." }],
-      max_tokens: 16,
-      temperature: 0,
-      tools: [{ type: "function", function: { name: "ping", description: "Return pong", parameters: { type: "object", properties: {} } } }],
-      tool_choice: "auto",
-    },
-    (_status, text) =>
-      hasToolCalls(text)
-        ? { status: "pass" as const, detail: "The endpoint returned tool_calls." }
-        : { status: "inconclusive" as const, detail: "The endpoint accepted tools but did not return tool_calls." },
-  );
+  if (streaming.detail === "model not found") return [streaming];
 
-  const jsonSchema = await probe(
-    "json_schema",
-    url,
-    apiKey,
-    {
-      model,
-      messages: [{ role: "user", content: "Return JSON with ok true." }],
-      max_tokens: 32,
-      temperature: 0,
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: "probe",
-          schema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"], additionalProperties: false },
-          strict: true,
-        },
-      },
-    },
-    (_status, text) => {
-      const ok = jsonSchemaOk(text);
-      if (ok) return { status: "pass" as const, detail: "The content parsed and ok is a boolean." };
-      return { status: "inconclusive" as const, detail: "The endpoint accepted json_schema but the content did not parse with a boolean ok." };
-    },
-  );
+  const timedOut = (name: CapabilityResult["name"]): CapabilityResult => ({
+    name,
+    status: "fail",
+    detail: "Capability checks timed out.",
+    raw: "",
+    latencyMs: 0,
+  });
 
-  const vision = await probe(
-    "vision",
-    url,
-    apiKey,
-    {
-      model,
-      messages: [
+  const tools = Date.now() >= deadline
+    ? timedOut("tools")
+    : await probe(
+        "tools",
+        url,
+        apiKey,
         {
-          role: "user",
-          content: [
-            { type: "text", text: "This is a 1 by 1 pixel. What colour is it? Reply with one word: red, green, blue, black, or white." },
-            { type: "image_url", image_url: { url: `data:image/png;base64,${RED_PNG}` } },
-          ],
+          model,
+          messages: [{ role: "user", content: "Call ping if you can." }],
+          max_tokens: 16,
+          temperature: 0,
+          tools: [{ type: "function", function: { name: "ping", description: "Return pong", parameters: { type: "object", properties: {} } } }],
+          tool_choice: "auto",
         },
-      ],
-      max_tokens: 16,
-      temperature: 0,
-    },
-    (_status, text) =>
-      visionNamesRed(text)
-        ? { status: "pass" as const, detail: "The endpoint named the known-colour pixel." }
-        : { status: "inconclusive" as const, detail: "The endpoint accepted an image but did not name the known colour." },
-  );
+        (_status, text) =>
+          hasToolCalls(text)
+            ? { status: "pass" as const, detail: "The endpoint returned tool_calls." }
+            : { status: "inconclusive" as const, detail: "The endpoint accepted tools but did not return tool_calls." },
+        deadline,
+      );
+  if (tools.detail === "model not found") return [tools];
+
+  const jsonSchema = Date.now() >= deadline
+    ? timedOut("json_schema")
+    : await probe(
+        "json_schema",
+        url,
+        apiKey,
+        {
+          model,
+          messages: [{ role: "user", content: `Return JSON with ok true and nonce ${nonce}.` }],
+          max_tokens: 32,
+          temperature: 0,
+          response_format: {
+            type: "json_schema",
+            json_schema: {
+              name: "probe",
+              schema: {
+                type: "object",
+                properties: { ok: { type: "boolean" }, nonce: { type: "string", const: nonce } },
+                required: ["ok", "nonce"],
+                additionalProperties: false,
+              },
+              strict: true,
+            },
+          },
+        },
+        (_status, text) => {
+          const ok = jsonSchemaOk(text, nonce);
+          if (ok) return { status: "pass" as const, detail: "The content parsed with the required keys and nonce." };
+          return { status: "inconclusive" as const, detail: "The endpoint accepted json_schema but did not return the required keys and nonce." };
+        },
+        deadline,
+      );
+  if (jsonSchema.detail === "model not found") return [jsonSchema];
+
+  const vision = Date.now() >= deadline
+    ? timedOut("vision")
+    : await probe(
+        "vision",
+        url,
+        apiKey,
+        {
+          model,
+          messages: [
+            {
+              role: "user",
+              content: [
+                { type: "text", text: "This image is two pixels side by side. What colour is the LEFT pixel? Reply with one word: red, green, blue, black, or white." },
+                { type: "image_url", image_url: { url: `data:image/png;base64,${TWO_PIXEL_PNG}` } },
+              ],
+            },
+          ],
+          max_tokens: 16,
+          temperature: 0,
+        },
+        (_status, text) =>
+          visionNamesLeftRed(text)
+            ? { status: "pass" as const, detail: "The endpoint named the left pixel colour." }
+            : { status: "inconclusive" as const, detail: "The endpoint accepted an image but did not name the left pixel colour." },
+        deadline,
+      );
 
   return [streaming, tools, jsonSchema, vision];
 }

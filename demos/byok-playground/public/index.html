@@ -74,7 +74,7 @@
         <li>Paste a key, an https base URL, and a model id, then stream a chat. Multi-turn sends the transcript (at most 15 turns, 4000 characters each).</li>
         <li>List models from <code>GET /models</code>. The Worker returns only <code>{ data: [{ id }] }</code>.</li>
         <li>Send the same prompt to your model and to Workers AI, and read latency, time to first token, and tokens.</li>
-        <li>Probe streaming, tools, JSON schema, and vision. A pass is evidence-based; otherwise the check is fail, unsupported, or inconclusive.</li>
+        <li>Probe streaming, tools, JSON schema, and vision. A pass is evidence-based (tool_calls, schema keys plus nonce, left-pixel colour); otherwise the check is fail, unsupported, or inconclusive.</li>
       </ul>
     </div>
     <div>
@@ -145,7 +145,7 @@
   <section class="panel tab-panel" id="panel-caps" data-panel="caps" hidden aria-labelledby="caps-title">
     <header class="panel__head">
       <h2 id="caps-title">Capability checks</h2>
-      <p>Four small requests against your endpoint. Tools pass only with <code>tool_calls</code>; JSON schema pass only if <code>ok</code> is a boolean; vision asks about a known-colour pixel. Otherwise the result is fail, unsupported, or inconclusive. Raw errors have the key stripped.</p>
+      <p>Four small requests against your endpoint. Tools pass only with <code>tool_calls</code>; JSON schema pass only with the required keys and nonce; vision must name the left pixel of a two-pixel image. A missing model is reported once. Otherwise the result is fail, unsupported, or inconclusive. Raw errors have the key stripped.</p>
     </header>
     <button class="btn" id="run-caps" type="button">Run checks</button>
     <ul id="caps" class="caps"></ul>
@@ -154,7 +154,7 @@
   <p id="status" class="status" role="status"></p>
 
   <footer class="foot">
-    <p>Not a general-purpose proxy: only <code>/chat/completions</code> and <code>/models</code>, https on port 443, no redirects, rate-limited. The DNS check is best-effort (rebinding); Workers egress with <code>global_fetch_strictly_public</code> is the backstop. Concurrent stream caps are per isolate, not a global cluster lock.</p>
+    <p>Not a general-purpose proxy: only <code>/chat/completions</code> and <code>/models</code>, https on port 443, no redirects, rate-limited per network. The DNS check is best-effort (rebinding); Workers egress with <code>global_fetch_strictly_public</code> is the backstop.</p>
     <p class="foot__links"><a href="https://theserverless.dev/contact" rel="noopener noreferrer">Contact</a> · <a href="https://tech-demos.theserverless.dev/">All demos</a></p>
   </footer>
   <noscript><p class="status">This playground needs JavaScript to talk to your endpoint.</p></noscript>

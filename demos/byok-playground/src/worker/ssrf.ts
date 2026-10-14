@@ -242,6 +242,11 @@ export function assessUrl(raw: string, options: AssessOptions = {}): Decision {
   return { ok: true, url: url.href };
 }
 
+/**
+ * DNS is best-effort against rebinding (TOCTOU). `global_fetch_strictly_public`
+ * is the platform egress backstop. A hostname that later resolves private is
+ * still blocked by egress even if this check passed.
+ */
 export async function authorizeNavigation(raw: string, lookup: Lookup, options: AssessOptions = {}): Promise<Decision> {
   const assessed = assessUrl(raw, options);
   if (!assessed.ok) return assessed;

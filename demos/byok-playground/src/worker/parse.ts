@@ -1,4 +1,5 @@
 import { LIMITS } from "../shared/limits";
+import { trimUtf8, utf8ByteLength } from "../shared/text";
 import type { ChatMessage } from "../shared/types";
 import { readCappedBytes, rejectOversizedContentLength } from "./bytes";
 import { HttpError } from "./errors";
@@ -66,8 +67,8 @@ export function parseMessages(value: unknown, system: string): ChatMessage[] {
       throw new HttpError(400, "messages", "Message role must be user, assistant, or system.");
     }
     if (typeof content !== "string" || !content.trim()) throw new HttpError(400, "messages", "Message content must be text.");
-    if (content.length > LIMITS.maxMessageChars) throw new HttpError(400, "messages", "A message is too long.");
-    messages.push({ role, content: content.slice(0, LIMITS.maxMessageChars) });
+    if (utf8ByteLength(content) > LIMITS.maxMessageChars) throw new HttpError(400, "messages", "A message is too long.");
+    messages.push({ role, content: trimUtf8(content, LIMITS.maxMessageChars) });
   }
   return messages;
 }

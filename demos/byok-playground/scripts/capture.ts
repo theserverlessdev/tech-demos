@@ -12,6 +12,20 @@ async function fillEndpoint(page: Page) {
   await page.locator("#model").fill("mock-gpt");
 }
 
+async function stampMock(page: Page) {
+  await page.evaluate(() => {
+    const existing = document.getElementById("mock-stamp");
+    if (existing) return;
+    const banner = document.createElement("div");
+    banner.id = "mock-stamp";
+    banner.textContent = "local mock · not production";
+    banner.setAttribute("aria-hidden", "true");
+    banner.style.cssText =
+      "position:fixed;top:0;left:0;right:0;z-index:9999;background:#c2410c;color:#fff7f3;text-align:center;padding:6px 10px;font:600 13px/1.3 ui-sans-serif,system-ui,sans-serif;pointer-events:none;";
+    document.body.prepend(banner);
+  });
+}
+
 const browser = await chromium.launch({
   executablePath: "/usr/bin/google-chrome",
   headless: true,
@@ -27,6 +41,7 @@ page.on("pageerror", (err) => console.error(err.message));
 
 await page.addInitScript(() => localStorage.setItem("theme", "dark"));
 await page.goto(url, { waitUntil: "networkidle" });
+await stampMock(page);
 await fillEndpoint(page);
 await page.locator("#list-models").click();
 await page.waitForFunction(() => (document.getElementById("models-note")?.textContent ?? "").includes("models"), null, { timeout: 15_000 });
@@ -71,6 +86,7 @@ const mobile = await browser.newContext({ viewport: { width: 390, height: 844 },
 const phone = await mobile.newPage();
 await phone.addInitScript(() => localStorage.setItem("theme", "dark"));
 await phone.goto(url, { waitUntil: "networkidle" });
+await stampMock(phone);
 await fillEndpoint(phone);
 await phone.locator("#prompt").fill("Hello from a 390px phone layout.");
 await phone.screenshot({ path: `${out}mobile-390.png`, fullPage: true });
