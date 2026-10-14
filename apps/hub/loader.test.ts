@@ -1,5 +1,12 @@
 import { expect, test } from "bun:test";
-import { COMPATIBILITY_DATE, DEMO_RESPONSE_CSP, demoLoaderId, forwardToLoader, wrapDemoResponse } from "./src/loader.ts";
+import {
+  COMPATIBILITY_DATE,
+  DEMO_RESPONSE_CSP,
+  demoLoaderId,
+  forwardToLoader,
+  isLoaderMethodAllowed,
+  wrapDemoResponse,
+} from "./src/loader.ts";
 import { slugFromHost, standaloneBlockedOnHost } from "./src/index.ts";
 
 test("loader id includes a hash of source and compatibility date", async () => {
@@ -24,6 +31,26 @@ test("forwardToLoader strips cookie and authorization and sets x-dynamic-worker"
   expect(forwarded.headers.get("authorization")).toBeNull();
   expect(forwarded.headers.get("accept")).toBe("text/html");
   expect(forwarded.headers.get("x-dynamic-worker")).toBe("hello-dynamic:abc");
+});
+
+test("forwardToLoader does not attach the inbound body", async () => {
+  const req = new Request("https://tech-demos.theserverless.dev/demos/hello-dynamic/", {
+    method: "POST",
+    body: "x=1",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+  });
+  expect(req.body).not.toBeNull();
+  const forwarded = forwardToLoader(req, "hello-dynamic:abc");
+  expect(forwarded.method).toBe("POST");
+  expect(forwarded.body).toBeNull();
+  expect(await forwarded.text()).toBe("");
+});
+
+test("loader demos only allow GET and HEAD", () => {
+  expect(isLoaderMethodAllowed("GET")).toBe(true);
+  expect(isLoaderMethodAllowed("HEAD")).toBe(true);
+  expect(isLoaderMethodAllowed("POST")).toBe(false);
+  expect(isLoaderMethodAllowed("PUT")).toBe(false);
 });
 
 test("wrapDemoResponse sets sandbox CSP, nosniff, and the loader id", async () => {

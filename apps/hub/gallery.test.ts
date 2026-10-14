@@ -13,6 +13,11 @@ test("card links use the trailing slash", () => {
   expect(html).not.toContain('href="/demos/hello-dynamic"');
 });
 
+test("loader demos get the Dynamic Worker badge", () => {
+  expect(html).toContain("Dynamic Worker");
+  expect(html).toContain("reuses it while it stays warm");
+});
+
 test("gallery scripts include menu dismiss on Escape and outside tap", () => {
   expect(GALLERY_UI_SCRIPT).toContain('event.key === "Escape"');
   expect(GALLERY_UI_SCRIPT).toContain("pointerdown");

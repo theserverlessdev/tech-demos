@@ -214,14 +214,14 @@ export const demos: DemoEntry[] = [
     title: "Hello Dynamic Worker",
     description: "A one-file HTML page the hub loads as a Dynamic Worker.",
     demonstrates:
-      "The hub Worker Loader compiles this module at request time and serves it as an isolated Dynamic Worker. The page has no Durable Object, no bindings, and no stored state.",
+      "The hub bundles worker.js as text. On the first request, the Worker Loader starts an isolate with id hello-dynamic:<sha256 of compat date + source> and reuses it while it stays warm. A source change gives a new id. The demo stores nothing; the hub's Workers Logs keep the request URL for up to 7 days.",
     capabilities: [
       "Open the page served by the loaded worker",
-      "Change ?name= and see the greeting update",
-      "Confirm the HTML comes from the Dynamic Worker, not a static file on the hub",
+      "Type a name in the form (or follow ?name=Ankur) and see the greeting update",
+      "Refresh and watch the isolate request counter climb — that number is from the loaded module, not a static file on the hub",
     ],
     useCases: [
-      "A gallery that loads a snippet without a separate Worker deploy",
+      "A gallery that loads a snippet without a separate Worker deploy (load the source from KV or R2 instead of bundling it)",
       "A preview of generated worker code",
       "A check that the loader path works before you add bindings",
     ],

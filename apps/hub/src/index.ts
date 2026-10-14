@@ -5,6 +5,7 @@ import {
   COMPATIBILITY_DATE,
   demoLoaderId,
   forwardToLoader,
+  isLoaderMethodAllowed,
   sha256CspHash,
   wrapDemoResponse,
 } from "./loader";
@@ -73,6 +74,13 @@ async function runDemo(request: Request, env: Env, slug: string): Promise<Respon
   const host = new URL(request.url).hostname;
   if (standaloneBlockedOnHost(demo.kind, host)) {
     return new Response("demo Worker not deployed", { status: 503, headers: TEXT_HEADERS });
+  }
+
+  if (demo.kind === "loader" && !isLoaderMethodAllowed(request.method)) {
+    return new Response("Method not allowed", {
+      status: 405,
+      headers: { ...TEXT_HEADERS, allow: "GET, HEAD" },
+    });
   }
 
   try {

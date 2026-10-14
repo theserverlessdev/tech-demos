@@ -18,12 +18,24 @@ export async function demoLoaderId(
   return `${slug}:${hash}`;
 }
 
+/** Loader demos are GET/HEAD pages. Rejecting other methods avoids a billed isolate and a body stream. */
+export function isLoaderMethodAllowed(method: string): boolean {
+  return method === "GET" || method === "HEAD";
+}
+
 export function forwardToLoader(request: Request, loaderId: string): Request {
   const headers = new Headers(request.headers);
   headers.delete("cookie");
   headers.delete("authorization");
   headers.set("x-dynamic-worker", loaderId);
-  return new Request(request, { headers });
+  // Do not attach the inbound body. Dynamic workers in this hub answer without
+  // reading it, which throws after the response: "Can't read from request stream
+  // after response has been sent."
+  return new Request(request.url, {
+    method: request.method,
+    headers,
+    redirect: request.redirect,
+  });
 }
 
 export function wrapDemoResponse(response: Response, loaderId: string): Response {

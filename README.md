@@ -5,7 +5,7 @@ Sticky monorepo for weekday tech demos on **Cloudflare Workers Paid** ($5).
 ## Architecture (Paid-plan friendly)
 
 - **No Workers for Platforms** — dispatch namespaces are not on this plan.
-- **`apps/hub`** — gallery Worker with a **Dynamic Worker Loader** (`LOADER`). It serves the index UI and, for loader demos, compiles the demo module at request time.
+- **`apps/hub`** — gallery Worker with a **Dynamic Worker Loader** (`LOADER`). It serves the index UI and, for loader demos, bundles the module as text, starts an isolate on first request, and reuses it while it stays warm.
 - **`demos/<slug>`** — self-contained demo source. New demos land here via PR.
 - **`tracking/seen.json`** — scout dedupe (proposed / built / skipped).
 - **Workers Builds** — connect `apps/hub` to this repo; push/merge to `main` deploys the hub.
@@ -34,7 +34,7 @@ and register a **fallback** in `apps/hub/src/registry.ts` via `redirectSource(sl
 ```bash
 bun install
 bun run dev      # hub at http://127.0.0.1:8787
-bun test         # hub + shared + demo helpers (hello-dynamic is a second bun test run)
+bun test         # hub + shared + demo helpers (loader demos via demos/*/worker.test.ts)
 bun run deploy   # wrangler deploy hub (owner only)
 ```
 
@@ -44,8 +44,9 @@ bun run deploy   # wrangler deploy hub (owner only)
 
 1. Copy `demos/hello-dynamic` → `demos/<kebab-slug>`
 2. Implement a single `worker.js` (no TypeScript, no bindings)
-3. Register it in `apps/hub/src/registry.ts` with `kind: "loader"` and `import source from "…/worker.js" with { type: "text" }`
-4. Open a PR (screenshot + video of the running demo)
+3. Register it in `apps/hub/src/registry.ts` with `kind: "loader"` and `import source from "…/worker.js" with { type: "text" }`. Hub `tsc` already accepts `*/worker.js` as a Text module.
+4. Add `demos/<kebab-slug>/worker.test.ts` if the demo has tests (`bun test` picks up `demos/*/worker.test.ts`)
+5. Open a PR (screenshot + video of the running demo)
 
 ### Path B — standalone demo (own Worker)
 
