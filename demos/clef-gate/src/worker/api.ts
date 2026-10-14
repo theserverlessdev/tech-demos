@@ -1,7 +1,8 @@
 import type { GateAgent } from "./agent";
-import { listDecisions, purgeExpired } from "./audit";
-import { isLocalRequest, isTestSiteKey, resolveTurnstileSecret, verifyTurnstile } from "./turnstile";
+import { listDecisions, purgeExpired, sessionIsLive } from "./audit";
+import { isLocalMode, isTestSiteKey, resolveTurnstileSecret, verifyTurnstile } from "./turnstile";
 import { TOOL_NAMES } from "./tools";
+import { cookieHeader, newSessionId, readCookie, sessionKey, sessionTtlSeconds, signSession, verifySession } from "./session";
 import type { ClefModel, HealthBody, PublicConfig } from "../shared/types";
 
 export class HttpError extends Error {
@@ -14,7 +15,6 @@ export class HttpError extends Error {
   }
 }
 
-const COOKIE = "clef_gate";
 const TOOL_BLURBS: Record<(typeof TOOL_NAMES)[number], string> = {
   read_docs: "Read a page of demo docs",
   fetch_url: "Describe a public https URL",
@@ -39,30 +39,25 @@ function clientIp(request: Request): string {
   return request.headers.get("cf-connecting-ip") || "local";
 }
 
-function cookieValue(request: Request): string | null {
-  const header = request.headers.get("cookie") ?? "";
-  for (const part of header.split(";")) {
-    const [name, ...rest] = part.trim().split("=");
-    if (name === COOKIE) {
-      const value = rest.join("=").trim();
-      return /^[a-f0-9]{32}$/.test(value) ? value : null;
-    }
-  }
-  return null;
+function requireSessionKey(env: Env): string {
+  const key = sessionKey(env);
+  if (!key) throw new HttpError(503, "session_unconfigured", "Chat is off until SESSION_KEY is set.");
+  return key;
 }
 
-function cookieHeader(id: string, base: string, secure: boolean, clear = false): string {
-  const path = base || "/";
-  const parts = [`${COOKIE}=${clear ? "" : id}`, "HttpOnly", "SameSite=Lax", `Path=${path}`, `Max-Age=${clear ? 0 : 21600}`];
-  if (secure) parts.push("Secure");
-  return parts.join("; ");
+async function signedCookie(env: Env, id: string, base: string, secure: boolean): Promise<string> {
+  const ttl = sessionTtlSeconds(env.SESSION_TTL_SECONDS);
+  const exp = Math.floor(Date.now() / 1000) + ttl;
+  return cookieHeader(await signSession(requireSessionKey(env), id, exp), base, secure, ttl);
 }
 
-function newSessionId(): string {
-  return crypto.randomUUID().replaceAll("-", "");
+function clearCookie(base: string, secure: boolean): string {
+  return cookieHeader("", base, secure, 0, true);
 }
 
 async function readJson(request: Request): Promise<Record<string, unknown>> {
+  const length = Number(request.headers.get("content-length") ?? "");
+  if (Number.isFinite(length) && length > 8_000) throw new HttpError(413, "too_large", "The request body is too large.");
   const text = await request.text();
   if (text.length > 8_000) throw new HttpError(413, "too_large", "The request body is too large.");
   if (!text.trim()) return {};
@@ -79,13 +74,13 @@ function parseModel(value: unknown): ClefModel | null {
   return value === "clef" || value === "clef-flash" ? value : null;
 }
 
-function assertOrigin(request: Request): void {
+function assertOrigin(request: Request, env: Env): void {
   const origin = request.headers.get("origin");
   if (!origin) return;
   const url = new URL(request.url);
   if (origin === url.origin) return;
   if (origin === "https://tech-demos.theserverless.dev" || origin === "https://clef-gate.tech-demos.theserverless.dev") return;
-  if (/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return;
+  if (isLocalMode(env) && /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return;
   throw new HttpError(403, "origin", "Origin not allowed.");
 }
 
@@ -96,8 +91,7 @@ async function limit(binding: RateLimit, request: Request): Promise<void> {
 
 async function requireTurnstile(request: Request, env: Env, body: Record<string, unknown>): Promise<void> {
   const url = new URL(request.url);
-  const hostForPolicy = isLocalRequest(request) ? "127.0.0.1" : url.hostname;
-  const resolved = resolveTurnstileSecret(hostForPolicy, env.TURNSTILE_SECRET);
+  const resolved = resolveTurnstileSecret(isLocalMode(env), env.TURNSTILE_SECRET);
   if (!resolved.ok) {
     throw new HttpError(503, "turnstile_unconfigured", "Chat is off until TURNSTILE_SECRET is set to a real widget secret.");
   }
@@ -112,19 +106,16 @@ function stub(env: Env, sessionId: string): DurableObjectStub<GateAgent> {
 
 function agentHttp(
   result: Awaited<ReturnType<GateAgent["view"]>>,
-  base: string,
-  secure: boolean,
-  extra?: { status?: number; cookie?: string },
+  extra?: { status?: number; headers?: HeadersInit },
 ): Response {
   if (!result.ok) {
-    const headers = result.status === 410 ? { "set-cookie": cookieHeader("", base, secure, true) } : undefined;
-    return json({ error: { code: result.code, message: result.message } }, result.status, headers);
+    return json({ error: { code: result.code, message: result.message } }, result.status, extra?.headers);
   }
-  return json(result.view, extra?.status ?? 200, extra?.cookie ? { "set-cookie": extra.cookie } : undefined);
+  return json(result.view, extra?.status ?? 200, extra?.headers);
 }
 
-function flags(request: Request): { forceHeuristic: boolean; forceLocalPlanner: boolean; allowHeuristic: boolean } {
-  const local = isLocalRequest(request);
+function requestFlags(request: Request, env: Env): { forceHeuristic: boolean; forceLocalPlanner: boolean; allowHeuristic: boolean } {
+  const local = isLocalMode(env);
   return {
     allowHeuristic: local,
     forceHeuristic: local && request.headers.get("x-clef-source") === "heuristic",
@@ -145,6 +136,15 @@ function config(env: Env): PublicConfig {
   };
 }
 
+async function resolveCookie(request: Request, env: Env): Promise<string | null> {
+  const key = sessionKey(env);
+  if (!key) return null;
+  const id = await verifySession(key, readCookie(request));
+  if (!id) return null;
+  if (!(await sessionIsLive(env.DB, id))) return null;
+  return id;
+}
+
 export async function handleApi(request: Request, env: Env, pathname: string, base: string): Promise<Response> {
   const method = request.method;
   const url = new URL(request.url);
@@ -163,23 +163,28 @@ export async function handleApi(request: Request, env: Env, pathname: string, ba
 
   if (pathname === "/api/config" && method === "GET") return json(config(env));
 
-  if (method === "POST" || method === "PATCH" || method === "DELETE") assertOrigin(request);
+  if (method === "POST" || method === "PATCH" || method === "DELETE") assertOrigin(request, env);
 
   if (pathname === "/api/sessions" && method === "POST") {
     await limit(env.SESSION_LIMIT, request);
     const body = await readJson(request);
     await requireTurnstile(request, env, body);
+    requireSessionKey(env);
     const model = parseModel(body.model) ?? "clef";
     const id = newSessionId();
     const result = await stub(env, id).start({ sessionId: id, model });
-    return agentHttp(result, base, secure, { status: 201, cookie: cookieHeader(id, base, secure) });
+    const headers = result.ok ? { "set-cookie": await signedCookie(env, id, base, secure) } : undefined;
+    return agentHttp(result, { status: 201, headers });
   }
 
-  const sessionId = cookieValue(request);
+  const sessionId = await resolveCookie(request, env);
+  const staleCookie = Boolean(readCookie(request)) && !sessionId;
+  const dropStale = staleCookie ? { "set-cookie": clearCookie(base, secure) } : undefined;
 
   if (pathname === "/api/session" && method === "DELETE") {
+    await limit(env.READ_LIMIT, request);
     if (sessionId) await stub(env, sessionId).forget();
-    return json({ ok: true }, 200, { "set-cookie": cookieHeader("", base, secure, true) });
+    return json({ ok: true }, 200, { "set-cookie": clearCookie(base, secure) });
   }
 
   if (pathname === "/api/chat" && method === "POST") {
@@ -191,27 +196,39 @@ export async function handleApi(request: Request, env: Env, pathname: string, ba
     let created = false;
     if (!id) {
       await limit(env.SESSION_LIMIT, request);
+      requireSessionKey(env);
       id = newSessionId();
       const model = parseModel(body.model) ?? "clef";
       const started = await stub(env, id).start({ sessionId: id, model });
-      if (!started.ok) return agentHttp(started, base, secure);
+      if (!started.ok) return agentHttp(started, { headers: dropStale });
       created = true;
     }
-    const result = await stub(env, id).chat({ text, flags: flags(request) });
-    return agentHttp(result, base, secure, created ? { cookie: cookieHeader(id, base, secure) } : undefined);
+    const result = await stub(env, id).chat({ text, flags: requestFlags(request, env) });
+    const headers = created ? { "set-cookie": await signedCookie(env, id, base, secure) } : dropStale;
+    return agentHttp(result, { headers });
   }
 
   if (!sessionId) {
-    if (pathname === "/api/session" && method === "GET") return json({ fresh: true });
-    if (pathname === "/api/audit" && method === "GET") return json({ decisions: [] });
+    if (pathname === "/api/session" && method === "GET") {
+      await limit(env.READ_LIMIT, request);
+      return json({ fresh: true }, 200, dropStale);
+    }
+    if (pathname === "/api/audit" && method === "GET") {
+      await limit(env.READ_LIMIT, request);
+      return json({ decisions: [] }, 200, dropStale);
+    }
     throw new HttpError(401, "no_session", "Start a session before using the desk.");
   }
 
   if (pathname === "/api/session" && method === "GET") {
-    return agentHttp(await stub(env, sessionId).view(), base, secure);
+    await limit(env.READ_LIMIT, request);
+    const result = await stub(env, sessionId).view();
+    const headers = !result.ok && result.status === 410 ? { "set-cookie": clearCookie(base, secure) } : undefined;
+    return agentHttp(result, { headers });
   }
 
   if (pathname === "/api/audit" && method === "GET") {
+    await limit(env.READ_LIMIT, request);
     const decisions = await listDecisions(env.DB, sessionId);
     return json({ decisions });
   }
@@ -221,7 +238,7 @@ export async function handleApi(request: Request, env: Env, pathname: string, ba
     const body = await readJson(request);
     const model = parseModel(body.model);
     if (!model) throw new HttpError(400, "bad_model", "Model must be clef or clef-flash.");
-    return agentHttp(await stub(env, sessionId).setModel(model), base, secure);
+    return agentHttp(await stub(env, sessionId).setModel(model));
   }
 
   if (pathname === "/api/approvals" && method === "POST") {
@@ -231,7 +248,7 @@ export async function handleApi(request: Request, env: Env, pathname: string, ba
     const id = typeof body.id === "string" ? body.id : "";
     const outcome = body.outcome === "approve" || body.outcome === "deny" ? body.outcome : null;
     if (!/^pend_[a-f0-9]{16}$/.test(id) || !outcome) throw new HttpError(400, "bad_approval", "Send the pending id and approve or deny.");
-    return agentHttp(await stub(env, sessionId).resolve({ id, outcome, flags: flags(request) }), base, secure);
+    return agentHttp(await stub(env, sessionId).resolve({ id, outcome, flags: requestFlags(request, env) }));
   }
 
   throw new HttpError(404, "not_found", "No such API route.");

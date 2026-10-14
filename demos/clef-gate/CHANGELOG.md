@@ -29,6 +29,17 @@ What this slice changes relative to [yologdev/yoagent `clef-worker`](https://git
 - Bearer-token auth. This is a public demo with an anonymous session cookie.
 - `?gate=jev`.
 
+## 2026-10-14
+
+Audit fixes:
+
+- Session cookies are HMAC-signed (`id.exp.hmac`). Forged cookies never call `idFromName`. GET/DELETE `/api/session` and GET `/api/audit` use `READ_LIMIT` `7467`.
+- Ended sessions call `destroy()` so Durable Object SQLite is freed. Expiry uses Agents SDK `schedule()`.
+- An expired pending call is rejected even if the alarm is late. A weak deny stays deny.
+- Keyword planner no longer invents delete ids, SQL, or fetch URLs. Email intent is checked first. glm-5.3-flash uses `reasoning_effort: "low"` and 1024 output tokens; empty model replies log `planner_empty` and fall back. The gate card shows which planner ran.
+- Narrow screens keep Approve/Deny sticky, wrap long args, and show a compact gate row in the transcript. Audit items include model, source, and probabilities.
+- `LOCAL_DEV=1` gates heuristic, test Turnstile, and localhost origins. Deploy is `bun run deploy` so `app.js` ships.
+
 ## 2026-10-09
 
 Phone layout: 16px composer, 44px chips and buttons, and safe-area padding. The pending card and layout stack on a narrow screen. Under 720px the Turnstile widget sits above Send so the 300px widget is not clipped.

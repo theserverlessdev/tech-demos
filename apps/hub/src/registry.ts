@@ -324,7 +324,7 @@ export const demos: DemoEntry[] = [
       "Ask the desk to use one of the five sandboxed tools",
       "Read the verdict and the probabilities",
       "Approve or deny a paused call; it resumes in the same Durable Object, or ten minutes pass",
-      "Open the audit list for the tool, the decision, and the model",
+      "Open the audit list for the tool, the arguments, the decision, and your answer",
       "See that send, delete, and SQL tools only describe what they would have done",
     ],
     useCases: [

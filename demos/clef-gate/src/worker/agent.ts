@@ -1,8 +1,9 @@
 import { Agent } from "agents";
 import { insertDecision, insertSession, purgeSession, setHumanOutcome } from "./audit";
-import { conclude, propose } from "./planner";
+import { conclude, propose, type ChatBody } from "./planner";
 import { parseToolCall, runTool, type ParsedCall } from "./tools";
 import { toolGate, CONFIDENCE_FLOOR_DEFAULT, type ToolGateVerdict } from "./tool-gate";
+import { isPendingExpired } from "./session";
 import {
   TURN_LIMIT,
   type ClefModel,
@@ -11,6 +12,7 @@ import {
   type GateSource,
   type HumanOutcome,
   type PendingCall,
+  type PlannerKind,
   type Probabilities,
   type SessionView,
   type TranscriptMessage,
@@ -23,6 +25,7 @@ export type GateState = {
   createdAt: number;
   expiresAt: number;
   turns: number;
+  scheduleId: string | null;
 };
 
 export type AgentOk = { ok: true; view: SessionView };
@@ -43,7 +46,7 @@ type PendingRow = {
   expires_at: number;
 };
 
-const initial: GateState = { sessionId: "", model: "clef", createdAt: 0, expiresAt: 0, turns: 0 };
+const initial: GateState = { sessionId: "", model: "clef", createdAt: 0, expiresAt: 0, turns: 0, scheduleId: null };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -59,6 +62,10 @@ function isSource(value: unknown): value is GateSource {
 
 function isHuman(value: unknown): value is HumanOutcome {
   return value === "approve" || value === "deny" || value === "expired";
+}
+
+function isPlanner(value: unknown): value is PlannerKind {
+  return value === "workers-ai" || value === "local";
 }
 
 function newId(prefix: string): string {
@@ -92,6 +99,7 @@ function parseCard(raw: string | null): GateCard | null {
       model: value.model,
       reason: value.reason,
       humanOutcome: isHuman(value.humanOutcome) ? value.humanOutcome : null,
+      planner: isPlanner(value.planner) ? value.planner : null,
     };
   } catch {
     return null;
@@ -165,9 +173,18 @@ export class GateAgent extends Agent<Env, GateState> {
   }
 
   private async arm() {
+    if (this.state.scheduleId) {
+      try {
+        await this.cancelSchedule(this.state.scheduleId);
+      } catch (err) {
+        console.error(JSON.stringify({ event: "schedule_cancel_failed", error: err instanceof Error ? err.message : "error" }));
+      }
+    }
     const pending = this.pendingRow();
     const when = pending ? Math.min(pending.expires_at, this.state.expiresAt) : this.state.expiresAt;
-    if (when > Date.now()) await this.ctx.storage.setAlarm(when);
+    if (when <= Date.now()) return;
+    const scheduled = await this.schedule(new Date(when), "expire", { at: when });
+    this.setState({ ...this.state, scheduleId: scheduled.id });
   }
 
   private pendingRow(): PendingRow | null {
@@ -202,7 +219,6 @@ export class GateAgent extends Agent<Env, GateState> {
       ? { id: pending.id, decisionId: pending.decision_id, tool: pending.tool, argsSummary: pending.args_summary, expiresAt: pending.expires_at }
       : null;
     return {
-      id: this.state.sessionId,
       model: this.state.model,
       expiresAt: this.state.expiresAt,
       turns: this.state.turns,
@@ -212,7 +228,7 @@ export class GateAgent extends Agent<Env, GateState> {
     };
   }
 
-  private async runChat(body: unknown): Promise<unknown> {
+  private async runChat(body: ChatBody): Promise<unknown> {
     const timeout = new Promise<never>((_, reject) => {
       setTimeout(() => reject(new Error("chat_timeout")), 8_000);
     });
@@ -229,7 +245,7 @@ export class GateAgent extends Agent<Env, GateState> {
     if (this.state.createdAt > 0) return this.fail(410, "expired", "This session expired. Send another message to start a new one.");
     const now = Date.now();
     const expiresAt = now + this.sessionTtl();
-    this.setState({ sessionId: input.sessionId, model: input.model, createdAt: now, expiresAt, turns: 0 });
+    this.setState({ sessionId: input.sessionId, model: input.model, createdAt: now, expiresAt, turns: 0, scheduleId: null });
     try {
       await insertSession(this.env.DB, input.sessionId, input.model, now, expiresAt);
     } catch (err) {
@@ -274,7 +290,8 @@ export class GateAgent extends Agent<Env, GateState> {
     if (!this.live()) return this.fail(410, "expired", "This session expired.");
     if (this.pendingRow()) return this.fail(409, "pending", "Approve or deny the waiting tool call first.");
     const text = input.text.trim();
-    if (!text || text.length > 500) return this.fail(400, "empty", "Write a message of 1 to 500 characters.");
+    if (!text) return this.fail(400, "empty", "Write a message of 1 to 500 characters.");
+    if (text.length > 500) return this.fail(400, "too_long", "Messages can be at most 500 characters.");
     if (this.state.turns >= TURN_LIMIT) return this.fail(429, "session_full", "This session reached its message limit. Start a new one.");
 
     this.#busy = true;
@@ -298,7 +315,7 @@ export class GateAgent extends Agent<Env, GateState> {
         return { ok: true, view: this.snapshot() };
       }
       const verdict = await this.judge(parsed, text, input.flags);
-      const card = this.card(parsed, verdict);
+      const card = this.card(parsed, verdict, plan.planner);
       try {
         await insertDecision(this.env.DB, this.state.sessionId, card);
       } catch (err) {
@@ -308,7 +325,7 @@ export class GateAgent extends Agent<Env, GateState> {
       this.addMessage("user", text, null);
       const messageId = this.addMessage("gate", card.reason, card);
       this.setState({ ...this.state, turns: this.state.turns + 1 });
-      console.log(JSON.stringify({ event: "gate", tool: parsed.tool, decision: card.decision, source: card.source, latencyMs: card.latencyMs, model: card.model }));
+      console.log(JSON.stringify({ event: "gate", tool: parsed.tool, decision: card.decision, source: card.source, latencyMs: card.latencyMs, model: card.model, planner: card.planner }));
 
       if (card.decision === "ask-human") {
         const expires = Date.now() + this.pendingTtl();
@@ -343,6 +360,11 @@ export class GateAgent extends Agent<Env, GateState> {
     if (!this.live()) return this.fail(410, "expired", "This session expired.");
     const pending = this.pendingRow();
     if (!pending || pending.id !== input.id) return this.fail(404, "no_pending", "That tool call is no longer waiting.");
+    if (isPendingExpired(pending.expires_at)) {
+      await this.expirePending(pending);
+      await this.arm();
+      return this.fail(409, "expired", "That approval window expired. The tool did not run.");
+    }
 
     this.#busy = true;
     try {
@@ -397,25 +419,35 @@ export class GateAgent extends Agent<Env, GateState> {
     }
   }
 
-  override async alarm() {
+  /** Agents SDK schedule() owns the Durable Object alarm. */
+  async expire(_payload?: { at?: number }): Promise<void> {
     this.ensureSchema();
+    if (this.#busy) {
+      const scheduled = await this.schedule(1, "expire", { at: Date.now() + 1000 });
+      this.setState({ ...this.state, scheduleId: scheduled.id });
+      return;
+    }
     const now = Date.now();
     const pending = this.pendingRow();
-    if (pending && pending.expires_at <= now) {
-      try {
-        await setHumanOutcome(this.env.DB, this.state.sessionId, pending.decision_id, "expired");
-      } catch (err) {
-        console.error(JSON.stringify({ event: "expire_audit_failed", error: err instanceof Error ? err.message : "error" }));
-      }
-      this.markHuman(pending.message_id, "expired");
-      this.sql`DELETE FROM pending WHERE id = ${pending.id}`;
-      this.addMessage("assistant", `The approval window for ${pending.tool} expired. It did not run.`, null);
+    if (pending && isPendingExpired(pending.expires_at, now)) {
+      await this.expirePending(pending);
     }
     if (this.state.createdAt > 0 && this.state.expiresAt <= now) {
       await this.wipe();
       return;
     }
     if (this.live()) await this.arm();
+  }
+
+  private async expirePending(pending: PendingRow) {
+    try {
+      await setHumanOutcome(this.env.DB, this.state.sessionId, pending.decision_id, "expired");
+    } catch (err) {
+      console.error(JSON.stringify({ event: "expire_audit_failed", error: err instanceof Error ? err.message : "error" }));
+    }
+    this.markHuman(pending.message_id, "expired");
+    this.sql`DELETE FROM pending WHERE id = ${pending.id}`;
+    this.addMessage("assistant", `The approval window for ${pending.tool} expired. It did not run.`, null);
   }
 
   private markHuman(messageId: number, outcome: HumanOutcome) {
@@ -441,7 +473,7 @@ export class GateAgent extends Agent<Env, GateState> {
     );
   }
 
-  private card(call: ParsedCall, verdict: ToolGateVerdict): GateCard {
+  private card(call: ParsedCall, verdict: ToolGateVerdict, planner: PlannerKind): GateCard {
     return {
       decisionId: newId("dec"),
       tool: call.tool,
@@ -454,6 +486,7 @@ export class GateAgent extends Agent<Env, GateState> {
       model: verdict.model,
       reason: verdict.reason,
       humanOutcome: null,
+      planner,
     };
   }
 
@@ -475,12 +508,26 @@ export class GateAgent extends Agent<Env, GateState> {
     const id = this.state.sessionId;
     this.sql`DELETE FROM messages`;
     this.sql`DELETE FROM pending`;
+    if (this.state.scheduleId) {
+      try {
+        await this.cancelSchedule(this.state.scheduleId);
+      } catch {
+        /* destroy() also disables alarms */
+      }
+    }
     this.setState(initial);
-    if (!id) return;
+    if (id) {
+      try {
+        await purgeSession(this.env.DB, id);
+      } catch (err) {
+        console.error(JSON.stringify({ event: "purge_failed", error: err instanceof Error ? err.message : "error" }));
+      }
+    }
     try {
-      await purgeSession(this.env.DB, id);
+      await this.destroy();
     } catch (err) {
-      console.error(JSON.stringify({ event: "purge_failed", error: err instanceof Error ? err.message : "error" }));
+      console.error(JSON.stringify({ event: "destroy_failed", error: err instanceof Error ? err.message : "error" }));
+      await this.ctx.storage.deleteAll();
     }
   }
 }

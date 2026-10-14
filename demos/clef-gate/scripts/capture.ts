@@ -13,7 +13,7 @@ async function waitEnabled(page: Page, selector: string) {
 }
 
 const browser = await chromium.launch({
-  executablePath: "/usr/bin/google-chrome",
+  channel: "chrome",
   headless: true,
   args: ["--no-sandbox", "--disable-dev-shm-usage"],
 });
@@ -46,6 +46,25 @@ await page.getByRole("button", { name: "Run DROP TABLE tickets" }).click();
 await page.waitForFunction(() => document.getElementById("gate-decision")?.textContent?.includes("deny"), null, { timeout: 20_000 });
 await page.screenshot({ path: `${out}denied.png` });
 
+const phone = await browser.newContext({
+  viewport: { width: 390, height: 844 },
+  isMobile: true,
+  hasTouch: true,
+  deviceScaleFactor: 2,
+});
+const phonePage = await phone.newPage();
+phonePage.on("pageerror", (err) => consoleErrors.push(err.message));
+await phonePage.addInitScript(() => localStorage.setItem("theme", "dark"));
+await phonePage.goto(`${base}/demos/clef-gate/`, { waitUntil: "domcontentloaded" });
+await waitEnabled(phonePage, "#send");
+await phonePage.getByRole("button", { name: "Email the customer" }).click();
+await phonePage.waitForSelector("#pending:not([hidden])", { timeout: 20_000 });
+await phonePage.evaluate(() => document.getElementById("pending")?.scrollIntoView({ block: "nearest" }));
+await phonePage.screenshot({ path: `${out}pending-390.png` });
+const phoneWidth = await phonePage.evaluate(() => document.documentElement.scrollWidth);
+if (phoneWidth > 390) consoleErrors.push(`page wider than viewport: ${phoneWidth}`);
+await phone.close();
+
 const video = page.video();
 await context.close();
 const raw = video ? await video.path() : "";
@@ -67,4 +86,4 @@ if (consoleErrors.length) {
   console.error(consoleErrors.join("\n"));
   process.exit(1);
 }
-console.log(`Wrote ${out}allow.png, ask-human.png, denied.png, clef-gate-demo.mp4`);
+console.log(`Wrote ${out}allow.png, ask-human.png, denied.png, pending-390.png, clef-gate-demo.mp4`);

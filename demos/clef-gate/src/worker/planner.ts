@@ -12,8 +12,11 @@ const SYSTEM = [
   "You are the Clef Gate desk. You can call one sandboxed tool, or answer with no tool.",
   "Tools never touch real systems. Call a tool only when the user asked for that action.",
   "Call at most one tool. If you are just explaining the desk, do not call a tool.",
-  "Do not invent tool results.",
+  "Do not invent tool results. Do not invent a record id, a URL, or a SQL statement the user did not write.",
 ].join(" ");
+
+export const PLANNER_MAX_TOKENS = 1024;
+export const CLOSING_MAX_TOKENS = 512;
 
 export const PLANNER_TOOLS = [
   {
@@ -85,9 +88,30 @@ export const PLANNER_TOOLS = [
   },
 ];
 
+export type ChatBody = {
+  messages: ChatMessage[];
+  tools?: typeof PLANNER_TOOLS;
+  max_tokens: number;
+  max_completion_tokens?: number;
+  reasoning_effort?: "low" | "high" | "max";
+  tool_choice?: "auto" | "none";
+};
+
 function clip(value: string, max: number): string {
   const clean = value.replace(/\s+/g, " ").trim();
   return clean.length > max ? clean.slice(0, max) : clean;
+}
+
+const SQL_STATEMENT =
+  /\b(select|drop|delete|update|insert|alter|truncate)\b(?:\s+\S+){0,3}\s+\b(from|table|into|set)\b/i;
+const SQL_COMPACT = /\b(select|drop|delete|update|insert|alter|truncate)\s*[*`(]/i;
+
+export function hasSqlStatement(text: string): boolean {
+  return SQL_STATEMENT.test(text) || SQL_COMPACT.test(text);
+}
+
+function clarify(text: string): Proposal {
+  return { text, call: null, planner: "local" };
 }
 
 /** Deterministic mapper for the five desk prompts, and the fallback when the chat model is down. */
@@ -95,35 +119,41 @@ export function proposeLocally(userText: string): Proposal {
   const text = userText.trim();
   const lower = text.toLowerCase();
 
-  if (/\bdrop\s+table\b|\bdelete\s+from\b|\btruncate\b|\balter\s+table\b|\bselect\s+|\bsql\b/.test(lower)) {
-    const found = text.match(/\b(?:select|drop|delete|update|insert|alter|truncate)\b[\s\S]{0,160}/i);
-    const sql = clip(found ? found[0] : "SELECT 1", 180);
-    return { text: "", call: { name: "run_sql", args: { sql } }, planner: "local" };
-  }
-
-  if (/(delete|remove)/.test(lower) && /(record|customer|acct_)/.test(lower)) {
-    const id = text.match(/\bacct_[a-z0-9]+\b/i)?.[0] ?? "acct_1842";
-    return { text: "", call: { name: "delete_record", args: { table: "customers", id } }, planner: "local" };
-  }
-
   if (/email|e-mail/.test(lower)) {
+    const mailbox = text.match(/\b[^\s@]+@[^\s@]+\.[^\s@]+\b/)?.[0];
     const subject = /closed|resolved/.test(lower) ? "Ticket closed" : "Ticket update";
     return {
       text: "",
-      call: { name: "send_email", args: { to: "customer@example.com", subject, body: clip(text, 140) } },
+      call: { name: "send_email", args: { to: mailbox ?? "customer@example.com", subject, body: clip(text, 140) } },
       planner: "local",
     };
   }
 
-  if (/fetch|https?:\/\//.test(lower)) {
-    const found = text.match(/https?:\/\/[^\s]+/i)?.[0]?.replace(/[),.]+$/, "");
-    const url = found && found.length <= 200 ? found : "https://developers.cloudflare.com/workers-ai/models/clef/";
-    return { text: "", call: { name: "fetch_url", args: { url } }, planner: "local" };
+  if (hasSqlStatement(text)) {
+    const found = text.match(/\b(?:select|drop|delete|update|insert|alter|truncate)\b[\s\S]{0,160}/i);
+    if (!found) return clarify("I need a SQL statement such as SELECT … FROM or DROP TABLE …");
+    return { text: "", call: { name: "run_sql", args: { sql: clip(found[0], 180) } }, planner: "local" };
+  }
+
+  if (/(delete|remove)/.test(lower) && /(record|row|customer|acct_)/.test(lower)) {
+    const id = text.match(/\bacct_[a-z0-9]+\b/i)?.[0];
+    if (!id) return clarify("Which record id should I delete? I need an id such as acct_1842. I will not invent one.");
+    const table = /customer/.test(lower) ? "customers" : "records";
+    return { text: "", call: { name: "delete_record", args: { table, id } }, planner: "local" };
+  }
+
+  const foundUrl = text.match(/https?:\/\/[^\s]+/i)?.[0]?.replace(/[),.]+$/, "");
+  if (foundUrl && foundUrl.length <= 200) {
+    return { text: "", call: { name: "fetch_url", args: { url: foundUrl } }, planner: "local" };
   }
 
   if (/doc|policy|refund|sla|privacy/.test(lower)) {
     const topic = /privacy/.test(lower) ? "privacy" : /sla|response/.test(lower) ? "sla" : /refund|policy/.test(lower) ? "refund" : "overview";
     return { text: "", call: { name: "read_docs", args: { topic } }, planner: "local" };
+  }
+
+  if (/fetch/.test(lower)) {
+    return clarify("Which https URL should I describe? I will not invent one.");
   }
 
   return {
@@ -188,7 +218,7 @@ function asStrings(args: Record<string, unknown>): Record<string, string> {
 export async function propose(options: {
   userText: string;
   forceLocal: boolean;
-  runChat: (body: { messages: ChatMessage[]; tools: typeof PLANNER_TOOLS; max_tokens: number }) => Promise<unknown>;
+  runChat: (body: ChatBody) => Promise<unknown>;
 }): Promise<Proposal> {
   if (options.forceLocal) return proposeLocally(options.userText);
   try {
@@ -198,7 +228,10 @@ export async function propose(options: {
         { role: "user", content: options.userText },
       ],
       tools: PLANNER_TOOLS,
-      max_tokens: 300,
+      max_tokens: PLANNER_MAX_TOKENS,
+      max_completion_tokens: PLANNER_MAX_TOKENS,
+      reasoning_effort: "low",
+      tool_choice: "auto",
     })) as ChatOutput;
     const call = firstCall(out);
     if (call && isToolName(call.name)) {
@@ -206,6 +239,7 @@ export async function propose(options: {
     }
     const text = assistantText(out);
     if (text) return { text, call: null, planner: "workers-ai" };
+    console.warn(JSON.stringify({ event: "planner_empty" }));
     return proposeLocally(options.userText);
   } catch (err) {
     console.warn(JSON.stringify({ event: "planner_fallback", error: err instanceof Error ? err.message : "error" }));
@@ -219,7 +253,7 @@ export async function conclude(options: {
   result: string;
   outcome: "ran" | "denied" | "human-denied";
   forceLocal: boolean;
-  runChat: (body: { messages: ChatMessage[]; max_tokens: number }) => Promise<unknown>;
+  runChat: (body: ChatBody) => Promise<unknown>;
 }): Promise<{ text: string; planner: "workers-ai" | "local" }> {
   const local = concludeLocally(options.tool, options.result, options.outcome);
   if (options.forceLocal || options.outcome !== "ran") return { text: local, planner: "local" };
@@ -233,10 +267,13 @@ export async function conclude(options: {
         },
         { role: "user", content: `The user asked: ${options.userText}\nTool ${options.tool} returned: ${options.result}` },
       ],
-      max_tokens: 200,
+      max_tokens: CLOSING_MAX_TOKENS,
+      max_completion_tokens: CLOSING_MAX_TOKENS,
+      reasoning_effort: "low",
     })) as ChatOutput;
     const text = assistantText(out);
     if (text) return { text: clip(text, 500), planner: "workers-ai" };
+    console.warn(JSON.stringify({ event: "conclude_empty" }));
   } catch (err) {
     console.warn(JSON.stringify({ event: "conclude_fallback", error: err instanceof Error ? err.message : "error" }));
   }

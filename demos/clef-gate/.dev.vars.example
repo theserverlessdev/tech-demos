@@ -1,4 +1,5 @@
-# Cloudflare's published always-pass Turnstile test secret. Localhost only.
-# Production TURNSTILE_SECRET is a Worker secret (wrangler secret put), not this file.
-# wrangler.jsonc TURNSTILE_SITE_KEY is the live widget.
+# Local only. Copy to .dev.vars. Production secrets are wrangler secret put.
+LOCAL_DEV=1
+TURNSTILE_SITE_KEY=1x00000000000000000000AA
 TURNSTILE_SECRET=1x0000000000000000000000000000000AA
+SESSION_KEY=local-clef-gate-session-key-not-for-prod
