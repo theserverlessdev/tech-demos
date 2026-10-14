@@ -1,4 +1,4 @@
-import { isTurnstileApi, nextScratchWait, RECONNECT_MAX, shouldReconnect, TURNSTILE_RACE, TURNSTILE_UNLOCK } from "../shared/guards";
+import { isTurnstileApi, nextScratchWait, reconnectStoppedMessage, shouldReconnect, TURNSTILE_RACE, TURNSTILE_UNLOCK } from "../shared/guards";
 import type { LabConfig, RaceMode, RaceResult, RoomResponse, RoomView, ServerEvent } from "../shared/types";
 
 const API_BASE = location.pathname.startsWith("/demos/actor-lab") ? "/demos/actor-lab" : "";
@@ -350,9 +350,9 @@ function connect(code: string): void {
   next.addEventListener("close", (ev) => {
     stopPing();
     if (socket !== next) return;
-    if (!wantSocket || !roomCode || !shouldReconnect(ev.code, reconnectAttempt)) {
+    if (!wantSocket || !roomCode || !shouldReconnect(ev.code, reconnectAttempt, ev.reason)) {
       wantSocket = false;
-      setStatus(ev.code === 1001 || reconnectAttempt >= RECONNECT_MAX ? "Room is gone." : "The socket closed. Join again if the room is still there.");
+      setStatus(reconnectStoppedMessage(ev.code, reconnectAttempt, ev.reason));
       return;
     }
     const delay = Math.min(15_000, 500 * 2 ** reconnectAttempt);

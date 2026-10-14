@@ -128,20 +128,22 @@ if (code) {
 check("a second socket hears the say", fanout);
 
 let flooded = false;
+let junkClosed = false;
+let scratchFloodClosed = false;
 if (code) {
-  const noisy = new WebSocket(`${base.replace(/^http/, "ws")}/api/rooms/${code}/socket?name=Noisy`);
-  await opened(noisy);
-  const closed = new Promise<boolean>((resolve) => {
-    const timer = setTimeout(() => resolve(false), 4_000);
-    noisy.addEventListener("close", (ev) => {
-      clearTimeout(timer);
-      resolve(ev.code === 1008);
-    });
+  flooded = await closes1008(code, "Noisy", (ws) => {
+    for (let i = 0; i < 61; i++) ws.send(JSON.stringify({ type: "flood", n: i }));
   });
-  for (let i = 0; i < 21; i++) noisy.send(JSON.stringify({ type: "flood", n: i }));
-  flooded = await closed;
+  junkClosed = await closes1008(code, "Junk", (ws) => {
+    for (let i = 0; i < 200; i++) ws.send("not-json");
+  });
+  scratchFloodClosed = await closes1008(code, "Burst", (ws) => {
+    for (let i = 0; i < 500; i++) ws.send(JSON.stringify({ type: "scratch", text: `flood ${i}` }));
+  });
 }
-check("more than 20 frames in 10s closes the socket with 1008", flooded);
+check("more than 60 frames in 10s closes the socket with 1008", flooded);
+check("200 junk frames close the socket with 1008", junkClosed);
+check("500 scratch frames close the socket with 1008", scratchFloodClosed);
 
 let scratchOpen = false;
 let scratchSaid = false;
@@ -218,4 +220,18 @@ function opened(ws: WebSocket): Promise<void> {
     ws.addEventListener("open", () => resolve());
     ws.addEventListener("error", () => reject(new Error("socket failed")));
   });
+}
+
+async function closes1008(room: string, name: string, send: (ws: WebSocket) => void): Promise<boolean> {
+  const ws = new WebSocket(`${base.replace(/^http/, "ws")}/api/rooms/${room}/socket?name=${name}`);
+  await opened(ws);
+  const closed = new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => resolve(false), 4_000);
+    ws.addEventListener("close", (ev) => {
+      clearTimeout(timer);
+      resolve(ev.code === 1008);
+    });
+  });
+  send(ws);
+  return closed;
 }

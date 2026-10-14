@@ -13,6 +13,10 @@ import {
   livePeers,
   nextScratchWait,
   RECONNECT_MAX,
+  reconnectStoppedMessage,
+  ROOM_EXPIRED_CODE,
+  ROOM_EXPIRED_REASON,
+  roomExpired,
   SAYS_PER_MINUTE,
   SCRATCH_MIN_INTERVAL_MS,
   SCRATCH_SOCKET_MAX,
@@ -52,7 +56,8 @@ describe("livePeers", () => {
 });
 
 describe("admitFrame", () => {
-  test("closes after more than 20 frames in 10s", () => {
+  test("closes after more than 60 frames in 10s, including scratch and junk", () => {
+    expect(FRAME_MAX).toBe(60);
     let frames: number[] = [];
     const start = 1_000_000;
     for (let i = 0; i < FRAME_MAX; i++) {
@@ -163,11 +168,24 @@ describe("clipSpeakerName", () => {
 });
 
 describe("shouldReconnect", () => {
-  test("stops on 1001 or after RECONNECT_MAX attempts", () => {
+  test("stops on an explicit Room expired reason, not on 1001 alone", () => {
+    expect(roomExpired(1001, "")).toBe(false);
+    expect(roomExpired(1001, "going away")).toBe(false);
+    expect(roomExpired(1006, ROOM_EXPIRED_REASON)).toBe(true);
+    expect(roomExpired(ROOM_EXPIRED_CODE, ROOM_EXPIRED_REASON)).toBe(true);
     expect(shouldReconnect(1006, 0)).toBe(true);
+    expect(shouldReconnect(1001, 0, "")).toBe(true);
     expect(shouldReconnect(1008, RECONNECT_MAX - 1)).toBe(true);
     expect(shouldReconnect(1008, RECONNECT_MAX)).toBe(false);
-    expect(shouldReconnect(1001, 0)).toBe(false);
-    expect(shouldReconnect(1001, 2)).toBe(false);
+    expect(shouldReconnect(1001, 0, ROOM_EXPIRED_REASON)).toBe(false);
+    expect(shouldReconnect(ROOM_EXPIRED_CODE, 0, ROOM_EXPIRED_REASON)).toBe(false);
+  });
+
+  test("does not call a 429 give-up Room is gone", () => {
+    expect(reconnectStoppedMessage(1006, RECONNECT_MAX, "")).toBe("Could not reconnect. Use Join to try again.");
+    expect(reconnectStoppedMessage(1008, RECONNECT_MAX)).toBe("Could not reconnect. Use Join to try again.");
+    expect(reconnectStoppedMessage(1001, 0, "")).toBe("The socket closed. Join again if the room is still there.");
+    expect(reconnectStoppedMessage(1006, 0, ROOM_EXPIRED_REASON)).toBe("Room is gone.");
+    expect(reconnectStoppedMessage(ROOM_EXPIRED_CODE, 2, ROOM_EXPIRED_REASON)).toBe("Room is gone.");
   });
 });

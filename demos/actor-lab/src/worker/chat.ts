@@ -1,4 +1,4 @@
-import { admitFrame, admitSay, admitScratch, clipSpeakerName, isReservedName, livePeers, SCRATCH_COALESCE_MS } from "../shared/guards";
+import { admitFrame, admitSay, admitScratch, clipSpeakerName, isReservedName, livePeers, ROOM_EXPIRED_CODE, ROOM_EXPIRED_REASON, SCRATCH_COALESCE_MS } from "../shared/guards";
 import { actorReply } from "./ai";
 import { Actor, isRecord } from "./actor";
 import type { RpcResult } from "./race";
@@ -88,7 +88,7 @@ export class ChatActor extends Actor<ChatState> {
     this.#cancelScratch();
     for (const ws of this.ctx.getWebSockets()) {
       try {
-        ws.close(1001, "Room expired");
+        ws.close(ROOM_EXPIRED_CODE, ROOM_EXPIRED_REASON);
       } catch {
         // Already gone.
       }
@@ -179,6 +179,17 @@ export class ChatActor extends Actor<ChatState> {
     const meta = attachment(ws);
     const text = typeof raw === "string" ? raw : new TextDecoder().decode(raw);
     if (text === "ping") return;
+    const admitted = admitFrame(meta.frames, Date.now());
+    meta.frames = admitted.frames;
+    ws.serializeAttachment(meta);
+    if (!admitted.ok) {
+      try {
+        ws.close(1008, "Too many frames");
+      } catch {
+        // Already closing.
+      }
+      return;
+    }
     if (text.length > 8_000) {
       this.#send(ws, { type: "error", code: "too_large", message: "That message is too large." });
       return;
@@ -200,17 +211,6 @@ export class ChatActor extends Actor<ChatState> {
       ws.serializeAttachment(meta);
       if (!scratch.ok) return;
       this.#queueScratch(cleanText(parsed.text, SCRATCH_MAX));
-      return;
-    }
-    const admitted = admitFrame(meta.frames, Date.now());
-    meta.frames = admitted.frames;
-    ws.serializeAttachment(meta);
-    if (!admitted.ok) {
-      try {
-        ws.close(1008, "Too many frames");
-      } catch {
-        // Already closing.
-      }
       return;
     }
     if (parsed.type !== "say") {

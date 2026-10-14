@@ -1,6 +1,8 @@
 export const BODY_MAX = 32_000;
 export const FRAME_WINDOW_MS = 10_000;
-export const FRAME_MAX = 20;
+export const FRAME_MAX = 60;
+export const ROOM_EXPIRED_REASON = "Room expired";
+export const ROOM_EXPIRED_CODE = 4001;
 export const SAYS_PER_MINUTE = 30;
 export const SAY_WINDOW_MS = 60_000;
 export const SCRATCH_COALESCE_MS = 80;
@@ -59,9 +61,20 @@ export function clipSpeakerName(role: "human" | "actor", name: string): string {
   return role === "actor" ? "Actor" : name;
 }
 
-export function shouldReconnect(code: number, attempt: number, max = RECONNECT_MAX): boolean {
-  if (code === 1001) return false;
+export function roomExpired(code: number, reason: string): boolean {
+  if (reason.trim() === ROOM_EXPIRED_REASON) return true;
+  return code === ROOM_EXPIRED_CODE;
+}
+
+export function shouldReconnect(code: number, attempt: number, reason = "", max = RECONNECT_MAX): boolean {
+  if (roomExpired(code, reason)) return false;
   return attempt < max;
+}
+
+export function reconnectStoppedMessage(code: number, attempt: number, reason = "", max = RECONNECT_MAX): string {
+  if (roomExpired(code, reason)) return "Room is gone.";
+  if (attempt >= max) return "Could not reconnect. Use Join to try again.";
+  return "The socket closed. Join again if the room is still there.";
 }
 
 export function turnstileActionOk(got: string | undefined, expected: string): boolean {
