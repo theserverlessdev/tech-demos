@@ -291,8 +291,15 @@ button { cursor: pointer; background: none; border: none; }
   .messages { padding: 12px; }
   .composer { padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); }
   .join input, .composer input[type="text"] { height: 44px; }
-  .shows--bar { padding: 0.4rem 0.75rem; font-size: 0.8rem; }
-  .foot { padding: 8px 12px; }
+  .shows--bar {
+    padding: 0.35rem 0.75rem;
+    font-size: 0.78rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .strip { min-height: 0; padding: 6px 12px; font-size: 12px; }
+  .foot { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
