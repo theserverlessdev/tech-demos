@@ -220,10 +220,20 @@ let greeted = false;
 async function waitForTurnstile(): Promise<TurnstileApi | null> {
   const started = Date.now();
   while (Date.now() - started < 8_000) {
-    if (window.turnstile) return window.turnstile;
+    // api.js can set window.turnstile before render exists.
+    if (window.turnstile?.render) return window.turnstile;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  return null;
+  return window.turnstile?.render ? window.turnstile : null;
+}
+
+function resetTurnstile() {
+  if (!turnstileId || !window.turnstile) return;
+  try {
+    window.turnstile.reset(turnstileId);
+  } catch {
+    // The widget is not mounted yet (reconnect before render).
+  }
 }
 
 function maybeHello() {
@@ -237,8 +247,6 @@ function maybeHello() {
     ts: Date.now(),
   });
   turnstileToken = "";
-  window.turnstile?.reset(turnstileId || undefined);
-  $("turnstile").hidden = true;
   hint("Hold the button or the space bar while you speak. Release to send.");
   void refresh();
 }
@@ -291,7 +299,7 @@ client.addEventListener("close", () => {
   conn.dataset.state = "closed";
   $("conn-label").textContent = "Reconnecting";
   $("turnstile").hidden = false;
-  window.turnstile?.reset(turnstileId || undefined);
+  resetTurnstile();
 });
 
 function send(msg: DeskMessage) {
@@ -323,6 +331,7 @@ client.addEventListener("message", (ev: MessageEvent) => {
 function handle(msg: BrainMessage) {
   switch (msg.type) {
     case "ui_state":
+      $("turnstile").hidden = true;
       if (msg.state !== "speaking" || !speaker.playing) turnEnded = null;
       return applyUi(msg);
     case "tts_start":
@@ -374,6 +383,11 @@ function handle(msg: BrainMessage) {
       playEffect(msg.name, device.volume / 100);
       return;
     case "error":
+      if (msg.code === "turnstile_required" || msg.code === "turnstile_failed" || msg.code === "turnstile_unconfigured") {
+        greeted = false;
+        $("turnstile").hidden = false;
+        resetTurnstile();
+      }
       hint(msg.message, true);
       return;
     case "mcp":
