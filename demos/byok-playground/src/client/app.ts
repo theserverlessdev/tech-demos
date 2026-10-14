@@ -1,6 +1,7 @@
 import { LIMITS } from "../shared/limits";
-import { isPrintableAsciiKey, redactExact, trimUtf8, utf8ByteLength } from "../shared/text";
+import { dropOldestUntilFits, isPrintableAsciiKey, redactExact, trimUtf8, utf8ByteLength } from "../shared/text";
 import type { CapabilityResult, PublicConfig, SideMetrics } from "../shared/types";
+import { remountCompareAfterMint, tokenForSessionMint, type TurnstileWidget, type WidgetAction } from "./session-mint";
 
 const SESSION_STORE = "byok.session";
 const LOCAL_STORE = "byok.local";
@@ -47,11 +48,13 @@ const caps = $<HTMLUListElement>("caps");
 const status = $<HTMLParagraphElement>("status");
 const turnstileHost = $<HTMLDivElement>("turnstile");
 const themeBtn = $<HTMLButtonElement>("theme");
+const promptNote = $<HTMLParagraphElement>("prompt-note");
 
 let siteKey = "";
 let testSiteKey = false;
 let widgetId: string | null = null;
-let widgetAction: "session" | "compare" = "session";
+let widgetAction: WidgetAction | null = null;
+let proxyOff = false;
 let readyToken: string | null = null;
 let tokenWaiter: ((token: string) => void) | null = null;
 let busy = false;
@@ -182,7 +185,7 @@ function onToken(token: string) {
   readyToken = token;
 }
 
-function mountTurnstile(action: "session" | "compare") {
+function mountTurnstile(action: WidgetAction) {
   const apiRef = turnstileApi();
   if (!apiRef || !siteKey) return;
   if (widgetId) apiRef.remove(widgetId);
@@ -219,19 +222,28 @@ function takeToken(): Promise<string> {
   });
 }
 
+const turnstileWidget: TurnstileWidget = {
+  get action() {
+    return widgetId ? widgetAction : null;
+  },
+  mount: mountTurnstile,
+  takeToken,
+};
+
 async function mintSession(): Promise<void> {
   const body: Record<string, string> = {};
-  if (siteKey) {
-    body.turnstileToken = testSiteKey ? TURNSTILE_DUMMY : widgetAction === "session" && readyToken ? await takeToken() : await takeToken();
-  }
+  const token = await tokenForSessionMint(turnstileWidget, { siteKey, testSiteKey, dummy: TURNSTILE_DUMMY });
+  if (token) body.turnstileToken = token;
   const res = await call("api/session", { method: "POST", body });
   if (!res.ok) {
     const data = (await res.json().catch(() => null)) as unknown;
     throw new Error(messageOf(data, "Complete the Turnstile check so this browser can call your endpoint."));
   }
   persistSessionReady(true);
-  sessionNote.textContent = siteKey ? "Signed session cookie is set. Compare still needs action compare." : "Signed session cookie is set. Compare is off until Turnstile is configured.";
-  if (siteKey && !testSiteKey) mountTurnstile("compare");
+  sessionNote.textContent = siteKey
+    ? "Signed session cookie is set. Compare still needs action compare."
+    : "Signed session cookie is set. Compare is off until Turnstile is configured.";
+  remountCompareAfterMint(turnstileWidget, { siteKey, testSiteKey });
 }
 
 async function ensureSession(force = false): Promise<void> {
@@ -281,37 +293,59 @@ function setBubble(index: number, text: string, error = false) {
   const node = transcript.children[index]?.querySelector("div");
   if (node) node.textContent = text;
   transcript.children[index]?.classList.toggle("error", error);
-}
-
-function fitMessages(messages: { role: "user" | "assistant"; content: string }[]): { role: "user" | "assistant"; content: string }[] {
-  const budget = LIMITS.requestBytes - 6_144;
-  const out: { role: "user" | "assistant"; content: string }[] = [];
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const trial = [messages[i]!, ...out];
-    if (utf8ByteLength(JSON.stringify(trial)) > budget) break;
-    out.unshift(messages[i]!);
+  if (error && turn.role === "assistant" && index > 0) {
+    const prev = history[index - 1];
+    if (prev?.role === "user") {
+      prev.error = true;
+      transcript.children[index - 1]?.classList.toggle("error", true);
+    }
   }
-  return out;
 }
 
 function transcriptMessages(): { role: "user" | "assistant"; content: string }[] {
-  const ready = history
+  return history
     .filter((turn) => !turn.error && turn.content.trim())
-    .map((turn) => ({ role: turn.role, content: trimUtf8(turn.content, LIMITS.maxMessageChars) }));
-  return fitMessages(ready.slice(-LIMITS.maxMessages));
+    .slice(-LIMITS.maxMessages)
+    .map((turn) => ({
+      role: turn.role,
+      content: turn.role === "assistant" ? trimUtf8(turn.content, LIMITS.maxMessageBytes) : turn.content,
+    }));
 }
 
 function chatBody(creds: Creds, extra: Record<string, unknown> = {}) {
-  return {
-    apiKey: creds.key,
-    baseUrl: creds.baseUrl,
-    model: creds.model,
-    system: system.value,
-    temperature: Number(temperature.value),
-    max_tokens: Number(maxTokens.value),
-    messages: transcriptMessages(),
-    ...extra,
-  };
+  const extraMessages = extra.messages as { role: "user" | "assistant"; content: string }[] | undefined;
+  const rest = { ...extra };
+  delete rest.messages;
+  return dropOldestUntilFits(
+    {
+      apiKey: creds.key,
+      baseUrl: creds.baseUrl,
+      model: creds.model,
+      system: system.value,
+      temperature: Number(temperature.value),
+      max_tokens: Number(maxTokens.value),
+      ...rest,
+      messages: extraMessages ?? transcriptMessages(),
+    },
+    LIMITS.requestBytes,
+  );
+}
+
+function promptOverLimit(): string | null {
+  const bytes = utf8ByteLength(prompt.value);
+  if (bytes > LIMITS.maxMessageBytes) {
+    return `That message is ${bytes} bytes. The limit is ${LIMITS.maxMessageBytes} bytes (~1,300 CJK or Devanagari characters).`;
+  }
+  if (utf8ByteLength(system.value) > LIMITS.maxSystemBytes) {
+    return `The system prompt is ${utf8ByteLength(system.value)} bytes. The limit is ${LIMITS.maxSystemBytes} bytes.`;
+  }
+  return null;
+}
+
+function updatePromptNote() {
+  const bytes = utf8ByteLength(prompt.value);
+  promptNote.textContent = `${bytes} / ${LIMITS.maxMessageBytes} bytes`;
+  promptNote.classList.toggle("is-over", bytes > LIMITS.maxMessageBytes);
 }
 
 function handleSseLine(
@@ -401,6 +435,12 @@ async function sendChat(event: Event) {
   }
   const text = prompt.value.trim();
   if (!text) return;
+  const over = promptOverLimit();
+  if (over) {
+    say(over);
+    updatePromptNote();
+    return;
+  }
   saveCreds();
   addBubble("user", text);
   prompt.value = "";
@@ -425,7 +465,7 @@ async function sendChat(event: Event) {
     say(message);
   } finally {
     busy = false;
-    send.disabled = false;
+    send.disabled = proxyOff;
   }
 }
 
@@ -501,6 +541,11 @@ async function runCompare() {
     say(err instanceof Error ? err.message : "Missing credentials.");
     return;
   }
+  const over = prompt.value.trim() ? promptOverLimit() : utf8ByteLength(system.value) > LIMITS.maxSystemBytes ? promptOverLimit() : null;
+  if (over) {
+    say(over);
+    return;
+  }
   const text = prompt.value.trim() || "Reply with one short sentence about edge workers.";
   saveCreds();
   busy = true;
@@ -548,7 +593,7 @@ async function runCompare() {
     say(err instanceof Error ? err.message : "Compare failed.");
   } finally {
     busy = false;
-    compareBtn.disabled = compareOff;
+    compareBtn.disabled = compareOff || proxyOff;
   }
 }
 
@@ -600,7 +645,7 @@ async function runCapabilityChecks() {
     say(err instanceof Error ? err.message : "Capability checks failed.");
   } finally {
     busy = false;
-    runCaps.disabled = false;
+    runCaps.disabled = proxyOff;
   }
 }
 
@@ -631,21 +676,30 @@ async function refreshConfig() {
     const data = (await res.json()) as PublicConfig;
     siteKey = data.siteKey ?? "";
     testSiteKey = data.testSiteKey;
-    compareOff = data.ai === "off";
+    proxyOff = data.session === "off";
+    compareOff = data.ai === "off" || proxyOff;
     compareBtn.disabled = compareOff;
-    budgetNote.textContent =
-      data.ai === "off"
-        ? "Workers AI compare is off until Turnstile is configured. Chat and models still work."
-        : `${data.budget.remaining} of ${data.budget.dailyCap} compares left today${data.ai === "stub" ? " · local stub" : ""}.`;
-    if (data.testSiteKey) budgetNote.textContent += " Test Turnstile key.";
-    if (testSiteKey || !siteKey) {
-      try {
-        await ensureSession();
-      } catch (err) {
-        sessionNote.textContent = err instanceof Error ? err.message : "Could not mint a session.";
+    listModels.disabled = proxyOff;
+    send.disabled = proxyOff || busy;
+    runCaps.disabled = proxyOff || busy;
+    if (proxyOff) {
+      budgetNote.textContent = "Proxy is off until Turnstile is configured.";
+      sessionNote.textContent = "Proxy is off until Turnstile is configured.";
+    } else {
+      budgetNote.textContent =
+        data.ai === "off"
+          ? "Workers AI compare is off. Chat and models still work."
+          : `${data.budget.remaining} of ${data.budget.dailyCap} compares left today${data.ai === "stub" ? " · local stub" : ""}.`;
+      if (data.testSiteKey) budgetNote.textContent += " Test Turnstile key.";
+      if (data.session === "local" || testSiteKey) {
+        try {
+          await ensureSession();
+        } catch (err) {
+          sessionNote.textContent = err instanceof Error ? err.message : "Could not mint a session.";
+        }
+      } else if (siteKey && !widgetId) {
+        mountTurnstile(sessionReady ? "compare" : "session");
       }
-    } else if (siteKey && !widgetId) {
-      mountTurnstile(sessionReady ? "compare" : "session");
     }
   } catch {
     budgetNote.textContent = "Could not load config.";
@@ -662,6 +716,8 @@ async function boot() {
     tokensOut.textContent = maxTokens.value;
   });
   for (const node of [apiKey, baseUrl, model, system]) node.addEventListener("change", saveCreds);
+  prompt.addEventListener("input", updatePromptNote);
+  updatePromptNote();
   remember.addEventListener("change", saveCreds);
   clearKey.addEventListener("click", () => {
     apiKey.value = "";
@@ -685,5 +741,5 @@ async function boot() {
 
 void boot();
 window.addEventListener("load", () => {
-  if (siteKey && !widgetId && !testSiteKey) mountTurnstile(sessionReady ? "compare" : "session");
+  if (!proxyOff && siteKey && !widgetId && !testSiteKey) mountTurnstile(sessionReady ? "compare" : "session");
 });

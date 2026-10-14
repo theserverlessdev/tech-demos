@@ -6,7 +6,7 @@ import { runCapabilities } from "./capabilities";
 import { isLocalEnv, publicSiteKey } from "./env";
 import { HttpError } from "./errors";
 import { apiHeaders } from "./headers";
-import { assertSameOrigin, clientIp, limit } from "./origin";
+import { assertSameOrigin, clientIp, isLocalRequest, limit } from "./origin";
 import { parseMaxTokens, parseMessages, parseModel, parseSystem, parseTemperature, promptFrom, readJson } from "./parse";
 import {
   failFromUpstream,
@@ -24,7 +24,7 @@ import {
 import { createLogger, jsonError, redact } from "./redact";
 import { finish, mintSignedSession, requireSession } from "./session";
 import { consumeSse, encodeSse } from "./stream";
-import { aiStatus, isTestSiteKey, requireTurnstile } from "./turnstile";
+import { aiStatus, isTestSiteKey, requireTurnstile, sessionGate } from "./turnstile";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: apiHeaders("json") });
@@ -50,6 +50,7 @@ async function config(env: Env): Promise<PublicConfig> {
     ok: true,
     model: env.AI_MODEL,
     ai,
+    session: sessionGate(env),
     siteKey,
     testSiteKey: isTestSiteKey(siteKey),
     budget: { dailyCap, used, remaining: Math.max(0, dailyCap - used) },
@@ -59,13 +60,14 @@ async function config(env: Env): Promise<PublicConfig> {
       requestBytes: LIMITS.requestBytes,
       timeoutMs: LIMITS.timeoutMs,
       maxMessages: LIMITS.maxMessages,
-      maxMessageChars: LIMITS.maxMessageChars,
+      maxMessageBytes: LIMITS.maxMessageBytes,
+      maxSystemBytes: LIMITS.maxSystemBytes,
     },
   };
 }
 
-function assessOptions(env: Env) {
-  return { allowLocalhost: isLocalEnv(env) };
+function assessOptions(env: Env, request: Request) {
+  return { allowLocalhost: isLocalEnv(env) && isLocalRequest(request) };
 }
 
 async function requireProxyGate(request: Request, env: Env): Promise<void> {
@@ -78,7 +80,7 @@ async function visitorChat(env: Env, request: Request, stream: boolean): Promise
   await limit(env.CHAT_LIMIT, request, "chat requests");
   const body = await readJson(request);
   const apiKey = readApiKey(body);
-  const target = await resolveTarget(readBaseUrl(body), "/chat/completions", assessOptions(env));
+  const target = await resolveTarget(readBaseUrl(body), "/chat/completions", assessOptions(env, request));
   const model = parseModel(body.model);
   const messages = parseMessages(body.messages, parseSystem(body.system));
   const temperature = parseTemperature(body.temperature);
@@ -137,7 +139,7 @@ async function visitorModels(env: Env, request: Request): Promise<Response> {
   await limit(env.MODELS_LIMIT, request, "model list requests");
   const body = await readJson(request);
   const apiKey = readApiKey(body);
-  const target = await resolveTarget(readBaseUrl(body), "/models", assessOptions(env));
+  const target = await resolveTarget(readBaseUrl(body), "/models", assessOptions(env, request));
   const upstream = await proxyFetch({
     url: target.url,
     method: "GET",
@@ -166,7 +168,7 @@ async function compare(env: Env, request: Request): Promise<Response> {
   await limit(env.COMPARE_LIMIT, request, "compare requests");
   const body = await readJson(request);
   const apiKey = readApiKey(body);
-  const target = await resolveTarget(readBaseUrl(body), "/chat/completions", assessOptions(env));
+  const target = await resolveTarget(readBaseUrl(body), "/chat/completions", assessOptions(env, request));
   const model = parseModel(body.model);
   const messages = parseMessages(body.messages, parseSystem(body.system));
   const temperature = parseTemperature(body.temperature);
@@ -284,7 +286,7 @@ async function capabilities(env: Env, request: Request): Promise<Response> {
   await limit(env.MODELS_LIMIT, request, "capability probes");
   const body = await readJson(request);
   const apiKey = readApiKey(body);
-  const target = await resolveTarget(readBaseUrl(body), "/chat/completions", assessOptions(env));
+  const target = await resolveTarget(readBaseUrl(body), "/chat/completions", assessOptions(env, request));
   const model = parseModel(body.model);
   const messages = parseMessages(body.messages ?? [{ role: "user", content: "Reply with the word ok." }], parseSystem(body.system));
   const results = await runCapabilities({ url: target.url, apiKey, model, messages });
@@ -293,9 +295,14 @@ async function capabilities(env: Env, request: Request): Promise<Response> {
 
 async function mintSession(env: Env, request: Request): Promise<Response> {
   assertSameOrigin(request);
+  await limit(env.SESSION_LIMIT, request, "session mints");
   const body = await readJson(request);
   const siteKey = publicSiteKey(env);
+  const localMint = isLocalEnv(env) && isLocalRequest(request);
   if (siteKey) await requireTurnstile(env, request, body.turnstileToken, "session");
+  else if (!localMint) {
+    throw new HttpError(503, "turnstile_unconfigured", "Proxy is off until Turnstile is configured.");
+  }
   const minted = await mintSignedSession(env, request);
   return finish(json({ ok: true }), minted.cookie);
 }

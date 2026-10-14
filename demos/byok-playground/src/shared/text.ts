@@ -11,6 +11,17 @@ export function utf8ByteLength(value: string): number {
   return new TextEncoder().encode(value).length;
 }
 
+/** Drop oldest messages until `JSON.stringify(body)` fits in maxBytes. Keeps at least one message. */
+export function dropOldestUntilFits<T extends { messages: unknown[] }>(body: T, maxBytes: number): T {
+  const messages = [...body.messages];
+  let next = { ...body, messages };
+  while (messages.length > 1 && utf8ByteLength(JSON.stringify(next)) > maxBytes) {
+    messages.shift();
+    next = { ...body, messages: [...messages] };
+  }
+  return next;
+}
+
 /** Trim to max UTF-8 bytes without splitting a code point. */
 export function trimUtf8(value: string, maxBytes: number): string {
   const encoded = new TextEncoder().encode(value);

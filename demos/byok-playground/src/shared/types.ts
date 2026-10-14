@@ -30,6 +30,7 @@ export type PublicConfig = {
   ok: true;
   model: string;
   ai: "ready" | "stub" | "off";
+  session: "turnstile" | "local" | "off";
   siteKey: string | null;
   testSiteKey: boolean;
   budget: { dailyCap: number; used: number; remaining: number };
@@ -39,6 +40,7 @@ export type PublicConfig = {
     requestBytes: number;
     timeoutMs: number;
     maxMessages: number;
-    maxMessageChars: number;
+    maxMessageBytes: number;
+    maxSystemBytes: number;
   };
 };

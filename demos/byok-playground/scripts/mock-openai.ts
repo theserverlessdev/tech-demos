@@ -1,4 +1,6 @@
 /** Local OpenAI-compatible mock for BYOK playground validation. */
+import { leftColourFromPngBase64 } from "../src/shared/png";
+
 const PORT = Number(process.env.MOCK_PORT ?? 8799);
 const HOST = process.env.MOCK_HOST ?? "127.0.0.1";
 
@@ -26,11 +28,15 @@ async function chat(req: Request): Promise<Response> {
   if (body.model === "missing-model") {
     return json({ error: { message: "model_not_found", code: "model_not_found" } }, 404);
   }
-  const content = Array.isArray(body.messages)
-    ? body.messages.some((message) => Array.isArray(message.content) && message.content.some((part) => typeof part === "object" && part && "image_url" in part))
-      ? "red"
-      : "Hello from the mock OpenAI-compatible server."
-    : "Hello from the mock OpenAI-compatible server.";
+  const image = Array.isArray(body.messages)
+    ? body.messages.flatMap((message) => (Array.isArray(message.content) ? message.content : [])).find((part) => typeof part === "object" && part && "image_url" in part)
+    : undefined;
+  const imageUrl = image && typeof image === "object" && image && "image_url" in image
+    ? (image as { image_url?: { url?: string } }).image_url?.url ?? ""
+    : "";
+  const pngB64 = imageUrl.startsWith("data:image/png;base64,") ? imageUrl.slice("data:image/png;base64,".length) : "";
+  const leftColour = pngB64 ? leftColourFromPngBase64(pngB64) : null;
+  const content = leftColour ?? "Hello from the mock OpenAI-compatible server.";
 
   if (body.tools) {
     return json({

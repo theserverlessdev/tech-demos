@@ -10,8 +10,8 @@ A visitor pastes an OpenAI-compatible API key, base URL, and model id, then stre
   - Browser-only key storage (`sessionStorage` by default, opt-in `localStorage`, Clear).
   - Worker proxy for `POST /chat/completions` (SSE passthrough) and `GET /models`, with the key in the JSON body.
   - Hard SSRF guard: https:443 (http://localhost only when `ENVIRONMENT=local`), no redirects, IP/hostname denylist including TSD and workers.dev, path allowlist, size/time caps, hop-by-hop and cookie stripping. DNS is best-effort; `global_fetch_strictly_public` is the egress backstop.
-  - Same-origin + HMAC-signed session cookie (issued-at + network key, 12h; minted after one Turnstile pass when a site key is set) on every proxy call.
-  - Per-network rate limits on namespaces 7461–7463 (`IPv4 /32`, `IPv6 /64`).
+  - Same-origin + HMAC-signed session cookie (issued-at + network key, 12h; minted after a session-action Turnstile pass). Off localhost, no site key or secret fails closed.
+  - Per-network rate limits on namespaces 7461–7464 (`IPv4 /32`, `IPv6 /64`).
   - Side-by-side compare vs Workers AI, Turnstile action `compare`, atomic D1 daily budget with HMAC’d `ip_key`.
   - Capability checks: streaming, tools (`tool_calls`), JSON schema (required keys + nonce), vision (left pixel of a two-pixel image). A missing model is reported once. Otherwise inconclusive.
   - Served on `byok-playground.tech-demos.theserverless.dev`; the hub path 308s there.
@@ -32,7 +32,7 @@ A visitor pastes an OpenAI-compatible API key, base URL, and model id, then stre
 - **Workers + Static Assets** — standalone Worker on the demo subdomain (hub path 308s there).
 - **D1** — atomic daily compare budget only. No chat history.
 - **Workers AI** — the “ours” side of compare. Local wrangler config omits the binding and uses a labelled stub.
-- **Turnstile + rate limits 7461–7463** — session mint and compare are gated; every proxy route is limited per network key.
+- **Turnstile + rate limits 7461–7464** — session mint and compare are gated; every proxy route is limited per network key. Off localhost, `REPLACE_ME` fails closed.
 - **No Hono, no React.** Vanilla TS + Graphite & Ember CSS.
 
 ## Architecture

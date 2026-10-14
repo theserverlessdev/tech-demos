@@ -21,7 +21,9 @@ async function stampMock(page: Page) {
     banner.textContent = "local mock · not production";
     banner.setAttribute("aria-hidden", "true");
     banner.style.cssText =
-      "position:fixed;top:0;left:0;right:0;z-index:9999;background:#c2410c;color:#fff7f3;text-align:center;padding:6px 10px;font:600 13px/1.3 ui-sans-serif,system-ui,sans-serif;pointer-events:none;";
+      "position:absolute;top:0;left:0;right:0;z-index:9999;background:#c2410c;color:#fff7f3;text-align:center;padding:6px 10px;font:600 13px/1.3 ui-sans-serif,system-ui,sans-serif;pointer-events:none;";
+    document.body.style.position = "relative";
+    document.body.style.paddingTop = "28px";
     document.body.prepend(banner);
   });
 }

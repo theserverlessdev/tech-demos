@@ -144,6 +144,34 @@ describe("cappedBody SSE redaction", () => {
     expect(lost).toContain("connection was lost");
     expect(lost).not.toContain("overall time cap");
   });
+
+  test("overall cap during a pending read is not labelled idle", async () => {
+    const encoder = new TextEncoder();
+    let pulls = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        pulls += 1;
+        if (pulls === 1) {
+          controller.enqueue(encoder.encode("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n"));
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 5_000));
+      },
+    });
+    const text = await new Response(cappedBody(new Response(stream), [], { sse: true, idleMs: 5_000, overallMs: 120 })).text();
+    expect(text).toContain("overall time cap");
+    expect(text).not.toContain("waiting for the next chunk");
+  });
+
+  test("single-newline data lines are forwarded without waiting for a blank line", async () => {
+    const raw = `data: ${JSON.stringify({ choices: [{ delta: { content: "a" } }] })}\ndata: ${JSON.stringify({ choices: [{ delta: { content: "b" } }] })}\n`;
+    const first = await Promise.race([
+      readCapped(raw, [], 32),
+      new Promise<string>((_, reject) => setTimeout(() => reject(new Error("held back")), 1_000)),
+    ]);
+    expect(first).toContain("\"a\"");
+    expect(first).toContain("\"b\"");
+  });
 });
 
 describe("encodeSse", () => {

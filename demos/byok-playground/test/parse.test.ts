@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { LIMITS } from "../src/shared/limits";
 import { isPrintableAsciiKey, trimUtf8, utf8ByteLength } from "../src/shared/text";
 import { HttpError } from "../src/worker/errors";
-import { parseMessages, readJson } from "../src/worker/parse";
+import { parseMessages, parseSystem, readJson } from "../src/worker/parse";
 
 describe("request parsing", () => {
   test("rejects a content-length over the byte cap", async () => {
@@ -21,11 +21,16 @@ describe("request parsing", () => {
   });
 
   test("rejects a message over the UTF-8 byte cap", () => {
-    const oversized = "é".repeat(LIMITS.maxMessageChars);
-    expect(utf8ByteLength(oversized)).toBeGreaterThan(LIMITS.maxMessageChars);
+    const oversized = "é".repeat(LIMITS.maxMessageBytes);
+    expect(utf8ByteLength(oversized)).toBeGreaterThan(LIMITS.maxMessageBytes);
     expect(() => parseMessages([{ role: "user", content: oversized }], "")).toThrow(HttpError);
     expect(isPrintableAsciiKey("sk-ok")).toBe(true);
     expect(isPrintableAsciiKey("sk no")).toBe(false);
     expect(trimUtf8("ééé", 3).length).toBeLessThanOrEqual(2);
+  });
+
+  test("system prompt uses the same UTF-8 byte unit", () => {
+    expect(parseSystem("ok")).toBe("ok");
+    expect(() => parseSystem("漢".repeat(LIMITS.maxSystemBytes))).toThrow(HttpError);
   });
 });

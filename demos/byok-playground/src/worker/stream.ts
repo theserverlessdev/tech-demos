@@ -1,6 +1,6 @@
 import { LIMITS } from "../shared/limits";
 import { redactExact } from "../shared/text";
-import { readWithIdle } from "./bytes";
+import { classifyReadTimeout, readWithIdle } from "./bytes";
 import { HttpError } from "./errors";
 
 export type StreamStats = {
@@ -67,6 +67,29 @@ export function splitSseEvents(buffer: string): { events: string[]; rest: string
   return { events, rest };
 }
 
+/** Complete SSE lines (including CR-only) when the upstream never emits a blank event separator. */
+export function splitCompleteSseLines(buffer: string): { events: string[]; rest: string } {
+  const events: string[] = [];
+  let rest = buffer;
+  while (rest.length) {
+    const idxN = rest.indexOf("\n");
+    const idxR = rest.indexOf("\r");
+    let idx = -1;
+    let sep = 1;
+    if (idxN === -1 && idxR === -1) break;
+    if (idxR !== -1 && (idxN === -1 || idxR < idxN)) {
+      idx = idxR;
+      sep = rest[idxR + 1] === "\n" ? 2 : 1;
+    } else {
+      idx = idxN;
+      sep = 1;
+    }
+    events.push(rest.slice(0, idx + sep));
+    rest = rest.slice(idx + sep);
+  }
+  return { events, rest };
+}
+
 export type ConsumeSseOptions = {
   idleMs?: number;
   overallMs?: number;
@@ -104,13 +127,16 @@ export async function consumeSse(
         throw new HttpError(504, "timeout", "The stream reached the overall time cap.");
       }
       let chunk: ReadableStreamReadResult<Uint8Array>;
+      const wait = Math.min(idleMs, remaining);
       try {
-        chunk = await readWithIdle(reader, Math.min(idleMs, remaining), options.signal);
+        chunk = await readWithIdle(reader, wait, options.signal);
       } catch (err) {
         await reader.cancel().catch(() => undefined);
-        const message = err instanceof Error ? err.message : "socket";
+        const classified = classifyReadTimeout(err, wait, idleMs);
+        const message = classified.message;
         if (message === "cancelled") throw new HttpError(499, "cancelled", "The stream was cancelled.");
         if (message === "idle") throw new HttpError(504, "timeout", "The endpoint timed out waiting for the next chunk.");
+        if (message === "overall") throw new HttpError(504, "timeout", "The stream reached the overall time cap.");
         throw new HttpError(502, "upstream", "The endpoint connection was lost.");
       }
       if (chunk.done) break;

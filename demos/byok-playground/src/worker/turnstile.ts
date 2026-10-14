@@ -66,7 +66,8 @@ export async function verifyTurnstile(
 export async function requireTurnstile(env: Env, request: Request, token: unknown, action: string): Promise<void> {
   const resolved = resolveTurnstileSecret(env.ENVIRONMENT, env.TURNSTILE_SECRET);
   if (!resolved.ok) {
-    throw new HttpError(503, "turnstile_unconfigured", "Compare is off until TURNSTILE_SECRET is set to a real widget secret.");
+    const what = action === "session" ? "Proxy" : "Compare";
+    throw new HttpError(503, "turnstile_unconfigured", `${what} is off until TURNSTILE_SECRET is set to a real widget secret.`);
   }
   if (resolved.test && !isLocalRequest(request)) {
     throw new HttpError(503, "turnstile_unconfigured", "The test Turnstile secret is only valid on localhost when ENVIRONMENT is local.");
@@ -74,6 +75,19 @@ export async function requireTurnstile(env: Env, request: Request, token: unknow
   const value = typeof token === "string" ? token.trim() : "";
   const ok = await verifyTurnstile(resolved.secret, value, clientIp(request), new URL(request.url).hostname, action);
   if (!ok) throw new HttpError(403, "turnstile_failed", "Turnstile did not pass. Retry the check, then try again.");
+}
+
+/** How the client should mint a proxy session. `off` means fail closed. */
+export function sessionGate(env: Env): "turnstile" | "local" | "off" {
+  const local = isLocalEnv(env);
+  const siteKey = publicSiteKey(env);
+  const resolved = resolveTurnstileSecret(env.ENVIRONMENT, env.TURNSTILE_SECRET);
+  if (local) {
+    if (siteKey && !isTestSiteKey(siteKey) && resolved.ok) return "turnstile";
+    return "local";
+  }
+  if (!siteKey || !resolved.ok || isTestSiteKey(siteKey)) return "off";
+  return "turnstile";
 }
 
 export function aiStatus(env: Env): "ready" | "stub" | "off" {

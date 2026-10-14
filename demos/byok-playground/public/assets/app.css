@@ -242,6 +242,8 @@ textarea { min-height: 4.2rem; resize: vertical; }
 .composer { align-items: stretch; margin-top: 0.4rem; }
 .composer textarea { flex: 1; min-width: 0; min-height: 44px; }
 .composer .btn { align-self: end; }
+.prompt-note { flex-basis: 100%; margin: 0; }
+.prompt-note.is-over { color: var(--danger); }
 
 .compare-grid {
   display: grid;

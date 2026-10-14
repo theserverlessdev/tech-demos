@@ -12,8 +12,8 @@ export const LIMITS = {
   capabilityProbeMs: 15_000,
   sessionTtlMs: 12 * 60 * 60 * 1000,
   maxMessages: 15,
-  maxMessageChars: 4_000,
-  maxSystemChars: 2_000,
+  maxMessageBytes: 4_000,
+  maxSystemBytes: 2_000,
   maxModelChars: 128,
   maxBaseUrlChars: 500,
   maxKeyChars: 8_192,
@@ -28,8 +28,6 @@ export const LIMITS = {
 export const ALLOWED_SUFFIXES = ["/chat/completions", "/models"] as const;
 export type AllowedSuffix = (typeof ALLOWED_SUFFIXES)[number];
 
-/** Legacy header name. The key is sent in the JSON body; this is still stripped if present. */
-export const KEY_HEADER = "x-byok-key";
 export const SESSION_COOKIE = "byok_session";
 export const CANONICAL_HOST = "byok-playground.tech-demos.theserverless.dev";
 export const HUB_BASE_PATH = "/demos/byok-playground";

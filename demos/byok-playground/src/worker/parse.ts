@@ -1,5 +1,5 @@
 import { LIMITS } from "../shared/limits";
-import { trimUtf8, utf8ByteLength } from "../shared/text";
+import { utf8ByteLength } from "../shared/text";
 import type { ChatMessage } from "../shared/types";
 import { readCappedBytes, rejectOversizedContentLength } from "./bytes";
 import { HttpError } from "./errors";
@@ -50,7 +50,7 @@ export function parseMaxTokens(value: unknown, cap: number = LIMITS.maxTokensMax
 export function parseSystem(value: unknown): string {
   if (value === undefined || value === null) return "";
   if (typeof value !== "string") throw new HttpError(400, "system", "System prompt must be text.");
-  if (value.length > LIMITS.maxSystemChars) throw new HttpError(400, "system", "System prompt is too long.");
+  if (utf8ByteLength(value) > LIMITS.maxSystemBytes) throw new HttpError(400, "system", "System prompt is too long.");
   return value;
 }
 
@@ -67,8 +67,8 @@ export function parseMessages(value: unknown, system: string): ChatMessage[] {
       throw new HttpError(400, "messages", "Message role must be user, assistant, or system.");
     }
     if (typeof content !== "string" || !content.trim()) throw new HttpError(400, "messages", "Message content must be text.");
-    if (utf8ByteLength(content) > LIMITS.maxMessageChars) throw new HttpError(400, "messages", "A message is too long.");
-    messages.push({ role, content: trimUtf8(content, LIMITS.maxMessageChars) });
+    if (utf8ByteLength(content) > LIMITS.maxMessageBytes) throw new HttpError(400, "messages", "A message is too long.");
+    messages.push({ role, content });
   }
   return messages;
 }

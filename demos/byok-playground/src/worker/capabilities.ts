@@ -1,18 +1,21 @@
 import type { CapabilityResult, ChatMessage } from "../shared/types";
 import { LIMITS } from "../shared/limits";
+import { pickVisionTarget, type VisionColour } from "../shared/png";
 import { HttpError } from "./errors";
 import { isRecord } from "./parse";
 import { failFromUpstream, proxyFetch, readCappedText, requireUpstreamType } from "./proxy";
 import { redact } from "./redact";
 import { consumeSse } from "./stream";
 
-/** 2×1 PNG: left pixel red, right pixel blue. Vision asks for the left colour. */
-const TWO_PIXEL_PNG =
-  "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAIAAAB7QOjdAAAADUlEQVR42mP4zwAE/wEHAAH/PX2MSQAAAABJRU5ErkJggg==";
+const COLOUR_WORD = /\b(red|green|blue|black|white)\b/gi;
 
 export function isModelNotFound(status: number, raw: string): boolean {
-  if (status === 404) return true;
-  return /model[_ ]?not[_ ]?found|invalid model|does not exist|no such model|unknown model/i.test(raw);
+  if (status < 400) return false;
+  return /model[_ ]?not[_ ]?found|invalid model|model .+ does not exist|does not exist.*model|no such model|unknown model/i.test(raw);
+}
+
+export function isPathNotFound(status: number, raw: string): boolean {
+  return status === 404 && !isModelNotFound(status, raw);
 }
 
 function classify(raw: string, status: number): CapabilityResult["status"] {
@@ -65,14 +68,21 @@ export function jsonSchemaOk(text: string, nonce: string): boolean | null {
   }
 }
 
-export function visionNamesLeftRed(text: string): boolean {
-  const content = (messageContent(text) || text).toLowerCase();
-  if (/\bblue\b/.test(content) && !/\bred\b/.test(content)) return false;
-  return /\bred\b/.test(content);
+/** Pass only if message.content names exactly one of the colour words, and it is `colour`. */
+export function visionNamesColour(text: string, colour: VisionColour): boolean {
+  const content = messageContent(text);
+  if (!content) return false;
+  const words = [...content.toLowerCase().matchAll(COLOUR_WORD)].map((match) => match[1]);
+  const unique = new Set(words);
+  return unique.size === 1 && unique.has(colour);
 }
 
 function missingModelResult(name: CapabilityResult["name"], raw: string, latencyMs: number): CapabilityResult {
   return { name, status: "fail", detail: "model not found", raw: raw.slice(0, 500), latencyMs };
+}
+
+function pathNotFoundResult(name: CapabilityResult["name"], raw: string, latencyMs: number): CapabilityResult {
+  return { name, status: "fail", detail: "endpoint path not found — check the base URL", raw: raw.slice(0, 500), latencyMs };
 }
 
 async function probe(
@@ -103,6 +113,9 @@ async function probe(
     if (isModelNotFound(upstream.status, text)) {
       return missingModelResult(name, redact(text, secrets), Date.now() - started);
     }
+    if (isPathNotFound(upstream.status, text)) {
+      return pathNotFoundResult(name, redact(text, secrets), Date.now() - started);
+    }
     if (upstream.status >= 400) {
       const err = failFromUpstream(upstream.status, text, secrets);
       if (isModelNotFound(upstream.status, err.message)) {
@@ -118,7 +131,7 @@ async function probe(
     const status = err instanceof HttpError ? err.status : 502;
     if (isModelNotFound(status, message)) return missingModelResult(name, redact(message, secrets), Date.now() - started);
     const classified = classify(message, status);
-    return { name, status: classified === "pass" ? "fail" : classified, detail: message, raw: redact(message, secrets).slice(0, 500), latencyMs: Date.now() - started };
+    return { name, status: classified, detail: message, raw: redact(message, secrets).slice(0, 500), latencyMs: Date.now() - started };
   }
 }
 
@@ -128,6 +141,7 @@ export async function runCapabilities(input: { url: string; apiKey: string; mode
   const baseMessages = [{ role: "user", content: user }];
   const deadline = Date.now() + LIMITS.capabilityTotalMs;
   const nonce = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
+  const visionTarget = pickVisionTarget();
 
   const streaming = await (async (): Promise<CapabilityResult> => {
     const secrets = [apiKey];
@@ -150,6 +164,9 @@ export async function runCapabilities(input: { url: string; apiKey: string; mode
         const err = failFromUpstream(upstream.status, text, secrets);
         if (isModelNotFound(upstream.status, `${err.message} ${text}`)) {
           return missingModelResult("streaming", redact(err.message, secrets), Date.now() - started);
+        }
+        if (isPathNotFound(upstream.status, `${err.message} ${text}`)) {
+          return pathNotFoundResult("streaming", redact(err.message, secrets), Date.now() - started);
         }
         const classified = classify(err.message, upstream.status);
         return { name: "streaming", status: classified, detail: err.message, raw: redact(err.message, secrets).slice(0, 500), latencyMs: Date.now() - started };
@@ -175,10 +192,11 @@ export async function runCapabilities(input: { url: string; apiKey: string; mode
       };
     } catch (err) {
       const message = err instanceof HttpError ? err.message : "Streaming probe failed.";
-      if (isModelNotFound(err instanceof HttpError ? err.status : 502, message)) {
+      const status = err instanceof HttpError ? err.status : 502;
+      if (isModelNotFound(status, message)) {
         return missingModelResult("streaming", redact(message, secrets), Date.now() - started);
       }
-      return { name: "streaming", status: classify(message, err instanceof HttpError ? err.status : 502), detail: message, raw: redact(message, secrets).slice(0, 500), latencyMs: Date.now() - started };
+      return { name: "streaming", status: classify(message, status), detail: message, raw: redact(message, secrets).slice(0, 500), latencyMs: Date.now() - started };
     }
   })();
 
@@ -222,7 +240,7 @@ export async function runCapabilities(input: { url: string; apiKey: string; mode
         apiKey,
         {
           model,
-          messages: [{ role: "user", content: `Return JSON with ok true and nonce ${nonce}.` }],
+          messages: [{ role: "user", content: "Return JSON" }],
           max_tokens: 32,
           temperature: 0,
           response_format: {
@@ -260,8 +278,8 @@ export async function runCapabilities(input: { url: string; apiKey: string; mode
             {
               role: "user",
               content: [
-                { type: "text", text: "This image is two pixels side by side. What colour is the LEFT pixel? Reply with one word: red, green, blue, black, or white." },
-                { type: "image_url", image_url: { url: `data:image/png;base64,${TWO_PIXEL_PNG}` } },
+                { type: "text", text: "This image is two pixels side by side. What colour is the LEFT pixel? Reply with one word." },
+                { type: "image_url", image_url: { url: `data:image/png;base64,${visionTarget.png}` } },
               ],
             },
           ],
@@ -269,7 +287,7 @@ export async function runCapabilities(input: { url: string; apiKey: string; mode
           temperature: 0,
         },
         (_status, text) =>
-          visionNamesLeftRed(text)
+          visionNamesColour(text, visionTarget.left)
             ? { status: "pass" as const, detail: "The endpoint named the left pixel colour." }
             : { status: "inconclusive" as const, detail: "The endpoint accepted an image but did not name the left pixel colour." },
         deadline,

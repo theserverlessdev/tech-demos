@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { HttpError } from "../src/worker/errors";
-import { readApiKey, validateChatJson, validateModelsPayload } from "../src/worker/proxy";
+import { readApiKey, readCappedText, validateChatJson, validateModelsPayload } from "../src/worker/proxy";
 import { rejectOversizedContentLength } from "../src/worker/bytes";
 import { LIMITS } from "../src/shared/limits";
 
@@ -20,6 +20,19 @@ describe("proxy request and response shape", () => {
   test("rejects an oversized content-length before reading", () => {
     expect(() => rejectOversizedContentLength(new Headers({ "content-length": String(LIMITS.requestBytes + 1) }), LIMITS.requestBytes, "too big")).toThrow(HttpError);
     expect(() => rejectOversizedContentLength(new Headers({ "content-length": "12" }), LIMITS.requestBytes, "too big")).not.toThrow();
+  });
+
+  test("oversized content-length cancels the upstream body", async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start() { /* unread */ },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const upstream = new Response(body, { headers: { "content-length": "999999" } });
+    await expect(readCappedText(upstream, [], 100)).rejects.toMatchObject({ status: 502, code: "too_large" });
+    expect(cancelled).toBe(true);
   });
 
   test("oversized upstream responses are 502", () => {

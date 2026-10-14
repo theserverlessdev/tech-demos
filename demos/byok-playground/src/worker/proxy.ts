@@ -1,12 +1,12 @@
 import { LIMITS, type AllowedSuffix } from "../shared/limits";
 import { isPrintableAsciiKey, redactExact } from "../shared/text";
-import { readCappedBytes, readWithIdle, rejectOversizedContentLength } from "./bytes";
+import { classifyReadTimeout, readCappedBytes, readWithIdle, rejectOversizedContentLength } from "./bytes";
 import { HttpError } from "./errors";
 import { apiHeaders, mimeType, outboundHeaders } from "./headers";
 import { isRecord } from "./parse";
 import { redact } from "./redact";
 import { authorizeNavigation, cloudflareDoh, decisionToError, joinAllowedPath, type AssessOptions, type Lookup } from "./ssrf";
-import { classifyStreamError, encodeSse, splitSseEvents } from "./stream";
+import { classifyStreamError, encodeSse, splitCompleteSseLines, splitSseEvents } from "./stream";
 
 export function readApiKey(body: Record<string, unknown>): string {
   const key = typeof body.apiKey === "string" ? body.apiKey.trim() : "";
@@ -153,9 +153,10 @@ export function cappedBody(upstream: Response, secrets: readonly string[], optio
   const emitEvents = (controller: ReadableStreamDefaultController<Uint8Array>, buffer: string, last: boolean): boolean => {
     if (sse) {
       const split = splitSseEvents(buffer);
-      carry = split.rest;
+      const loose = splitCompleteSseLines(split.rest);
+      carry = loose.rest;
       let emitted = false;
-      for (const event of split.events) {
+      for (const event of [...split.events, ...loose.events]) {
         const out = redactChunk(event);
         if (out) {
           controller.enqueue(encodeText(encoder, out));
@@ -195,10 +196,11 @@ export function cappedBody(upstream: Response, secrets: readonly string[], optio
           return;
         }
         let chunk: ReadableStreamReadResult<Uint8Array>;
+        const wait = Math.min(idleMs, remaining);
         try {
-          chunk = await readWithIdle(reader, Math.min(idleMs, remaining), options.signal);
+          chunk = await readWithIdle(reader, wait, options.signal);
         } catch (err) {
-          await stop(controller, classifyStreamError(err).message);
+          await stop(controller, classifyStreamError(classifyReadTimeout(err, wait, idleMs)).message);
           return;
         }
         if (chunk.done) {
@@ -231,7 +233,12 @@ export async function readCappedText(
   maxBytes: number = LIMITS.responseBytes,
   options: { exact?: boolean; idleMs?: number; overallMs?: number; signal?: AbortSignal } = {},
 ): Promise<string> {
-  rejectOversizedContentLength(upstream.headers, maxBytes, "The endpoint response was too large.", 502);
+  try {
+    rejectOversizedContentLength(upstream.headers, maxBytes, "The endpoint response was too large.", 502);
+  } catch (err) {
+    await upstream.body?.cancel().catch(() => undefined);
+    throw err;
+  }
   const bytes = await readCappedBytes(
     upstream.body,
     maxBytes,

@@ -23,7 +23,8 @@
   "ratelimits": [
     { "name": "CHAT_LIMIT", "namespace_id": "7461", "simple": { "limit": 20, "period": 60 } },
     { "name": "MODELS_LIMIT", "namespace_id": "7462", "simple": { "limit": 20, "period": 60 } },
-    { "name": "COMPARE_LIMIT", "namespace_id": "7463", "simple": { "limit": 8, "period": 60 } }
+    { "name": "COMPARE_LIMIT", "namespace_id": "7463", "simple": { "limit": 8, "period": 60 } },
+    { "name": "SESSION_LIMIT", "namespace_id": "7464", "simple": { "limit": 20, "period": 60 } }
   ],
   "vars": {
     "AI_MODEL": "@cf/meta/llama-3.2-1b-instruct",

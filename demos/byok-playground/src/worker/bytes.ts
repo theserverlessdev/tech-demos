@@ -45,11 +45,19 @@ export async function readWithIdle(
   }
 }
 
+/** If the idle timer is shorter than idleMs, the overall cap fired. */
+export function classifyReadTimeout(err: unknown, waitMs: number, idleMs: number): Error {
+  const message = err instanceof Error ? err.message : "socket";
+  if (message === "idle" && waitMs < idleMs) return new Error("overall");
+  return err instanceof Error ? err : new Error("socket");
+}
+
 function timeoutError(err: unknown): never {
   if (err instanceof HttpError) throw err;
   const message = err instanceof Error ? err.message : "socket";
   if (message === "cancelled") throw new HttpError(499, "cancelled", "The stream was cancelled.");
   if (message === "idle") throw new HttpError(504, "timeout", "The endpoint timed out waiting for the next chunk.");
+  if (message === "overall") throw new HttpError(504, "timeout", "The endpoint took too long.");
   throw new HttpError(502, "upstream", "The endpoint connection was lost.");
 }
 
@@ -81,7 +89,11 @@ export async function readCappedBytes(
         } else {
           const remaining = overallMs === undefined ? (idleMs ?? 30_000) : Math.max(1, overallMs - (Date.now() - started));
           const wait = idleMs === undefined ? remaining : Math.min(idleMs, remaining);
-          result = await readWithIdle(reader, wait, timeouts.signal);
+          try {
+            result = await readWithIdle(reader, wait, timeouts.signal);
+          } catch (err) {
+            throw classifyReadTimeout(err, wait, idleMs ?? wait);
+          }
         }
       } catch (err) {
         await reader.cancel().catch(() => undefined);

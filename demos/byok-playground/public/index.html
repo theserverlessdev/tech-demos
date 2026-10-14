@@ -71,7 +71,7 @@
     <div>
       <h2 id="try-title">What you can try</h2>
       <ul>
-        <li>Paste a key, an https base URL, and a model id, then stream a chat. Multi-turn sends the transcript (at most 15 turns, 4000 characters each).</li>
+        <li>Paste a key, an https base URL, and a model id, then stream a chat. Multi-turn sends the transcript (at most 15 turns, 4,000 bytes each — about 1,300 CJK or Devanagari characters).</li>
         <li>List models from <code>GET /models</code>. The Worker returns only <code>{ data: [{ id }] }</code>.</li>
         <li>Send the same prompt to your model and to Workers AI, and read latency, time to first token, and tokens.</li>
         <li>Probe streaming, tools, JSON schema, and vision. A pass is evidence-based (tool_calls, schema keys plus nonce, left-pixel colour); otherwise the check is fail, unsupported, or inconclusive.</li>
@@ -116,6 +116,7 @@
       <label class="sr-only" for="prompt">Message</label>
       <textarea id="prompt" rows="2" placeholder="Ask your model…" required></textarea>
       <button class="btn" id="send" type="submit">Send</button>
+      <p id="prompt-note" class="hint prompt-note" aria-live="polite"></p>
     </form>
   </section>
 
