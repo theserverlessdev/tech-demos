@@ -17,6 +17,20 @@ import { Face } from "./face";
 
 const FIRMWARE = "browser-sim-0.1";
 const BOOTED_AT = Date.now();
+const TURNSTILE_ACTION = "apollo-desk";
+const API_BASE = location.pathname.startsWith("/demos/apollo-desk") ? "/demos/apollo-desk" : "";
+
+type TurnstileApi = {
+  render: (el: HTMLElement, opts: Record<string, unknown>) => string;
+  reset: (id?: string) => void;
+  getResponse: (id?: string) => string | undefined;
+};
+
+declare global {
+  interface Window {
+    turnstile?: TurnstileApi;
+  }
+}
 
 // ------------------------------------------------------------------ helpers
 
@@ -198,16 +212,86 @@ const client = new AgentClient<DeskState>({
 });
 client.binaryType = "arraybuffer";
 
+let turnstileId = "";
+let turnstileToken = "";
+let socketOpen = false;
+let greeted = false;
+
+async function waitForTurnstile(): Promise<TurnstileApi | null> {
+  const started = Date.now();
+  while (Date.now() - started < 8_000) {
+    if (window.turnstile) return window.turnstile;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return null;
+}
+
+function maybeHello() {
+  if (!socketOpen || !turnstileToken || greeted) return;
+  greeted = true;
+  send({
+    type: "hello",
+    deviceId: `browser-${deskId.slice(0, 6)}`,
+    firmwareVersion: FIRMWARE,
+    turnstileToken,
+    ts: Date.now(),
+  });
+  turnstileToken = "";
+  window.turnstile?.reset(turnstileId || undefined);
+  $("turnstile").hidden = true;
+  hint("Hold the button or the space bar while you speak. Release to send.");
+  void refresh();
+}
+
+async function mountTurnstile() {
+  let siteKey = "";
+  try {
+    const res = await fetch(`${API_BASE}/api/health`);
+    const data = (await res.json()) as { turnstileSiteKey?: string };
+    siteKey = data.turnstileSiteKey ?? "";
+  } catch {
+    hint("Could not load the Turnstile site key.", true);
+    return;
+  }
+  if (!siteKey) {
+    hint("Turnstile is not configured, so the desk stays closed.", true);
+    return;
+  }
+  const api = await waitForTurnstile();
+  if (!api) {
+    hint("The Turnstile script did not load.", true);
+    return;
+  }
+  turnstileId = api.render($("turnstile"), {
+    sitekey: siteKey,
+    action: TURNSTILE_ACTION,
+    theme: document.documentElement.dataset.theme === "light" ? "light" : "dark",
+    callback: (token: string) => {
+      turnstileToken = token;
+      maybeHello();
+    },
+  });
+}
+
+void mountTurnstile();
+
 const conn = $("conn");
 client.addEventListener("open", () => {
+  socketOpen = true;
+  greeted = false;
   conn.dataset.state = "open";
   $("conn-label").textContent = "Connected";
-  send({ type: "hello", deviceId: `browser-${deskId.slice(0, 6)}`, firmwareVersion: FIRMWARE, ts: Date.now() });
-  void refresh();
+  $("turnstile").hidden = false;
+  maybeHello();
 });
 client.addEventListener("close", () => {
+  socketOpen = false;
+  greeted = false;
+  turnstileToken = "";
   conn.dataset.state = "closed";
   $("conn-label").textContent = "Reconnecting";
+  $("turnstile").hidden = false;
+  window.turnstile?.reset(turnstileId || undefined);
 });
 
 function send(msg: DeskMessage) {
@@ -317,7 +401,7 @@ function afterSpeech() {
 
 // ------------------------------------------------------------------ the desk MCP server
 
-/** Upstream firmware runs an MCP server. The brain calls it with JSON-RPC in `mcp` frames. */
+/** The desk answers MCP-style JSON-RPC `tools/call` (and `tools/list`) over the same WebSocket. */
 function answerMcp(req: JsonRpcRequest) {
   const reply = (result: JsonRpcResponse["result"], error?: JsonRpcResponse["error"]) =>
     send({ type: "mcp", payload: error ? { jsonrpc: "2.0", id: req.id, error } : { jsonrpc: "2.0", id: req.id, result }, ts: Date.now() });
@@ -374,10 +458,12 @@ const mic = new Mic((pcm) => {
 });
 let talking = false;
 let binaryUp = 0;
+let talkCap: ReturnType<typeof setTimeout> | null = null;
 const talk = $<HTMLButtonElement>("talk");
 
 async function startTalk() {
   if (talking) return;
+  if (!greeted) return hint("Complete the Turnstile check first.", true);
   audioContext();
   if (!mic.supported) return hint("This browser has no microphone access. Type to Apollo.", true);
   speaker.stop();
@@ -389,6 +475,11 @@ async function startTalk() {
     await mic.start();
     if (!talking) return mic.stop();
     send({ type: "hold_start", ts: Date.now() });
+    talkCap = setTimeout(() => {
+      if (!talking) return;
+      hint("That hold was longer than 15 seconds. Extra audio was dropped.", true);
+      endTalk();
+    }, 15_000);
   } catch {
     talking = false;
     talk.dataset.active = "false";
@@ -400,6 +491,10 @@ async function startTalk() {
 function endTalk() {
   if (!talking) return;
   talking = false;
+  if (talkCap) {
+    clearTimeout(talkCap);
+    talkCap = null;
+  }
   mic.stop();
   talk.dataset.active = "false";
   $("talk-label").textContent = "Hold to talk";
@@ -443,6 +538,7 @@ function drawLevel() {
 
 $("say").addEventListener("submit", (e) => {
   e.preventDefault();
+  if (!greeted) return hint("Complete the Turnstile check first.", true);
   const input = $<HTMLInputElement>("say-input");
   const text = input.value.trim();
   if (!text) return;
@@ -508,6 +604,7 @@ $("chips").replaceChildren(
   ...CHIPS.map((text) => {
     const b = h("button", { class: "chip", type: "button" }, text);
     b.addEventListener("click", () => {
+      if (!greeted) return hint("Complete the Turnstile check first.", true);
       audioContext();
       speaker.stop();
       send({ type: "text_input", text, ts: Date.now() });
@@ -644,7 +741,9 @@ $("probe").addEventListener("submit", async (e) => {
       ...(hits.length
         ? hits.map((hit) => {
             const pct = Math.max(0, Math.min(1, (hit.score - 0.3) / 0.7));
-            const bar = h("span", { class: "bar" }, h("span", { style: `width:${Math.round(pct * 100)}%` }));
+            const fill = h("span");
+            fill.style.width = `${Math.round(pct * 100)}%`;
+            const bar = h("span", { class: "bar" }, fill);
             return h("li", { "data-hit": String(hit.via === "vector" && hit.score >= RECALL_MIN_SCORE) }, h("span", {}, hit.fact), bar, h("span", { class: "num" }, hit.score.toFixed(2)));
           })
         : [h("li", { class: "empty" }, "No facts to score yet.")]),

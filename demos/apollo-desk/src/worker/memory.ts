@@ -1,7 +1,7 @@
 import { metered, PRICES } from "./meter";
 
 /** Upstream sends facts to Vectorize. This slice keeps each 384-dim vector as a BLOB in the desk's own SQLite. */
-export async function embed(env: Env, texts: string[]): Promise<Float32Array[]> {
+export async function embed(env: Env, texts: string[], ip?: string): Promise<Float32Array[]> {
   const input = texts.map((t) => t.slice(0, 1000));
   const estimate = (input.join(" ").length / 3) * PRICES.embed;
   const out = await metered(
@@ -9,6 +9,7 @@ export async function embed(env: Env, texts: string[]): Promise<Float32Array[]> 
     estimate,
     () => env.AI.run(env.EMBED_MODEL, { text: input }),
     (o) => ((o as { usage?: { prompt_tokens?: number } }).usage?.prompt_tokens ?? 0) * PRICES.embed,
+    ip,
   );
   const data = (out as { data?: number[][] }).data ?? [];
   return data.map((row) => normalize(Float32Array.from(row)));
