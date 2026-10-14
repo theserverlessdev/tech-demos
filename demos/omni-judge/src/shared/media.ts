@@ -499,8 +499,9 @@ type SampleRun = { count: number; value: number };
  * span from the earliest presentation to the latest end, so a reorder delay
  * is not added and a negative offset cannot hide a long presentation. In one
  * traf, truns continue from tfdt, or from the track's previous end when tfdt
- * is absent. sidx contributes that same kind of span. A traf with no tfdt
- * together with any sidx fails closed. mehd is included when it is longer.
+ * is absent. sidx contributes that same kind of span, from any box outside
+ * mdat at any depth. A traf with no tfdt together with any sidx fails closed.
+ * mehd is included when it is longer.
  */
 function compositionSpan(sttsRuns: SampleRun[], cttsRuns: SampleRun[]): number | null {
   let sttsSamples = 0;
@@ -1003,15 +1004,19 @@ function readMp4(bytes: Uint8Array): { durationMs: number } | null {
     if (sidxStart === null || span.start < sidxStart) sidxStart = span.start;
     if (span.end > sidxEnd) sidxEnd = span.end;
   };
-  const sidxParents = new Set(["moov", "trak", "edts", "mvex", "moof", "traf", "udta", "meta"]);
   const findSidx = (start: number, end: number, depth: number): void => {
-    if (depth > 8 || failed) return;
+    if (depth > 32 || failed) return;
     let offset = start;
     while (offset + 8 <= end) {
+      boxes += 1;
+      if (boxes > MAX_BOXES) {
+        failed = true;
+        return;
+      }
       const box = readAtom(bytes, offset, end);
       if (!box || box.end <= offset) break;
       if (box.type === "sidx") noteSidx(box);
-      else if (sidxParents.has(box.type)) findSidx(box.start, box.end, depth + 1);
+      else if (box.type !== "mdat") findSidx(box.start, box.end, depth + 1);
       offset = box.end;
     }
   };

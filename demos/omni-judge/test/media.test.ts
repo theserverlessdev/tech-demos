@@ -802,6 +802,28 @@ describe("media caps", () => {
     if (honest.ok) expect(honest.durationMs).toBe(1000);
   });
 
+  test("a sidx inside a top-level stbl, minf, mdia, or sinf is part of the span", () => {
+    const sidx = (durations: number[]) => {
+      const refs = durations.map((duration) => concat(u32be(0), u32be(duration), u32be(0)));
+      return atom("sidx", concat(u32be(0), u32be(1), u32be(1000), u32be(0), u32be(0), u16be(0), u16be(durations.length), ...refs));
+    };
+    const index = sidx([49_000]);
+    for (const type of ["stbl", "minf", "mdia", "sinf"]) {
+      const hidden = sniffMedia(concat(mp4(264), atom(type, index)));
+      expect(hidden.ok).toBe(false);
+      if (!hidden.ok) expect(hidden.message).toContain("10 seconds");
+    }
+    const buried = sniffMedia(concat(mp4(264), atom("stbl", atom("minf", atom("mdia", atom("sinf", index))))));
+    expect(buried.ok).toBe(false);
+    if (!buried.ok) expect(buried.message).toContain("10 seconds");
+    const kept = sniffMedia(concat(mp4(1000), atom("stbl", sidx([1000]))));
+    expect(kept).toMatchObject({ ok: true, kind: "video" });
+    if (kept.ok) expect(kept.durationMs).toBe(1000);
+    const insideSamples = sniffMedia(concat(mp4(264).subarray(0, mp4(264).length - 8), atom("mdat", index)));
+    expect(insideSamples).toMatchObject({ ok: true, kind: "video" });
+    if (insideSamples.ok) expect(insideSamples.durationMs).toBe(264);
+  });
+
   test("trex supplies a sample duration when the trun only carries composition offsets", () => {
     const ftyp = atom("ftyp", concat(ascii("isom"), u32be(0), ascii("isom")));
     const mvhd = new Uint8Array(100);

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.7
+
+- A `sidx` inside any box outside `mdat` counts toward the presentation span, including a top-level `stbl`, `minf`, `mdia`, or `sinf`. The box walk that looks for it shares the 50,000 box cap.
+
 ## 0.1.6
 
 - A WebM cut-tail is kept only when no Cluster id follows the broken element. A junk byte after the header no longer hides the rest of the file, and a cut inside a BlockGroup still keeps the last complete block.
