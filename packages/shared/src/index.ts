@@ -15,7 +15,7 @@ export type DemoMeta = {
 export const HUB_HOST = "tech-demos.theserverless.dev";
 
 export function demoPath(slug: string): string {
-  return `/demos/${slug}`;
+  return `/demos/${slug}/`;
 }
 
 export function demoSubdomain(slug: string, proto = "https"): string {
@@ -25,3 +25,7 @@ export function demoSubdomain(slug: string, proto = "https"): string {
 export function demoUrl(slug: string, proto = "https"): string {
   return `${proto}://${HUB_HOST}${demoPath(slug)}`;
 }
+
+export type DemoKind = "loader" | "standalone";
+
+export { redirectSource, rewriteDemoPath, safeRedirectTarget } from "./redirect";

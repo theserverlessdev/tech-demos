@@ -1,3 +1,4 @@
+import { safeRedirectTarget } from "../../../../packages/shared/src/index";
 import { handleApi, HttpError } from "./api";
 import { cleanupExpired, findActiveInbox } from "./db";
 import { ingest, Refusal } from "./ingest";
@@ -5,7 +6,6 @@ import { MAX_RAW_BYTES } from "./limits";
 
 /** The hub path and the hub-style subdomain both send the visitor to the mail domain, where the addresses live. */
 const REDIRECT_HOSTS = new Set(["tech-demos.theserverless.dev", "temp-email.tech-demos.theserverless.dev"]);
-const HUB_PREFIX = "/demos/temp-email";
 
 const PAGE_CSP = [
   "default-src 'self'",
@@ -51,8 +51,9 @@ export default {
     const url = new URL(request.url);
 
     if (REDIRECT_HOSTS.has(url.hostname)) {
-      const rest = url.pathname.startsWith(HUB_PREFIX) ? url.pathname.slice(HUB_PREFIX.length) || "/" : url.pathname;
-      return Response.redirect(`${env.PUBLIC_ORIGIN}${rest}${url.search}`, 302);
+      const target = safeRedirectTarget(url, "temp-email", env.PUBLIC_ORIGIN);
+      if (!target) return new Response("Bad redirect", { status: 400 });
+      return Response.redirect(target.href, 302);
     }
 
     if (url.pathname.startsWith("/api/")) {

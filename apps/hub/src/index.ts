@@ -1,11 +1,23 @@
 import { demoPath, demoSubdomain, demoUrl, HUB_HOST } from "@tech-demos/shared";
 import { demos, getDemo } from "./registry";
-import { renderGallery } from "./gallery";
+import { renderGallery, THEME_BOOT_SCRIPT, GALLERY_UI_SCRIPT } from "./gallery";
+import {
+  COMPATIBILITY_DATE,
+  demoLoaderId,
+  forwardToLoader,
+  sha256CspHash,
+  wrapDemoResponse,
+} from "./loader";
 
 export interface Env {
   LOADER: WorkerLoader;
   ASSETS: Fetcher;
 }
+
+const TEXT_HEADERS = {
+  "content-type": "text/plain; charset=utf-8",
+  "x-content-type-options": "nosniff",
+};
 
 function slugFromHost(hostname: string): string | null {
   const suffix = `.${HUB_HOST}`;
@@ -16,35 +28,63 @@ function slugFromHost(hostname: string): string | null {
   return null;
 }
 
-async function runDemo(
-  request: Request,
-  env: Env,
-  slug: string,
-): Promise<Response> {
+async function galleryHeaders(): Promise<HeadersInit> {
+  const [boot, ui] = await Promise.all([sha256CspHash(THEME_BOOT_SCRIPT), sha256CspHash(GALLERY_UI_SCRIPT)]);
+  const csp = [
+    "default-src 'none'",
+    `script-src '${boot}' '${ui}'`,
+    "style-src 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src https://fonts.gstatic.com",
+    "img-src 'self' data:",
+    "connect-src 'self'",
+    "base-uri 'none'",
+    "form-action 'none'",
+    "frame-ancestors 'none'",
+  ].join("; ");
+  return {
+    "content-type": "text/html; charset=utf-8",
+    "cache-control": "public, max-age=60",
+    "x-content-type-options": "nosniff",
+    "referrer-policy": "no-referrer",
+    "content-security-policy": csp,
+  };
+}
+
+const API_HEADERS = {
+  "content-type": "application/json; charset=utf-8",
+  "cache-control": "public, max-age=60",
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "GET, OPTIONS",
+  "access-control-allow-headers": "Content-Type",
+  "x-content-type-options": "nosniff",
+};
+
+async function runDemo(request: Request, env: Env, slug: string): Promise<Response> {
   const demo = getDemo(slug);
   if (!demo) {
-    return new Response(`Unknown demo: ${slug}`, { status: 404 });
+    return new Response("Not found", { status: 404, headers: TEXT_HEADERS });
+  }
+
+  const host = new URL(request.url).hostname;
+  if (demo.kind === "standalone" && slugFromHost(host)) {
+    return new Response("demo Worker not deployed", { status: 503, headers: TEXT_HEADERS });
   }
 
   try {
-    // Stable ID so repeat hits to the same demo code count as one Dynamic Worker / day.
-    const worker = env.LOADER.get(slug, async () => ({
-      compatibilityDate: "2026-09-01",
+    const id = await demoLoaderId(slug, demo.source, COMPATIBILITY_DATE);
+    const worker = env.LOADER.get(id, async () => ({
+      compatibilityDate: COMPATIBILITY_DATE,
       mainModule: "worker.js",
       modules: {
         "worker.js": demo.source,
       },
-      // Demos start locked down; open egress per-demo later if needed.
       globalOutbound: null,
     }));
 
-    return await worker.getEntrypoint().fetch(request);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return new Response(`Dynamic Worker failed for ${slug}: ${message}`, {
-      status: 500,
-      headers: { "content-type": "text/plain; charset=utf-8" },
-    });
+    const res = await worker.getEntrypoint().fetch(forwardToLoader(request, id));
+    return wrapDemoResponse(res, id);
+  } catch {
+    return new Response("Dynamic Worker failed", { status: 502, headers: TEXT_HEADERS });
   }
 }
 
@@ -58,8 +98,14 @@ export default {
     }
 
     if (url.pathname === "/api/demos") {
+      if (request.method === "OPTIONS") {
+        return new Response(null, { status: 204, headers: API_HEADERS });
+      }
+      if (request.method !== "GET" && request.method !== "HEAD") {
+        return new Response("Method not allowed", { status: 405, headers: TEXT_HEADERS });
+      }
       return Response.json(
-        demos.map(({ slug, title, description, demonstrates, capabilities, useCases, tags }) => ({
+        demos.map(({ slug, title, description, demonstrates, capabilities, useCases, tags, kind }) => ({
           slug,
           title,
           description,
@@ -67,10 +113,12 @@ export default {
           capabilities,
           useCases,
           tags,
+          kind,
           href: demoPath(slug),
           url: demoUrl(slug),
           subdomain: demoSubdomain(slug),
         })),
+        { headers: API_HEADERS },
       );
     }
 
@@ -81,13 +129,14 @@ export default {
 
     if (url.pathname === "/" || url.pathname === "/index.html") {
       return new Response(renderGallery(demos), {
-        headers: {
-          "content-type": "text/html; charset=utf-8",
-          "cache-control": "no-store",
-        },
+        headers: await galleryHeaders(),
       });
     }
 
-    return env.ASSETS.fetch(request);
+    const asset = await env.ASSETS.fetch(request);
+    if (asset.status === 404) {
+      return new Response("Not found", { status: 404, headers: TEXT_HEADERS });
+    }
+    return asset;
   },
 } satisfies ExportedHandler<Env>;

@@ -7,7 +7,7 @@ A one-file HTML page the hub loads as a Dynamic Worker.
 
 ## What this demonstrates
 
-**Pattern.** The hub Worker Loader compiles `worker.js` at request time and serves it as an isolated Dynamic Worker. The greeting reads `?name=`. There is no Durable Object, no binding, and no stored state.
+**Pattern.** The hub Worker Loader compiles `worker.js` at request time and serves it as an isolated Dynamic Worker. The greeting reads `?name=` (HTML-escaped, 64 characters). There is no Durable Object, no binding, and no stored state.
 
 **What you can do**
 
@@ -24,4 +24,4 @@ A one-file HTML page the hub loads as a Dynamic Worker.
 **Limits**
 
 - This demo cannot persist anything, call Workers AI, or open a WebSocket.
-- The module is plain JavaScript inlined in the hub registry. It is the fallback when the demo is not a standalone Worker.
+- The module is plain JavaScript imported by the hub as a Text module. `?name=` is HTML-escaped and capped at 64 characters.
