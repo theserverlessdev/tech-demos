@@ -1,12 +1,15 @@
 import { expect, test } from "bun:test";
 import {
+  ConnectGuard,
   connectFailureAction,
   disposeRpcRoot,
   isIdleError,
+  isUserInitiatedActivity,
   nextReconnectDelay,
   RECONNECT_INITIAL_MS,
   RECONNECT_MAX_ATTEMPTS,
   RECONNECT_MAX_MS,
+  USER_ACTIVITY_WINDOW_MS,
 } from "../src/client/reconnect";
 import {
   decidePing,
@@ -75,9 +78,15 @@ class IdleClient {
     return this.ws.ping(now);
   }
 
-  paint(now: number) {
+  /** User-initiated gadget call (pointer/key within the activity window). */
+  paint(now: number, lastUserInput: number) {
     this.ws.beginSession(now);
-    this.ws.touchActivity(now);
+    if (isUserInitiatedActivity(now, lastUserInput)) this.ws.touchActivity(now);
+  }
+
+  /** setInterval / dashboard poll. Must not reset idle. */
+  timerTick(now: number, lastUserInput: number) {
+    if (isUserInitiatedActivity(now, lastUserInput)) this.ws.touchActivity(now);
   }
 }
 
@@ -116,16 +125,32 @@ test("ping after reap still fails and does not reset idle", () => {
   expect(ws.lastActivity).toBe(t0);
 });
 
-test("gadget use counts as activity and delays the reap", () => {
+test("user-initiated gadget use counts as activity; timer ticks do not", () => {
   const t0 = 3_000_000;
   const ws = new IdleWorkspace(t0);
   const client = ws.openSession();
   client.subscribe(t0);
-  client.paint(t0 + SESSION_IDLE_MS - 1_000);
+  client.paint(t0 + SESSION_IDLE_MS - 1_000, t0 + SESSION_IDLE_MS - 1_000);
   expect(ws.lastActivity).toBe(t0 + SESSION_IDLE_MS - 1_000);
   expect(decideUserRpc(t0 + SESSION_IDLE_MS, ws.lastActivity, ws.listeners)).toBe("touch");
-  expect(() => client.paint(t0 + SESSION_IDLE_MS + 10_000)).not.toThrow();
-  expect(ws.lastActivity).toBe(t0 + SESSION_IDLE_MS + 10_000);
+
+  const later = t0 + SESSION_IDLE_MS + 10_000;
+  client.timerTick(later, t0 + SESSION_IDLE_MS - 1_000);
+  expect(ws.lastActivity).toBe(t0 + SESSION_IDLE_MS - 1_000);
+  expect(isUserInitiatedActivity(later, t0 + SESSION_IDLE_MS - 1_000)).toBe(false);
+
+  const poll = t0 + 4_000;
+  for (let i = 1; i <= 20; i++) client.timerTick(poll + i * 3_000, t0);
+  expect(ws.lastActivity).toBe(t0);
+  expect(decideUserRpc(t0 + SESSION_IDLE_MS, ws.lastActivity, ws.listeners)).toBe("reap");
+});
+
+test("isUserInitiatedActivity is a few-minute window after real input", () => {
+  const t0 = 8_000_000;
+  expect(isUserInitiatedActivity(t0, 0)).toBe(false);
+  expect(isUserInitiatedActivity(t0 + 1_000, t0)).toBe(true);
+  expect(isUserInitiatedActivity(t0 + USER_ACTIVITY_WINDOW_MS - 1, t0)).toBe(true);
+  expect(isUserInitiatedActivity(t0 + USER_ACTIVITY_WINDOW_MS, t0)).toBe(false);
 });
 
 test("decideUserRpc wakes only when nobody is subscribed", () => {
@@ -139,17 +164,46 @@ test("decideUserRpc wakes only when nobody is subscribed", () => {
   expect(decidePing(t0 + 1_000, t0, 1)).toBe("ok");
 });
 
-test("connect failure pauses on idle, bounds backoff, and closes old sockets", () => {
+test("ConnectGuard counts each failure once when catch and onRpcBroken both fire", () => {
   const idle = new Error(idleErrorMessage());
   expect(isIdleError(idle)).toBe(true);
   expect(connectFailureAction(idle, 1)).toBe("pause-idle");
   expect(connectFailureAction(new Error("socket closed"), 1)).toBe("retry");
   expect(connectFailureAction(new Error("socket closed"), RECONNECT_MAX_ATTEMPTS)).toBe("give-up");
 
+  const guard = new ConnectGuard();
+  for (let i = 0; i < 4; i++) {
+    guard.beginAttempt();
+    expect(guard.fail(new Error("socket closed"), "rpc-broken")).toBeNull();
+    expect(guard.fail(new Error("socket closed"), "catch")).toBe("retry");
+    expect(guard.fail(new Error("socket closed"), "rpc-broken")).toBeNull();
+    expect(guard.attempts).toBe(i + 1);
+    guard.consumeDelay();
+  }
+  expect(guard.attempts).toBe(4);
+  expect(guard.delay).toBeLessThanOrEqual(RECONNECT_MAX_MS);
+
+  guard.beginAttempt();
+  expect(guard.fail(idle, "catch")).toBe("pause-idle");
+  expect(guard.allowReconnect).toBe(false);
+
+  const giveUp = new ConnectGuard();
+  let last: ReturnType<ConnectGuard["fail"]> = "retry";
+  for (let i = 0; i < RECONNECT_MAX_ATTEMPTS; i++) {
+    giveUp.beginAttempt();
+    last = giveUp.fail(new Error("offline"), "catch");
+  }
+  expect(last).toBe("give-up");
+  expect(giveUp.attempts).toBe(RECONNECT_MAX_ATTEMPTS);
+  expect(giveUp.allowReconnect).toBe(false);
+  giveUp.resume();
+  expect(giveUp.allowReconnect).toBe(true);
+  expect(giveUp.attempts).toBe(0);
+  expect(giveUp.delay).toBe(RECONNECT_INITIAL_MS);
+
   let delay = RECONNECT_INITIAL_MS;
   for (let i = 0; i < 12; i++) delay = nextReconnectDelay(delay);
   expect(delay).toBe(RECONNECT_MAX_MS);
-  expect(delay).toBeLessThanOrEqual(10_000);
 
   let disposed = 0;
   const first = { [Symbol.dispose]: () => disposed++ };
@@ -160,24 +214,36 @@ test("connect failure pauses on idle, bounds backoff, and closes old sockets", (
   expect(disposed).toBe(3);
 });
 
-test("workspace user RPCs go through beginSession and gadget calls touch activity", async () => {
+test("live socket break is recorded on rpc-broken, not again in catch", () => {
+  const guard = new ConnectGuard();
+  guard.beginAttempt();
+  guard.markLive();
+  expect(guard.fail(new Error("socket closed"), "rpc-broken")).toBe("retry");
+  expect(guard.fail(new Error("socket closed"), "catch")).toBeNull();
+  expect(guard.attempts).toBe(1);
+});
+
+test("workspace user RPCs go through beginSession; gadget proxy does not auto-touch", async () => {
   const workspace = await Bun.file(new URL("../src/worker/workspace.ts", import.meta.url)).text();
   expect(workspace).toContain("this.#ws.beginSession()");
   expect(workspace).toMatch(/#live\(\) \{\s*this\.#ws\.beginSession\(\);/);
   expect(workspace).toContain("decideUserRpc");
+  expect(workspace).toContain("noteActivity()");
   const proxyIdx = workspace.indexOf("connectToGadget(id: string, viewer: Viewer)");
   const callIdx = workspace.indexOf("async #callGadget");
   expect(proxyIdx).toBeGreaterThan(0);
-  expect(workspace.slice(proxyIdx, proxyIdx + 900)).toContain("self.touchActivity()");
-  expect(workspace.slice(callIdx, callIdx + 200)).toContain("this.touchActivity()");
+  expect(workspace.slice(proxyIdx, proxyIdx + 900)).not.toContain("self.touchActivity()");
+  expect(workspace.slice(callIdx, callIdx + 160)).not.toContain("this.touchActivity()");
 });
 
-test("shell closes the previous socket and pauses on idle instead of retrying", async () => {
+test("shell counts reconnect once, shows tap-to-reconnect, and only notes user gadget activity", async () => {
   const shell = await Bun.file(new URL("../src/client/shell.ts", import.meta.url)).text();
   expect(shell).toContain("disposeRpcRoot(previous)");
-  expect(shell).toContain("disposeRpcRoot(root)");
-  expect(shell).toContain("connectFailureAction");
-  expect(shell).toContain('action === "pause-idle"');
-  expect(shell).toContain("nextReconnectDelay");
-  expect(shell).not.toMatch(/catch \(err\) \{\s*console\.error\("connect failed", err\);\s*if \(rootStub === root\) \{\s*setConn\("offline"\);\s*scheduleReconnect\(\);/);
+  expect(shell).toContain("applyConnectFailure");
+  expect(shell).toContain('source: "catch" | "rpc-broken"');
+  expect(shell).toContain("Paused · tap to reconnect");
+  expect(shell).toContain("resumeFromPause");
+  expect(shell).toContain("noteUserGadgetActivity");
+  expect(shell).toContain("isUserInitiatedActivity");
+  expect(shell).not.toContain("reconnectAttempts + 1");
 });

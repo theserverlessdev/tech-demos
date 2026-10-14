@@ -85,6 +85,7 @@ test("gadget iframe sandbox is allow-scripts only and locks window.open", () => 
   expect(GADGET_IFRAME_SANDBOX).not.toContain("allow-popups");
   const script = gadgetIsolationScript();
   expect(script).toContain('type: "open-url"');
+  expect(script).toContain('type: "user-activity"');
   expect(script).toContain("configurable: false");
   expect(script).toContain("writable: false");
 });
@@ -108,7 +109,9 @@ test("mobile Gadgets view clips off-canvas drawers and meets 44px tap height", a
   const css = await Bun.file(new URL("../public/assets/shell.css", import.meta.url)).text();
   expect(css).toMatch(/overflow-x:\s*hidden/);
   expect(css).toMatch(/\.gadgets[^}]*overflow-x:\s*hidden/);
+  expect(css).toMatch(/\.chat[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
   expect(css).toContain("min-height: 44px");
+  expect(css).toContain(".reconnect-banner");
   const shell = await Bun.file(new URL("../src/client/shell.ts", import.meta.url)).text();
   expect(shell).not.toContain("allow-popups-to-escape-sandbox");
   expect(shell).toContain("GADGET_IFRAME_SANDBOX");

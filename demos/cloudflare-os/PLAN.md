@@ -90,8 +90,9 @@ sandboxed iframe (client.js) ◀───── Workspace DO (SQLite: gadgets, f
   less than $5 each month. When a model response omits `usage`, the meter keeps the reserved worst-case
   amount instead of treating the call as free.
 - A Workspace DO idle-reaps after 20 minutes with no user RPC (keepalive pings do not count). Any later
-  user RPC — including gadget UI calls — starts a fresh idle window, so Refresh can reconnect. The shell
-  closes the old socket and stops retrying on idle instead of leaking WebSockets.
+  user RPC starts a fresh idle window, so reconnect works. Gadget RPCs count as activity only after a
+  recent pointer or key gesture. The shell counts each failed connect once, then shows Paused · tap to
+  reconnect instead of giving up silently.
 - The rate limit is 6 agent turns per minute per IP. Each workspace can have 8 gadgets or fewer.
 - Blueprint gadgets share Dynamic Workers by content hash.
 - Visitors can save gadget code, and each new code version is a new Dynamic Worker ID. The `Meter` DO
@@ -112,7 +113,7 @@ The hub registry entry keeps a fallback Dynamic Worker source. That source redir
 ## Testing
 
 - `bun run typecheck` for the Worker and the client.
-- `bun test test` for budget fail-closed, gadget-call vs approval timeouts, iframe sandbox, idle wake-after-reap, gadget activity, reconnect dispose/backoff, origin allowlist, and mobile CSS.
+- `bun test test` for budget fail-closed, gadget-call vs approval timeouts, iframe sandbox, idle wake-after-reap, user-vs-timer gadget activity, reconnect-once + tap-to-reconnect, origin allowlist, chat column minmax, and mobile CSS.
 - A smoke script that connects over Cap'n Web, creates each blueprint, and calls one method on each.
 - A manual pass with Playwright for the screenshot and the video.
 

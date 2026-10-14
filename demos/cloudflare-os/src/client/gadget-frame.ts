@@ -136,6 +136,7 @@ export class FrameBridge {
     readonly gadgetId: string,
     private connect: () => Promise<GadgetStub>,
     private trace: CallTrace,
+    private onUserActivity?: () => void,
   ) {}
 
   async handshake(port: MessagePort) {
@@ -150,6 +151,7 @@ export class FrameBridge {
         return (...args: unknown[]) => {
           const current = this.#stub;
           if (!current) return Promise.reject(new Error("The gadget is disconnected."));
+          this.onUserActivity?.();
           const started = performance.now();
           const result = current[prop]!(...args);
           Promise.resolve(result).then(

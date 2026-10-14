@@ -17,12 +17,11 @@ import { GADGET_IFRAME_SANDBOX } from "./gadget-isolation";
 import { FrameBridge, sandboxHtml } from "./gadget-frame";
 import { safeGadgetOpenUrl } from "./open-url";
 import {
-  RECONNECT_INITIAL_MS,
-  connectFailureAction,
+  ConnectGuard,
   disposeRpcRoot,
   errMsg,
   isIdleError,
-  nextReconnectDelay,
+  isUserInitiatedActivity,
 } from "./reconnect";
 
 // Cap'n Web stubs are dynamic. Typing them as `any` avoids deep type instantiation in the checker.
@@ -143,7 +142,12 @@ const SUGGESTIONS = [
 const app = document.getElementById("app")!;
 
 const titleInput = h("input", { class: "ws-title", "aria-label": "Workspace title", maxlength: 80, spellcheck: "false" }) as HTMLInputElement;
-const connEl = h("span", { class: "conn", "data-state": "connecting" }, h("span", { class: "conn__dot" }), h("span", { class: "conn__label" }, "Connecting"));
+const connEl = h(
+  "button",
+  { class: "conn", type: "button", "data-state": "connecting", "aria-label": "Connection status" },
+  h("span", { class: "conn__dot" }),
+  h("span", { class: "conn__label" }, "Connecting"),
+);
 const presenceEl = h("div", { class: "presence" });
 const costEl = h("span", { class: "chip cost", "data-tip": "Workers AI spend in this workspace" }, "AI $0.0000");
 const activityBtn = h("button", { class: "icon-btn", "data-tip": "Activity and approvals", "aria-label": "Activity" }, icon("shield"));
@@ -249,11 +253,12 @@ class WorkspaceListener extends RpcTarget {
   }
 }
 
+const connectGuard = new ConnectGuard();
 let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
-let reconnectDelay = RECONNECT_INITIAL_MS;
-let reconnectAttempts = 0;
 let heartbeat: ReturnType<typeof setInterval> | undefined;
-let allowReconnect = true;
+let lastUserInputAt = 0;
+
+const reconnectBanner = h("button", { class: "reconnect-banner", type: "button", hidden: true }, "Paused · tap to reconnect") as HTMLButtonElement;
 
 function wsUrl() {
   return `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}${BASE}/api`;
@@ -262,25 +267,69 @@ function wsUrl() {
 function setConn(next: typeof state.conn) {
   state.conn = next;
   connEl.setAttribute("data-state", next);
-  connEl.querySelector(".conn__label")!.textContent =
-    next === "live" ? "Live" : next === "connecting" ? "Connecting" : next === "paused" ? "Paused" : "Offline";
+  const paused = next === "paused";
+  connEl.querySelector(".conn__label")!.textContent = paused
+    ? "Paused · tap to reconnect"
+    : next === "live"
+      ? "Live"
+      : next === "connecting"
+        ? "Connecting"
+        : "Offline";
+  connEl.setAttribute("aria-label", paused ? "Paused, tap to reconnect" : `Connection: ${next}`);
+  reconnectBanner.hidden = !paused;
 }
 
-function pauseForIdle(message: string) {
-  allowReconnect = false;
-  clearInterval(heartbeat);
-  heartbeat = undefined;
-  clearTimeout(reconnectTimer);
+function markUserInput() {
+  lastUserInputAt = Date.now();
+}
+
+function noteUserGadgetActivity() {
+  if (!session || !isUserInitiatedActivity(Date.now(), lastUserInputAt)) return;
+  void session.noteActivity();
+}
+
+function dropSession() {
   session = null;
   disposeRpcRoot(rootStub);
   rootStub = null;
+}
+
+function pauseForReconnect(message: string) {
+  connectGuard.allowReconnect = false;
+  clearInterval(heartbeat);
+  heartbeat = undefined;
+  clearTimeout(reconnectTimer);
+  dropSession();
   setConn("paused");
   toast(message, "error");
 }
 
-async function connect() {
-  if (!allowReconnect) return;
+function resumeFromPause() {
+  connectGuard.resume();
   clearTimeout(reconnectTimer);
+  void connect();
+}
+
+function applyConnectFailure(err: unknown, source: "catch" | "rpc-broken") {
+  const action = connectGuard.fail(err, source);
+  if (!action) return;
+  dropSession();
+  if (action === "pause-idle" || action === "give-up") {
+    pauseForReconnect(
+      action === "pause-idle"
+        ? errMsg(err)
+        : "Could not reconnect. Paused — tap to try again.",
+    );
+    return;
+  }
+  setConn("offline");
+  scheduleReconnect();
+}
+
+async function connect() {
+  if (!connectGuard.allowReconnect) return;
+  clearTimeout(reconnectTimer);
+  connectGuard.beginAttempt();
   setConn("connecting");
   const previous = rootStub;
   rootStub = null;
@@ -290,23 +339,14 @@ async function connect() {
   rootStub = root;
   root.onRpcBroken(() => {
     if (rootStub !== root) return;
-    session = null;
-    disposeRpcRoot(root);
-    if (rootStub === root) rootStub = null;
-    if (!allowReconnect) {
-      setConn("paused");
-      return;
-    }
-    setConn("offline");
-    scheduleReconnect();
+    applyConnectFailure(new Error("socket closed"), "rpc-broken");
   });
   try {
     const ws: Stub = root.openWorkspace(WS_ID, viewer);
     state.blueprints = await ws.listBlueprints();
     session = ws;
     await ws.subscribe(new WorkspaceListener());
-    reconnectDelay = RECONNECT_INITIAL_MS;
-    reconnectAttempts = 0;
+    connectGuard.markLive();
     setConn("live");
     // Frame sessions belonged to the old socket. Mount them again.
     for (const id of [...frames.keys()]) {
@@ -317,37 +357,22 @@ async function connect() {
     heartbeat = setInterval(() => {
       if (session === ws) {
         ws.ping().catch((err: unknown) => {
-          if (isIdleError(err)) pauseForIdle(errMsg(err));
+          if (isIdleError(err)) pauseForReconnect(errMsg(err));
         });
       }
     }, 20_000);
     render();
   } catch (err) {
     console.error("connect failed", err);
-    disposeRpcRoot(root);
-    if (rootStub === root) rootStub = null;
-    session = null;
-    const action = connectFailureAction(err, reconnectAttempts + 1);
-    if (action === "pause-idle") {
-      pauseForIdle(errMsg(err));
-      return;
-    }
-    if (action === "give-up") {
-      allowReconnect = false;
-      setConn("offline");
-      return;
-    }
-    setConn("offline");
-    scheduleReconnect();
+    applyConnectFailure(err, "catch");
   }
 }
 
 function scheduleReconnect() {
-  if (!allowReconnect) return;
-  reconnectAttempts += 1;
+  if (!connectGuard.allowReconnect) return;
   clearTimeout(reconnectTimer);
-  reconnectTimer = setTimeout(() => void connect(), reconnectDelay);
-  reconnectDelay = nextReconnectDelay(reconnectDelay);
+  const wait = connectGuard.consumeDelay();
+  reconnectTimer = setTimeout(() => void connect(), wait);
 }
 
 // ===================================================================== events
@@ -390,7 +415,7 @@ function onEvent(e: WorkspaceEvent) {
       pushLog(e.gadget, e.level, e.message);
       break;
     case "session-idle":
-      pauseForIdle("This workspace paused after 20 minutes idle to limit Durable Object billing. Refresh to continue.");
+      pauseForReconnect("This workspace paused after 20 minutes idle to limit Durable Object billing. Tap to reconnect.");
       break;
   }
 }
@@ -434,7 +459,7 @@ async function mountFrame(g: Pick<GadgetInfo, "id" | "title" | "version">, messa
   const overlay = h("div", { class: "frame-overlay" }, h("div", { class: "spinner" }), message);
   overlay.hidden = g.id !== state.active;
   const ws = session;
-  const bridge = new FrameBridge(g.id, () => ws.connectToGadget(g.id), traceLocal);
+  const bridge = new FrameBridge(g.id, () => ws.connectToGadget(g.id), traceLocal, noteUserGadgetActivity);
   const entry: FrameEntry = { iframe, bridge, version: g.version, overlay };
   frames.set(g.id, entry);
   frameHost.append(iframe, overlay);
@@ -491,6 +516,8 @@ window.addEventListener("message", (e: MessageEvent) => {
         });
     } else if (e.data && typeof e.data === "object" && e.data.type === "console") {
       pushLog(id, String(e.data.level), String(e.data.message).slice(0, 600));
+    } else if (e.data && typeof e.data === "object" && e.data.type === "user-activity") {
+      markUserInput();
     } else if (e.data && typeof e.data === "object" && e.data.type === "open-url") {
       const url = safeGadgetOpenUrl(e.data.url);
       if (url) window.open(url, "_blank", "noopener,noreferrer");
@@ -1523,10 +1550,24 @@ function wire() {
     themeBtn.append(icon(next === "dark" ? "sun" : "moon"));
     for (const entry of frames.values()) entry.iframe.contentWindow?.postMessage({ type: "theme", theme: next }, "*");
   });
+  document.addEventListener("pointerdown", markUserInput, true);
   document.addEventListener("keydown", (e) => {
+    markUserInput();
     if (e.key === "Escape") {
       if (scrim) closeModal();
       else if (state.drawer) toggleDrawer(null);
+    }
+  });
+  connEl.addEventListener("click", () => {
+    if (state.conn === "paused") resumeFromPause();
+  });
+  reconnectBanner.addEventListener("click", () => resumeFromPause());
+  window.addEventListener("online", () => {
+    if (state.conn === "paused" || state.conn === "offline") resumeFromPause();
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && (state.conn === "paused" || state.conn === "offline")) {
+      resumeFromPause();
     }
   });
 
@@ -1562,7 +1603,7 @@ function wire() {
 function boot() {
   app.textContent = "";
   app.append(topbar, main, mobileNav);
-  document.body.append(toasts);
+  document.body.append(toasts, reconnectBanner);
   wire();
   void connect();
 }

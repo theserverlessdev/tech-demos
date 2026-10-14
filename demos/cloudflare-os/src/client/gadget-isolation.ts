@@ -13,6 +13,11 @@ export function gadgetIsolationScript(): string {
   };
   const blocked = function open(url) { send(url); return null; };
   Object.defineProperty(window, "open", { configurable: false, writable: false, value: blocked });
+  for (const ev of ["pointerdown", "keydown"]) {
+    document.addEventListener(ev, () => {
+      try { window.parent.postMessage({ type: "user-activity" }, "*"); } catch {}
+    }, true);
+  }
   document.addEventListener("click", (event) => {
     const path = typeof event.composedPath === "function" ? event.composedPath() : [];
     let node = event.target;

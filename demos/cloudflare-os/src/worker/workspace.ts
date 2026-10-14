@@ -682,7 +682,6 @@ export class Workspace extends DurableObject<Env> {
   }
 
   async #callGadget(id: string, method: string, args: unknown, via: RpcEvent["via"], who: string) {
-    this.touchActivity();
     const g = this.#gadget(id);
     if (!/^[A-Za-z_$][\w$]*$/.test(method) || method.startsWith("__") || ["constructor", "fetch", "alarm", "subscribe"].includes(method)) {
       throw new Error(`"${method}" is not a callable gadget method.`);
@@ -715,7 +714,6 @@ export class Workspace extends DurableObject<Env> {
         if (typeof method !== "function") return method;
         if (prop.startsWith("__")) return undefined;
         return (...args: unknown[]) => {
-          self.touchActivity();
           const started = Date.now();
           return (Reflect.apply(method, target, args) as Promise<unknown>).then(
             (value) => {
@@ -924,6 +922,11 @@ export class WorkspaceClient extends RpcTarget {
   reportLog(id: string, level: "info" | "error", message: string) {
     this.#live();
     this.#ws.reportLog(id, level, message);
+  }
+
+  /** Shell calls this after a real pointer/key gesture. Timer-driven gadget RPCs must not. */
+  noteActivity() {
+    this.#ws.touchActivity();
   }
 
   [Symbol.dispose]() {
