@@ -357,6 +357,8 @@ async function readImage(file: File): Promise<{ bytes: ArrayBuffer; type: string
   let bytes = new Uint8Array(await file.arrayBuffer());
   const sniffed = sniffImage(bytes, file.type || "");
   if (!sniffed) throw new HttpError(415, "unsupported_type", "Attach a JPEG, PNG, GIF, or WebP image.");
-  if (sniffed === "image/jpeg") bytes = stripJpegExif(bytes);
-  return { bytes: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength), type: sniffed };
+  const out = sniffed === "image/jpeg" ? stripJpegExif(bytes) : bytes;
+  const copy = new Uint8Array(out.byteLength);
+  copy.set(out);
+  return { bytes: copy.buffer, type: sniffed };
 }

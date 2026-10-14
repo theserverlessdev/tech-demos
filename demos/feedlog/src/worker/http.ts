@@ -115,10 +115,11 @@ export function str(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-const FORMAT_AND_CONTROL = /[\p{Cc}\p{Cf}]+/gu;
+const FORMAT = /\p{Cf}/gu;
+const C0_EXCEPT_SPACE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
 
 export function stripControls(value: string): string {
-  return value.replace(FORMAT_AND_CONTROL, "").replace(/\s+/g, " ").trim();
+  return value.replace(FORMAT, "").replace(C0_EXCEPT_SPACE, "").replace(/\s+/g, " ").trim();
 }
 
 export function cleanLine(value: unknown, min: number, max: number, label: string): string {

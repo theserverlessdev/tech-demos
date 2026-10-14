@@ -96,6 +96,16 @@ check("similar without Turnstile is rejected", similarBlocked.status === 403, si
 const noAdmin = await call("/api/posts/post_csv_export", { method: "PATCH", body: { status: "planned" } });
 check("status change without the admin token is rejected", noAdmin.status === 401, noAdmin.status);
 
+if (!allowWrites) {
+  check("remote smoke stays read-only (pass --allow-writes to mutate)", true);
+  if (failures) {
+    console.error(`\n${failures} check(s) failed.`);
+    process.exit(1);
+  }
+  console.log("\nRead-only checks passed.");
+  process.exit(0);
+}
+
 const badId = await call("/api/posts/%E0%A4%A");
 check("malformed percent-encoding is 404", badId.status === 404, badId.status);
 
@@ -107,16 +117,6 @@ check("cross-site vote is rejected", cross.status === 403, cross.status);
 
 const freshVote = await fetch(`${base}/api/posts/post_dark_roadmap/vote`, { method: "POST" });
 check("cookieless vote is rejected", freshVote.status === 409, freshVote.status);
-
-if (!allowWrites) {
-  check("remote smoke stays read-only (pass --allow-writes to mutate)", true);
-  if (failures) {
-    console.error(`\n${failures} check(s) failed.`);
-    process.exit(1);
-  }
-  console.log("\nRead-only checks passed.");
-  process.exit(0);
-}
 
 const dark = list.data?.posts.find((post) => post.id === "post_dark_roadmap");
 const before = dark?.votes ?? 0;
@@ -254,6 +254,9 @@ if (local) {
     const gone = await call(`/api/posts/${expired.data.post.id}`);
     check("expired post is no longer public", gone.status === 404, gone.status);
   }
+  const seeds = await call<{ posts: Post[] }>("/api/posts");
+  const darkAfter = seeds.data?.posts.find((post) => post.id === "post_dark_roadmap");
+  check("cleanup does not zero seed vote counts", (darkAfter?.votes ?? 0) >= 24, darkAfter?.votes);
 }
 
 if (failures) {

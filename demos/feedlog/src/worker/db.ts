@@ -217,13 +217,21 @@ export async function retryPendingDeletes(env: Env): Promise<number> {
 
 export async function sweepSeedVotes(env: Env, now: number): Promise<number> {
   const cutoff = now - SEED_VOTE_TTL_MS;
-  const deleted = await env.DB.prepare(
-    "DELETE FROM votes WHERE created_at < ? AND post_id IN (SELECT id FROM posts WHERE seeded = 1)",
+  const stale = await env.DB.prepare(
+    "SELECT post_id, COUNT(*) AS n FROM votes WHERE created_at < ? AND post_id IN (SELECT id FROM posts WHERE seeded = 1) GROUP BY post_id",
   )
     .bind(cutoff)
-    .run();
-  await env.DB.prepare("UPDATE posts SET votes = (SELECT COUNT(*) FROM votes WHERE votes.post_id = posts.id) WHERE seeded = 1").run();
-  return deleted.meta.changes ?? 0;
+    .all<{ post_id: string; n: number }>();
+  let deleted = 0;
+  for (const row of stale.results) {
+    const n = Number(row.n);
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM votes WHERE post_id = ? AND created_at < ?").bind(row.post_id, cutoff),
+      env.DB.prepare("UPDATE posts SET votes = MAX(votes - ?, 0) WHERE id = ? AND seeded = 1").bind(n, row.post_id),
+    ]);
+    deleted += n;
+  }
+  return deleted;
 }
 
 export async function sweepUsedGates(env: Env, now: number): Promise<number> {

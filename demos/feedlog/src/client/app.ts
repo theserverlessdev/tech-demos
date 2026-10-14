@@ -545,11 +545,14 @@ async function onVote(id: string): Promise<void> {
       post.votes = res.data.votes;
       post.voted = res.data.voted;
     }
-    renderBoard();
-    renderRoadmap();
-    if (state.detailId === id && post) renderDetail(post);
   } finally {
     state.voting.delete(id);
+    renderBoard();
+    renderRoadmap();
+    if (state.detailId === id) {
+      const post = state.posts.find((item) => item.id === id) ?? null;
+      if (post) renderDetail(post);
+    }
   }
 }
 
