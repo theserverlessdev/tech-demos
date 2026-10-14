@@ -1,4 +1,4 @@
-import { demoPath, demoSubdomain, demoUrl, HUB_HOST } from "@tech-demos/shared";
+import { demoPath, demoSubdomain, demoUrl, HUB_HOST, type DemoKind } from "@tech-demos/shared";
 import { demos, getDemo } from "./registry";
 import { renderGallery, THEME_BOOT_SCRIPT, GALLERY_UI_SCRIPT } from "./gallery";
 import {
@@ -19,13 +19,18 @@ const TEXT_HEADERS = {
   "x-content-type-options": "nosniff",
 };
 
-function slugFromHost(hostname: string): string | null {
+export function slugFromHost(hostname: string): string | null {
   const suffix = `.${HUB_HOST}`;
   if (hostname.endsWith(suffix)) {
     const slug = hostname.slice(0, -suffix.length);
     if (slug && !slug.includes(".")) return slug;
   }
   return null;
+}
+
+/** Standalone fallbacks run on the hub host only. A subdomain hit is a missing deploy. */
+export function standaloneBlockedOnHost(kind: DemoKind, hostname: string): boolean {
+  return kind === "standalone" && slugFromHost(hostname) !== null;
 }
 
 async function galleryHeaders(): Promise<HeadersInit> {
@@ -66,7 +71,7 @@ async function runDemo(request: Request, env: Env, slug: string): Promise<Respon
   }
 
   const host = new URL(request.url).hostname;
-  if (demo.kind === "standalone" && slugFromHost(host)) {
+  if (standaloneBlockedOnHost(demo.kind, host)) {
     return new Response("demo Worker not deployed", { status: 503, headers: TEXT_HEADERS });
   }
 

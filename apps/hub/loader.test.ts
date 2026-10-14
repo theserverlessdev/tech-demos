@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { COMPATIBILITY_DATE, DEMO_RESPONSE_CSP, demoLoaderId, forwardToLoader, wrapDemoResponse } from "./src/loader.ts";
+import { slugFromHost, standaloneBlockedOnHost } from "./src/index.ts";
 
 test("loader id includes a hash of source and compatibility date", async () => {
   const a = await demoLoaderId("hello-dynamic", "export default {}", COMPATIBILITY_DATE);
@@ -31,4 +32,12 @@ test("wrapDemoResponse sets sandbox CSP, nosniff, and the loader id", async () =
   expect(res.headers.get("x-content-type-options")).toBe("nosniff");
   expect(res.headers.get("x-dynamic-worker")).toBe("hello-dynamic:abc");
   expect(await res.text()).toBe("ok");
+});
+
+test("standalone demos are blocked on a demo subdomain and allowed on the hub host", () => {
+  expect(slugFromHost("edgechat.tech-demos.theserverless.dev")).toBe("edgechat");
+  expect(slugFromHost("tech-demos.theserverless.dev")).toBeNull();
+  expect(standaloneBlockedOnHost("standalone", "edgechat.tech-demos.theserverless.dev")).toBe(true);
+  expect(standaloneBlockedOnHost("standalone", "tech-demos.theserverless.dev")).toBe(false);
+  expect(standaloneBlockedOnHost("loader", "hello-dynamic.tech-demos.theserverless.dev")).toBe(false);
 });
