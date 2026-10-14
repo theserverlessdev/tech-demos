@@ -442,6 +442,8 @@ function renderTurnstile(siteKey: string): Promise<TurnstileApi | null> {
             ($("join") as HTMLButtonElement).disabled = false;
             ($("create") as HTMLButtonElement).disabled = false;
             setStatus("Check passed. Join a room when you are ready.", "ok");
+            const deep = new URLSearchParams(location.search).get("room");
+            if (deep && $("stage").hidden) void joinRoom(deep);
           },
           "error-callback": () => setStatus("Turnstile could not check this browser.", "warn"),
         });
