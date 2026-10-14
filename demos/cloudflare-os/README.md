@@ -107,3 +107,4 @@ Blueprints without bindings share one Dynamic Worker for each code hash, for all
 
 - `artifacts/cloudflare-os-demo.mp4`: a 110-second walkthrough of the live demo
 - `artifacts/01-…09-*.png`: screenshots of each step, including mobile
+- `artifacts/11-gadgets-390.png` and `11-gadgets-390.mp4`: 390px Gadgets view after the overflow/sandbox audit fix (`document.scrollWidth === 390`)
