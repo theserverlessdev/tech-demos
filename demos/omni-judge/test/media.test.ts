@@ -603,9 +603,16 @@ describe("media caps", () => {
     const late = cluster(tc(50_000), simpleBlock(0));
     const attacks = [
       Uint8Array.of(0xec, 0x00),
+      Uint8Array.of(0xec, 0x00, 0x01),
+      Uint8Array.of(0xec, 0x00, 0xec, 0x00),
+      Uint8Array.of(0xec, 0x00, 0x00, 0x00, 0x01),
       Uint8Array.of(0xec, 0x1f, 0xff, 0xff, 0xfe),
+      Uint8Array.of(0xec, 0x1f, 0xff, 0xff, 0xfe, 0x01),
       Uint8Array.of(0xa3, 0x1f, 0xff, 0xff, 0xfe),
+      Uint8Array.of(0xa3, 0x1f, 0xff, 0xff, 0xfe, 0x01),
+      concat(Uint8Array.of(0xa3, 0x1f, 0xff, 0xff, 0xfe), Uint8Array.of(0xa3, 0x1f, 0xff, 0xff, 0xfe)),
       Uint8Array.of(0xec, 0x01, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfe),
+      Uint8Array.of(0xec, 0x01, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfe, 0x01),
     ];
     for (const attack of attacks) {
       const sniffed = sniffMedia(wrap(cluster(tc(0), simpleBlock(0), simpleBlock(4961), attack), late));
@@ -618,6 +625,14 @@ describe("media caps", () => {
     const voided = sniffMedia(wrap(cluster(tc(0), simpleBlock(0), Uint8Array.of(0xec, 0x80), simpleBlock(4000))));
     expect(voided).toMatchObject({ ok: true, contentType: "video/webm" });
     if (voided.ok) expect(voided.durationMs).toBe(4000);
+    const blockBody = new Uint8Array(4);
+    blockBody[0] = 0x81;
+    new DataView(blockBody.buffer).setInt16(1, 8000, false);
+    blockBody[3] = 0x80;
+    const grouped = wrap(cluster(tc(0), simpleBlock(0), simpleBlock(4000), element([0xa0], element([0xa1], blockBody))));
+    const inside = sniffMedia(grouped.subarray(0, grouped.length - 3));
+    expect(inside).toMatchObject({ ok: true, contentType: "video/webm" });
+    if (inside.ok) expect(inside.durationMs).toBe(4000);
   });
 
   test("a known-size webm cut or a shrunk segment does not keep a short duration", () => {
@@ -661,6 +676,12 @@ describe("media caps", () => {
     const kept = sniffMedia(concat(mp4(1000), sidx([1000])));
     expect(kept).toMatchObject({ ok: true, kind: "video" });
     if (kept.ok) expect(kept.durationMs).toBe(1000);
+    const perTrack = sniffMedia(concat(mp4(1000), sidx([9567]), sidx([9567])));
+    expect(perTrack).toMatchObject({ ok: true, kind: "video" });
+    if (perTrack.ok) expect(perTrack.durationMs).toBe(9567);
+    const five = sniffMedia(concat(mp4(1000), sidx([5067]), sidx([5067])));
+    expect(five).toMatchObject({ ok: true, kind: "video" });
+    if (five.ok) expect(five.durationMs).toBe(5067);
     const truncated = sniffMedia(concat(mp4(1000), sidx([], 4)));
     expect(truncated.ok).toBe(false);
     if (!truncated.ok) expect(truncated.message).toContain("no readable duration");
@@ -681,9 +702,22 @@ describe("media caps", () => {
       );
       return concat(ftyp, atom("moov", concat(atom("mvhd", mvhd), trak)));
     };
-    const shifted = sniffMedia(file(concat(u32be(0), u32be(1), u32be(1), u32be(98)), concat(u32be(0), u32be(1), u32be(1), u32be(49_872))));
+    const shifted = sniffMedia(
+      file(concat(u32be(0), u32be(1), u32be(2), u32be(98)), concat(u32be(0), u32be(2), u32be(1), u32be(0), u32be(1), u32be(49_872))),
+    );
     expect(shifted.ok).toBe(false);
     if (!shifted.ok) expect(shifted.message).toContain("10 seconds");
+    const delay = sniffMedia(file(concat(u32be(0), u32be(1), u32be(1), u32be(10_467)), concat(u32be(0), u32be(1), u32be(1), u32be(67))));
+    expect(delay).toMatchObject({ ok: true, kind: "video" });
+    if (delay.ok) expect(delay.durationMs).toBe(10_467);
+    const negative = sniffMedia(
+      file(
+        concat(u32be(0), u32be(1), u32be(2), u32be(1000)),
+        concat(u32be(0x01000000), u32be(2), u32be(1), u32be((-40_000) >>> 0), u32be(1), u32be(0)),
+      ),
+    );
+    expect(negative.ok).toBe(false);
+    if (!negative.ok) expect(negative.message).toContain("10 seconds");
     const same = sniffMedia(file(concat(u32be(0), u32be(1), u32be(1), u32be(1000)), concat(u32be(0), u32be(1), u32be(1), u32be(0))));
     expect(same).toMatchObject({ ok: true, kind: "video" });
     if (same.ok) expect(same.durationMs).toBe(1000);
@@ -711,9 +745,110 @@ describe("media caps", () => {
     const dash = sniffMedia(concat(safariFmp4({}), fragment(8000, [8000])));
     expect(dash).toMatchObject({ ok: true, kind: "video" });
     if (dash.ok) expect(dash.durationMs).toBe(8000);
-    const composed = sniffMedia(concat(safariFmp4({}), fragment(0, [98], 50_000)));
-    expect(composed.ok).toBe(false);
-    if (!composed.ok) expect(composed.message).toContain("10 seconds");
+    const composed = atom(
+      "trun",
+      concat(u32be(0x900), u32be(2), u32be(98), u32be(0), u32be(98), u32be(50_000)),
+    );
+    const spread = sniffMedia(
+      concat(safariFmp4({}), atom("moof", atom("traf", concat(atom("tfhd", concat(u32be(0), u32be(1))), atom("tfdt", concat(u32be(0), u32be(0))), composed)))),
+    );
+    expect(spread.ok).toBe(false);
+    if (!spread.ok) expect(spread.message).toContain("10 seconds");
+    const one = sniffMedia(concat(safariFmp4({}), fragment(0, [1000], 67)));
+    expect(one).toMatchObject({ ok: true, kind: "video" });
+    if (one.ok) expect(one.durationMs).toBe(1000);
+    const negBody = concat(u32be(0x01000800), u32be(2), u32be((-40_000) >>> 0), u32be(0));
+    const negTrun = atom("trun", negBody);
+    const tfhd = concat(u32be(0x000008), u32be(1), u32be(1000));
+    const neg = sniffMedia(concat(safariFmp4({}), atom("moof", atom("traf", concat(atom("tfhd", tfhd), atom("tfdt", concat(u32be(0), u32be(0))), negTrun)))));
+    expect(neg.ok).toBe(false);
+    if (!neg.ok) expect(neg.message).toContain("10 seconds");
+  });
+
+  test("a sidx span is not summed, and a tfdt-less fragment beside a sidx is rejected", () => {
+    const sidx = (durations: number[], ept = 0) => {
+      const refs = durations.map((duration) => concat(u32be(0), u32be(duration), u32be(0)));
+      return atom("sidx", concat(u32be(0), u32be(1), u32be(1000), u32be(ept), u32be(0), u16be(0), u16be(durations.length), ...refs));
+    };
+    const ftyp = atom("ftyp", concat(ascii("isom"), u32be(0), ascii("isom")));
+    const mvhd = new Uint8Array(100);
+    new DataView(mvhd.buffer).setUint32(12, 1000);
+    const tkhd = new Uint8Array(84);
+    new DataView(tkhd.buffer).setUint32(12, 1);
+    const mdhd = new Uint8Array(24);
+    new DataView(mdhd.buffer).setUint32(12, 1000);
+    const stts = atom("stts", concat(u32be(0), u32be(1), u32be(1), u32be(98)));
+    const trak = atom("trak", concat(atom("tkhd", tkhd), atom("mdia", concat(atom("mdhd", mdhd), atom("minf", atom("stbl", stts))))));
+    const nested = sniffMedia(concat(ftyp, atom("moov", concat(atom("mvhd", mvhd), trak, sidx([50_000])))));
+    expect(nested.ok).toBe(false);
+    if (!nested.ok) expect(nested.message).toContain("10 seconds");
+    const udta = sniffMedia(concat(ftyp, atom("moov", concat(atom("mvhd", mvhd), trak, atom("udta", sidx([50_000]))))));
+    expect(udta.ok).toBe(false);
+    if (!udta.ok) expect(udta.message).toContain("10 seconds");
+    const tfhd = concat(u32be(0x000008), u32be(1), u32be(1));
+    const bare = atom("moof", atom("traf", concat(atom("tfhd", tfhd), atom("trun", concat(u32be(0), u32be(1))))));
+    const placed = sniffMedia(concat(safariFmp4({}), sidx([1], 40_000), bare));
+    expect(placed.ok).toBe(false);
+    if (!placed.ok) expect(placed.message).toContain("no readable duration");
+    const buried = sniffMedia(concat(ftyp, atom("moov", concat(atom("mvhd", mvhd), trak, atom("udta", sidx([1], 40_000)))), bare));
+    expect(buried.ok).toBe(false);
+    if (!buried.ok) expect(buried.message).toContain("no readable duration");
+    const timed = atom(
+      "moof",
+      atom("traf", concat(atom("tfhd", tfhd), atom("tfdt", concat(u32be(0), u32be(0))), atom("trun", concat(u32be(0x100), u32be(1), u32be(1000))))),
+    );
+    const honest = sniffMedia(concat(safariFmp4({}), sidx([1000]), timed));
+    expect(honest).toMatchObject({ ok: true, kind: "video" });
+    if (honest.ok) expect(honest.durationMs).toBe(1000);
+  });
+
+  test("trex supplies a sample duration when the trun only carries composition offsets", () => {
+    const ftyp = atom("ftyp", concat(ascii("isom"), u32be(0), ascii("isom")));
+    const mvhd = new Uint8Array(100);
+    new DataView(mvhd.buffer).setUint32(12, 1000);
+    const tkhd = new Uint8Array(84);
+    new DataView(tkhd.buffer).setUint32(12, 1);
+    const mdhd = new Uint8Array(24);
+    new DataView(mdhd.buffer).setUint32(12, 1000);
+    const trak = atom("trak", concat(atom("tkhd", tkhd), atom("mdia", atom("mdhd", mdhd))));
+    const trex = atom("trex", concat(u32be(0), u32be(1), u32be(1), u32be(100), u32be(0), u32be(0)));
+    const offsets = Array.from({ length: 10 }, () => u32be(0));
+    const trun = atom("trun", concat(u32be(0x800), u32be(10), ...offsets));
+    const tfhd = concat(u32be(0), u32be(1));
+    const moof = atom("moof", atom("traf", concat(atom("tfhd", tfhd), atom("tfdt", concat(u32be(0), u32be(0))), trun)));
+    const timed = sniffMedia(concat(ftyp, atom("moov", concat(atom("mvhd", mvhd), trak, atom("mvex", trex))), moof));
+    expect(timed).toMatchObject({ ok: true, kind: "video" });
+    if (timed.ok) expect(timed.durationMs).toBe(1000);
+    const early = sniffMedia(concat(ftyp, moof, atom("moov", concat(atom("mvhd", mvhd), trak, atom("mvex", trex)))));
+    expect(early.ok).toBe(false);
+    if (!early.ok) expect(early.message).toContain("no readable duration");
+  });
+
+  test("a one-tick sample table must match the chunk table", () => {
+    const ftyp = atom("ftyp", concat(ascii("isom"), u32be(0), ascii("isom")));
+    const mvhd = new Uint8Array(100);
+    new DataView(mvhd.buffer).setUint32(12, 1000);
+    const tkhd = new Uint8Array(84);
+    new DataView(tkhd.buffer).setUint32(12, 1);
+    const mdhd = new Uint8Array(24);
+    new DataView(mdhd.buffer).setUint32(12, 1000);
+    const table = (samples: number, chunks: number, per: number) => {
+      const stts = atom("stts", concat(u32be(0), u32be(1), u32be(samples), u32be(1)));
+      const stsc = atom("stsc", concat(u32be(0), u32be(1), u32be(1), u32be(per), u32be(1)));
+      const offsets = Array.from({ length: chunks }, (_, index) => u32be(64 + index * 8));
+      const stco = atom("stco", concat(u32be(0), u32be(chunks), ...offsets));
+      return atom("stbl", concat(stts, stsc, stco));
+    };
+    const file = (stbl: Uint8Array) => {
+      const trak = atom("trak", concat(atom("tkhd", tkhd), atom("mdia", concat(atom("mdhd", mdhd), atom("minf", stbl)))));
+      return concat(ftyp, atom("moov", concat(atom("mvhd", mvhd), trak)));
+    };
+    const matched = sniffMedia(file(table(8, 2, 4)));
+    expect(matched).toMatchObject({ ok: true, kind: "video" });
+    if (matched.ok) expect(matched.durationMs).toBe(8);
+    const lied = sniffMedia(file(table(9_000, 50, 1000)));
+    expect(lied.ok).toBe(false);
+    if (!lied.ok) expect(lied.message).toContain("no readable duration");
   });
 
   test("a stock ffmpeg frag_every_frame file stays inside the cap", () => {
@@ -723,11 +858,11 @@ describe("media caps", () => {
     if (sniffed.ok) expect(Math.abs((sniffed.durationMs ?? 0) - 2000)).toBeLessThanOrEqual(200);
   });
 
-  test("a chrome-style fragmented mp4 reads the real duration", () => {
-    const file = new Uint8Array(readFileSync(new URL("./fixtures/chrome-fmp4.mp4", import.meta.url)));
+  test("an ffmpeg fragmented mp4 reads its sample duration", () => {
+    const file = new Uint8Array(readFileSync(new URL("./fixtures/ffmpeg-fmp4.mp4", import.meta.url)));
     const sniffed = sniffMedia(file);
     expect(sniffed).toMatchObject({ ok: true, contentType: "video/mp4" });
-    if (sniffed.ok) expect(Math.abs((sniffed.durationMs ?? 0) - 3000)).toBeLessThanOrEqual(150);
+    if (sniffed.ok) expect(sniffed.durationMs).toBe(3000);
   });
 
   test("an exact mp3 duration does not gain a millisecond", () => {

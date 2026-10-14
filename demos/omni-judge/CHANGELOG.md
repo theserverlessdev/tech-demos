@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.6
+
+- A WebM cut-tail is kept only when no Cluster id follows the broken element. A junk byte after the header no longer hides the rest of the file, and a cut inside a BlockGroup still keeps the last complete block.
+- `sidx` contributes a presentation span, including a box nested in `moov` or `udta`, instead of a sum across tracks. A fragment with no `tfdt` next to a `sidx` is rejected.
+- Composition time is the span from the earliest presentation to the latest end, so a B-frame delay is not added and a negative offset cannot hide a long file. `trex` still supplies a sample duration when a `trun` only has composition offsets. A one-tick sample table must match the chunk table.
+
 ## 0.1.5
 
 - A WebM cut-tail is kept only when the broken element is the last bytes of the file. A short edit in the middle of a cluster, or bytes after a shrunk Segment, is rejected.

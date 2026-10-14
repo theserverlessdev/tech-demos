@@ -313,38 +313,24 @@ function restIsZero(bytes: Uint8Array, offset: number, end: number): boolean {
   return true;
 }
 
-function vintByteLength(first: number): number | null {
-  let length = 1;
-  let mask = 0x80;
-  while (length <= 8 && (first & mask) === 0) {
-    mask >>= 1;
-    length += 1;
+/** True when a Cluster id occurs anywhere in [from, end). ffmpeg resyncs the same way. */
+function clusterAfter(bytes: Uint8Array, from: number, end: number): boolean {
+  const last = end - 4;
+  for (let i = Math.max(0, from); i <= last; i++) {
+    if ((bytes[i] ?? 0) === 0x1f && (bytes[i + 1] ?? 0) === 0x43 && (bytes[i + 2] ?? 0) === 0xb6 && (bytes[i + 3] ?? 0) === 0x75) return true;
   }
-  return length > 8 ? null : length;
-}
-
-/** A complete element at this offset means the bytes are structured, not a truncated payload. */
-function elementAt(bytes: Uint8Array, offset: number): boolean {
-  let index = offset;
-  while (index < bytes.length && (bytes[index] ?? 0) === 0) index += 1;
-  if (index >= bytes.length || index + 2 > bytes.length) return false;
-  const id = readId(bytes, index);
-  if (!id || id.next > bytes.length) return false;
-  const size = readSize(bytes, id.next);
-  if (!size || size.next > bytes.length) return false;
-  if (size.unknown) return true;
-  const childEnd = size.next + size.value;
-  return childEnd >= size.next && childEnd <= bytes.length;
+  return false;
 }
 
 /**
- * A cut-tail is allowed only when the broken header is the last bytes of the
- * file. A short edit (illegal Void, oversized size vint) leaves a real element
- * after the header, and that is rejected.
+ * A cut is the end of the file only when no later Cluster id exists. A junk
+ * byte after a broken header, or a second broken header, still leaves the
+ * next cluster in the file, so that edit is rejected. A truncate inside a
+ * BlockGroup does not, and the last complete block is kept.
  */
-function tailCut(bytes: Uint8Array, limit: number, afterHeader: number): boolean {
-  if (limit !== bytes.length || afterHeader > bytes.length) return false;
-  return !elementAt(bytes, afterHeader);
+function cutAtEof(bytes: Uint8Array, offset: number, limit: number): boolean {
+  if (limit !== bytes.length) return false;
+  return !clusterAfter(bytes, offset + 1, bytes.length);
 }
 
 /**
@@ -352,7 +338,7 @@ function tailCut(bytes: Uint8Array, limit: number, afterHeader: number): boolean
  * a Void does not end it. The cluster ends at the next segment-level element.
  * An unknown-size child fails closed. A child cut off as the last bytes of the
  * file, or trailing zero bytes, ends the cluster at the last complete element.
- * The same break anywhere earlier fails closed.
+ * The same break anywhere a later Cluster id exists fails closed.
  */
 function unknownClusterEnd(bytes: Uint8Array, start: number, limit: number): { at: number; sibling: boolean } | null {
   let offset = start;
@@ -363,23 +349,20 @@ function unknownClusterEnd(bytes: Uint8Array, start: number, limit: number): { a
     }
     const id = readId(bytes, offset);
     if (!id || id.next > limit) {
-      if (limit !== bytes.length || bytes.length - offset >= 16 || elementAt(bytes, offset)) return null;
+      if (!cutAtEof(bytes, offset, limit)) return null;
       return { at: offset, sibling: false };
     }
     if (SEGMENT_LEVEL.has(id.id)) return { at: offset, sibling: true };
     const size = readSize(bytes, id.next);
     if (!size || size.next > limit) {
-      const width = vintByteLength(bytes[id.next] ?? 0);
-      const incomplete = width !== null && id.next + width > bytes.length;
-      const after = incomplete ? bytes.length : width === null ? id.next + 1 : id.next + width;
-      if (!tailCut(bytes, limit, after)) return null;
+      if (!cutAtEof(bytes, offset, limit)) return null;
       return { at: offset, sibling: false };
     }
     if (size.unknown) return null;
     const childEnd = size.next + size.value;
     if (childEnd < size.next) return null;
     if (childEnd > limit) {
-      if (!tailCut(bytes, limit, size.next)) return null;
+      if (!cutAtEof(bytes, offset, limit)) return null;
       return { at: offset, sibling: false };
     }
     offset = childEnd;
@@ -504,20 +487,22 @@ function addFinite(total: number, extra: number): number | null {
 }
 
 type Trak = { id: number; scale: number; ticks: number; samples: number; elstTicks: number };
-type RawTrun = { track: number; traf: number; samples: number; ticks: number; ptsEnd: number; needsTrex: boolean; tfdt: number | null };
+type RawTrun = { track: number; traf: number; samples: number; ticks: number; ptsStart: number; ptsEnd: number; needsTrex: boolean; tfdt: number | null };
+type ChunkRun = { first: number; per: number };
 type TrunAgg = { sum: number; minStart: number; maxEnd: number; timed: boolean };
 type SampleRun = { count: number; value: number };
 
 /**
  * mvhd.duration is not used. Each trak keeps its own id, timescale, and sample
  * table, in whatever child order the file uses. A second moov, a repeated
- * track id, or samples with no duration fail closed. A track's media timeline
- * is its stts ticks (extended by ctts when composition time runs further) plus
- * every trun. In one traf, truns continue from tfdt. The fragment span is the
- * latest end minus the earliest start. An edit list and a sidx subsegment sum
- * are included in the same maximum. mehd is included when it is longer.
+ * track id, or samples with no duration fail closed. Composition time is the
+ * span from the earliest presentation to the latest end, so a reorder delay
+ * is not added and a negative offset cannot hide a long presentation. In one
+ * traf, truns continue from tfdt, or from the track's previous end when tfdt
+ * is absent. sidx contributes that same kind of span. A traf with no tfdt
+ * together with any sidx fails closed. mehd is included when it is longer.
  */
-function compositionEnd(sttsRuns: SampleRun[], cttsRuns: SampleRun[]): number | null {
+function compositionSpan(sttsRuns: SampleRun[], cttsRuns: SampleRun[]): number | null {
   let sttsSamples = 0;
   let cttsSamples = 0;
   for (const run of sttsRuns) sttsSamples += run.count;
@@ -528,7 +513,9 @@ function compositionEnd(sttsRuns: SampleRun[], cttsRuns: SampleRun[]): number | 
   let sttsLeft = sttsRuns[0]?.count ?? 0;
   let cttsLeft = cttsRuns[0]?.count ?? 0;
   let dts = 0;
+  let start = 0;
   let end = 0;
+  let saw = false;
   let left = sttsSamples;
   while (left > 0) {
     if (sttsIndex >= sttsRuns.length || cttsIndex >= cttsRuns.length) return null;
@@ -538,9 +525,12 @@ function compositionEnd(sttsRuns: SampleRun[], cttsRuns: SampleRun[]): number | 
     const offset = cttsRuns[cttsIndex]?.value ?? 0;
     const advance = count * delta;
     if (!Number.isSafeInteger(advance)) return null;
-    const groupEnd = dts + advance + offset;
-    if (!Number.isFinite(groupEnd)) return null;
-    if (groupEnd > end) end = groupEnd;
+    const first = dts + offset;
+    const last = dts + advance + offset;
+    if (!Number.isFinite(first) || !Number.isFinite(last)) return null;
+    if (!saw || first < start) start = first;
+    if (!saw || last > end) end = last;
+    saw = true;
     const nextDts = dts + advance;
     if (!Number.isFinite(nextDts) || nextDts < 0) return null;
     dts = nextDts;
@@ -556,7 +546,25 @@ function compositionEnd(sttsRuns: SampleRun[], cttsRuns: SampleRun[]): number | 
       cttsLeft = cttsRuns[cttsIndex]?.count ?? 0;
     }
   }
-  return end < 0 ? 0 : end;
+  if (!saw) return 0;
+  const span = end - start;
+  if (!Number.isFinite(span) || span < 0) return null;
+  return span;
+}
+
+function chunkSampleTotal(runs: ChunkRun[], chunks: number): number | null {
+  if (runs.length === 0 || chunks <= 0 || runs[0]?.first !== 1) return null;
+  let total = 0;
+  for (let i = 0; i < runs.length; i++) {
+    const run = runs[i];
+    if (!run) return null;
+    const end = i + 1 < runs.length ? (runs[i + 1]?.first ?? 0) : chunks + 1;
+    if (end < run.first || end > chunks + 1) return null;
+    const next = addFinite(total, (end - run.first) * run.per);
+    if (next === null) return null;
+    total = next;
+  }
+  return total;
 }
 function readMp4(bytes: Uint8Array): { durationMs: number } | null {
   if (!FTYP(bytes)) return null;
@@ -565,8 +573,12 @@ function readMp4(bytes: Uint8Array): { durationMs: number } | null {
   let moovCount = 0;
   let movieScale = 0;
   let mehdTicks = 0;
-  let sidxMs = 0;
+  let sidxStart: number | null = null;
+  let sidxEnd = 0;
+  let sidxFound = false;
+  let untimedTraf = false;
   let trafSerial = 0;
+  const sidxAt = new Set<number>();
   const trexDuration = new Map<number, number>();
   const traks: Trak[] = [];
   const truns: RawTrun[] = [];
@@ -598,6 +610,9 @@ function readMp4(bytes: Uint8Array): { durationMs: number } | null {
     let sawElst = false;
     const sttsRuns: SampleRun[] = [];
     let cttsRuns: SampleRun[] | null = null;
+    const stscRuns: ChunkRun[] = [];
+    let chunkCount: number | null = null;
+    let sawChunkTable = false;
     const level = (from: number, to: number, depth: number): void => {
       walk(from, to, depth, (box) => {
         const version = bytes[box.start] ?? 0;
@@ -653,6 +668,35 @@ function readMp4(bytes: Uint8Array): { durationMs: number } | null {
             runs.push({ count: sampleCount, value: offset });
           }
           cttsRuns = runs;
+        } else if (box.type === "stsc") {
+          if (box.start + 8 > box.end) {
+            failed = true;
+            return;
+          }
+          const count = u32be(bytes, box.start + 4);
+          const payload = box.end - (box.start + 8);
+          if (payload < 0 || count > MAX_STTS_ENTRIES || count > Math.floor(payload / 12)) {
+            failed = true;
+            return;
+          }
+          let cursor = box.start + 8;
+          for (let i = 0; i < count; i++) {
+            stscRuns.push({ first: u32be(bytes, cursor), per: u32be(bytes, cursor + 4) });
+            cursor += 12;
+          }
+        } else if (box.type === "stco" || box.type === "co64") {
+          if (sawChunkTable || box.start + 8 > box.end) {
+            failed = true;
+            return;
+          }
+          const count = u32be(bytes, box.start + 4);
+          const width = box.type === "co64" ? 8 : 4;
+          if (count > Math.floor((box.end - (box.start + 8)) / width)) {
+            failed = true;
+            return;
+          }
+          sawChunkTable = true;
+          chunkCount = count;
         } else if (box.type === "stsz") {
           if (box.start + 12 > box.end) {
             failed = true;
@@ -685,12 +729,20 @@ function readMp4(bytes: Uint8Array): { durationMs: number } | null {
     level(start, end, 0);
     if (failed) return;
     if (cttsRuns) {
-      const composed = compositionEnd(sttsRuns, cttsRuns);
+      const composed = compositionSpan(sttsRuns, cttsRuns);
       if (composed === null) {
         failed = true;
         return;
       }
       if (composed > ticks) ticks = composed;
+    }
+    const single = sttsRuns.length === 1 ? sttsRuns[0] : null;
+    if (single && single.value === 1 && single.count > 0) {
+      const counted = chunkCount === null ? null : chunkSampleTotal(stscRuns, chunkCount);
+      if (counted === null || counted !== single.count) {
+        failed = true;
+        return;
+      }
     }
     if (stszSamples !== null && stszSamples !== samples) {
       failed = true;
@@ -750,59 +802,80 @@ function readMp4(bytes: Uint8Array): { durationMs: number } | null {
       failed = true;
       return;
     }
-    if (!hasDuration && !tfhdPresent) {
+    let sampleDuration = tfhdDuration;
+    let durationKnown = hasDuration || tfhdPresent;
+    if (!durationKnown) {
+      const trex = trexDuration.get(track);
+      if (trex !== undefined) {
+        sampleDuration = trex;
+        durationKnown = true;
+      }
+    }
+    if (!durationKnown) {
       if (hasOffset) {
         failed = true;
         return;
       }
-      truns.push({ track, traf, samples, ticks: 0, ptsEnd: 0, needsTrex: true, tfdt });
+      truns.push({ track, traf, samples, ticks: 0, ptsStart: 0, ptsEnd: 0, needsTrex: true, tfdt });
       return;
     }
     let ticks = 0;
+    let ptsStart = 0;
     let ptsEnd = 0;
+    let sawPts = false;
     let local = 0;
+    const notePts = (pts: number, end: number): boolean => {
+      if (!Number.isFinite(pts) || !Number.isFinite(end)) return false;
+      if (!sawPts) {
+        ptsStart = pts;
+        ptsEnd = end;
+        sawPts = true;
+        return true;
+      }
+      if (pts < ptsStart) ptsStart = pts;
+      if (end > ptsEnd) ptsEnd = end;
+      return true;
+    };
     if (stride === 0) {
-      const next = addFinite(0, samples * tfhdDuration);
-      if (next === null) {
+      const next = addFinite(0, samples * sampleDuration);
+      if (next === null || !notePts(0, next)) {
         failed = true;
         return;
       }
       ticks = next;
-      ptsEnd = next;
     } else {
       for (let i = 0; i < samples; i++) {
         let field = cursor;
-        let duration = tfhdDuration;
+        let duration = sampleDuration;
         if (hasDuration) {
           duration = u32be(bytes, field);
           field += 4;
         }
         if (hasSize) field += 4;
         if (hasFlags) field += 4;
-        const offset = hasOffset ? (version === 1 ? i32be(bytes, field) : u32be(bytes, field)) : 0;
+        const composition = hasOffset ? (version === 1 ? i32be(bytes, field) : u32be(bytes, field)) : 0;
         const next = addFinite(ticks, duration);
         const nextLocal = addFinite(local, duration);
-        const end = local + offset + duration;
-        if (next === null || nextLocal === null || !Number.isFinite(end)) {
+        const pts = local + composition;
+        const end = pts + duration;
+        if (next === null || nextLocal === null || !notePts(pts, end)) {
           failed = true;
           return;
         }
-        if (end > ptsEnd) ptsEnd = end;
         ticks = next;
         local = nextLocal;
         cursor += stride;
       }
     }
-    if (ptsEnd < ticks) ptsEnd = ticks;
     // A zero sample duration is still a placed fragment when tfdt says where it starts.
     if (ticks <= 0 && tfdt === null) {
       failed = true;
       return;
     }
-    truns.push({ track, traf, samples, ticks, ptsEnd, needsTrex: false, tfdt });
+    truns.push({ track, traf, samples, ticks, ptsStart, ptsEnd, needsTrex: false, tfdt });
   };
 
-  const readSidx = (box: Atom): number | null => {
+  const readSidx = (box: Atom): { start: number; end: number } | null => {
     if (box.start + 4 > box.end) return null;
     const version = bytes[box.start] ?? 0;
     if (version > 1) return null;
@@ -812,7 +885,16 @@ function readMp4(bytes: Uint8Array): { durationMs: number } | null {
     const count = ((bytes[box.start + header - 2] ?? 0) << 8) | (bytes[box.start + header - 1] ?? 0);
     const payload = box.end - (box.start + header);
     if (count > MAX_STTS_ENTRIES || count > Math.floor(payload / 12)) return null;
-    if (count > 0 && timescale === 0) return null;
+    if (count === 0) return { start: 0, end: 0 };
+    if (timescale === 0) return null;
+    let earliest = 0;
+    if (version === 1) {
+      const wide = u32be(bytes, box.start + 12) * 2 ** 32 + u32be(bytes, box.start + 16);
+      if (!Number.isFinite(wide) || wide < 0) return null;
+      earliest = wide;
+    } else {
+      earliest = u32be(bytes, box.start + 12);
+    }
     let ticks = 0;
     let cursor = box.start + header + 4;
     for (let i = 0; i < count; i++) {
@@ -821,8 +903,12 @@ function readMp4(bytes: Uint8Array): { durationMs: number } | null {
       ticks = next;
       cursor += 12;
     }
-    if (ticks === 0) return 0;
-    return ticksToMs(ticks, timescale);
+    const endTicks = addFinite(earliest, ticks);
+    if (endTicks === null) return null;
+    const start = ticksToMs(earliest, timescale);
+    const end = ticksToMs(endTicks, timescale);
+    if (start === null || end === null || end < start) return null;
+    return { start, end };
   };
 
   walk(0, bytes.length, 0, (box) => {
@@ -856,18 +942,6 @@ function readMp4(bytes: Uint8Array): { durationMs: number } | null {
           });
         }
       });
-    } else if (box.type === "sidx") {
-      const ms = readSidx(box);
-      if (ms === null) {
-        failed = true;
-        return;
-      }
-      const next = addFinite(sidxMs, ms);
-      if (next === null) {
-        failed = true;
-        return;
-      }
-      sidxMs = next;
     } else if (box.type === "moof") {
       walk(box.start, box.end, 1, (child) => {
         if (child.type !== "traf") return;
@@ -911,59 +985,89 @@ function readMp4(bytes: Uint8Array): { durationMs: number } | null {
             pending.push(inner);
           }
         });
+        if (pending.length > 0 && tfdt === null) untimedTraf = true;
         for (const trun of pending) readTrun(trun, track, tfhdPresent, tfhdDuration, tfdt, traf);
       });
     }
   });
 
+  const noteSidx = (box: Atom): void => {
+    if (sidxAt.has(box.start)) return;
+    sidxAt.add(box.start);
+    sidxFound = true;
+    const span = readSidx(box);
+    if (span === null) {
+      failed = true;
+      return;
+    }
+    if (sidxStart === null || span.start < sidxStart) sidxStart = span.start;
+    if (span.end > sidxEnd) sidxEnd = span.end;
+  };
+  const sidxParents = new Set(["moov", "trak", "edts", "mvex", "moof", "traf", "udta", "meta"]);
+  const findSidx = (start: number, end: number, depth: number): void => {
+    if (depth > 8 || failed) return;
+    let offset = start;
+    while (offset + 8 <= end) {
+      const box = readAtom(bytes, offset, end);
+      if (!box || box.end <= offset) break;
+      if (box.type === "sidx") noteSidx(box);
+      else if (sidxParents.has(box.type)) findSidx(box.start, box.end, depth + 1);
+      offset = box.end;
+    }
+  };
+  findSidx(0, bytes.length, 0);
+
   if (failed || moovCount > 1) return null;
+  if (untimedTraf && sidxFound) return null;
   const trackById = new Map<number, Trak>();
   for (const trak of traks) {
     if (trackById.has(trak.id)) return null;
     trackById.set(trak.id, trak);
   }
   const trunTicks = new Map<number, TrunAgg>();
+  const decodeEnd = new Map<number, number>();
   let currentTraf = -1;
-  let cursor: number | null = null;
+  let cursor = 0;
   for (const trun of truns) {
     if (trun.traf !== currentTraf) {
       currentTraf = trun.traf;
-      cursor = trun.tfdt;
+      cursor = trun.tfdt !== null ? trun.tfdt : (decodeEnd.get(trun.track) ?? 0);
     }
     let ticks = trun.ticks;
+    let ptsStart = trun.ptsStart;
     let ptsEnd = trun.ptsEnd;
     if (trun.needsTrex) {
       const fallback = trexDuration.get(trun.track) ?? 0;
       const next = addFinite(0, trun.samples * fallback);
-      if (next === null || (next <= 0 && cursor === null)) return null;
-      ticks = next !== null && next > 0 ? next : 0;
-      ptsEnd = Math.max(ptsEnd, ticks);
+      if (next === null || (next <= 0 && trun.tfdt === null && !decodeEnd.has(trun.track))) return null;
+      ticks = next > 0 ? next : 0;
+      ptsStart = 0;
+      ptsEnd = ticks;
     }
     const agg = trunTicks.get(trun.track) ?? { sum: 0, minStart: 0, maxEnd: 0, timed: false };
     const sum = addFinite(agg.sum, ticks);
     if (sum === null) return null;
+    const absStart = cursor + ptsStart;
+    const absEnd = cursor + ptsEnd;
+    if (!Number.isFinite(absStart) || !Number.isFinite(absEnd) || absEnd < absStart) return null;
     let minStart = agg.minStart;
     let maxEnd = agg.maxEnd;
-    let timed = agg.timed;
-    if (cursor !== null) {
-      const end = addFinite(cursor, Math.max(ptsEnd, ticks));
-      if (end === null) return null;
-      if (!timed) {
-        minStart = cursor;
-        maxEnd = end;
-        timed = true;
-      } else {
-        if (cursor < minStart) minStart = cursor;
-        if (end > maxEnd) maxEnd = end;
-      }
-      const advanced = addFinite(cursor, ticks);
-      if (advanced === null) return null;
-      cursor = advanced;
+    const timed = true;
+    if (!agg.timed) {
+      minStart = absStart;
+      maxEnd = absEnd;
+    } else {
+      if (absStart < minStart) minStart = absStart;
+      if (absEnd > maxEnd) maxEnd = absEnd;
     }
+    const advanced = addFinite(cursor, ticks);
+    if (advanced === null) return null;
+    cursor = advanced;
+    decodeEnd.set(trun.track, advanced);
     trunTicks.set(trun.track, { sum, minStart, maxEnd, timed });
   }
   let best = 0;
-  if (sidxMs > 0) best = sidxMs;
+  if (sidxStart !== null && sidxEnd > sidxStart) best = sidxEnd - sidxStart;
   if (mehdTicks > 0) {
     const ms = ticksToMs(mehdTicks, movieScale);
     if (ms === null || ms <= 0) return null;
