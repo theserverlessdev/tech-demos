@@ -589,8 +589,12 @@ async function mountTurnstile(): Promise<void> {
       theme: document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark",
     });
   };
-  if (typeof turnstile === "undefined") window.setTimeout(render, 400);
-  else render();
+  render();
+  const timer = window.setInterval(() => {
+    render();
+    if (widgetId) window.clearInterval(timer);
+  }, 200);
+  window.setTimeout(() => window.clearInterval(timer), 8_000);
 }
 
 async function judge(): Promise<void> {
