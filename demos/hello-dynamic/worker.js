@@ -1,7 +1,18 @@
+function escapeHtml(s) {
+  return s
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
 export default {
   async fetch(request) {
     const url = new URL(request.url);
-    const name = url.searchParams.get("name") ?? "world";
+    const raw = url.searchParams.get("name") ?? "world";
+    const name = escapeHtml(raw.slice(0, 64));
+    const loaderId = escapeHtml(request.headers.get("x-dynamic-worker") ?? "");
     const html = `<!doctype html>
 <html lang="en">
   <head>
@@ -25,12 +36,16 @@ export default {
       <h1>Hello, ${name}</h1>
       <p>The hub Worker Loader compiles this module at request time and serves it as an isolated Dynamic Worker. Nothing is stored.</p>
       <p>Try <code>?name=Ankur</code>.</p>
+      <p>Loader id: <code>${loaderId}</code></p>
+      <p><a href="https://tech-demos.theserverless.dev/">← All demos</a></p>
       <p><a href="https://theserverless.dev/contact">Contact</a></p>
     </main>
   </body>
 </html>`;
-    return new Response(html, {
-      headers: { "content-type": "text/html; charset=utf-8" },
-    });
+    const headers = {
+      "content-type": "text/html; charset=utf-8",
+    };
+    if (loaderId) headers["x-dynamic-worker"] = request.headers.get("x-dynamic-worker") ?? "";
+    return new Response(html, { headers });
   },
 };

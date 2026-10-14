@@ -9,6 +9,7 @@ import {
   listMessages,
   listRooms,
 } from "./db";
+import { fileResponseHeaders } from "./files";
 import { fanout } from "./room";
 import { requireSession, sanitizeName, sessionCookie, upsertSession } from "./session";
 
@@ -106,13 +107,7 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
     if (!row) throw new HttpError(404, "not_found", "No file with that id.");
     const object = await env.FILES.get(row.r2_key);
     if (!object) throw new HttpError(404, "not_found", "The file is missing from R2.");
-    const headers = new Headers();
-    headers.set("content-type", row.content_type);
-    headers.set("content-length", String(row.size));
-    headers.set("cache-control", "private, max-age=3600");
-    headers.set("content-disposition", `inline; filename="${row.filename.replaceAll('"', "")}"`);
-    headers.set("x-content-type-options", "nosniff");
-    return new Response(object.body, { headers });
+    return new Response(object.body, { headers: fileResponseHeaders(row) });
   }
 
   const roomPath = roomFromPath(path);

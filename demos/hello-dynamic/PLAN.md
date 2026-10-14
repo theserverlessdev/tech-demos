@@ -6,7 +6,7 @@ Prove the hub can load and serve a demo via Dynamic Workers.
 
 ## Single-user MVP
 
-- In: HTML hello page loaded through the hub loader
+- In: HTML hello page loaded through the hub loader; `?name=` is escaped and capped
 - Out: auth, persistence, AI
 
 ## Tasks

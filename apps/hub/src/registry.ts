@@ -1,214 +1,82 @@
-import type { DemoMeta } from "@tech-demos/shared";
+import type { DemoKind, DemoMeta } from "@tech-demos/shared";
+import { HUB_HOST, redirectSource } from "@tech-demos/shared";
+import helloDynamicSource from "../../../demos/hello-dynamic/worker.js" with { type: "text" };
 
 export type DemoEntry = DemoMeta & {
   /** Raw Worker module source loaded into a Dynamic Worker (plain JS) */
   source: string;
+  kind: DemoKind;
 };
 
-const helloDynamicSource = `export default {
-  async fetch(request) {
-    const url = new URL(request.url);
-    const name = url.searchParams.get("name") ?? "world";
-    const html = \`<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>hello-dynamic</title>
-    <style>
-      :root { color-scheme: dark; }
-      body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #0e0e11; color: #c9c9c4; font-family: ui-sans-serif, system-ui, sans-serif; }
-      main { margin: 1rem; padding: 1.5rem; border: 1px solid rgba(255,255,255,0.08); border-radius: 16px; background: #17171b; max-width: 34rem; }
-      h1 { margin: 0.35rem 0 0.75rem; color: #e8e8e4; font-size: 1.75rem; letter-spacing: -0.03em; }
-      .k { margin: 0; font-family: ui-monospace, monospace; font-size: 0.68rem; letter-spacing: 0.08em; text-transform: uppercase; color: #c2410c; }
-      p { line-height: 1.5; overflow-wrap: anywhere; }
-      code { color: #e2622e; }
-      a { color: #e8e8e4; }
-    </style>
-  </head>
-  <body>
-    <main>
-      <p class="k">What this shows</p>
-      <h1>Hello, \${name}</h1>
-      <p>The hub Worker Loader compiles this module at request time and serves it as an isolated Dynamic Worker. Nothing is stored.</p>
-      <p>Try <code>?name=Ankur</code>.</p>
-      <p><a href="https://theserverless.dev/contact">Contact</a></p>
-    </main>
-  </body>
-</html>\`;
-    return new Response(html, {
-      headers: { "content-type": "text/html; charset=utf-8" },
-    });
-  },
-};
-`;
+function standaloneOrigin(slug: string): string {
+  return `https://${slug}.${HUB_HOST}`;
+}
 
-// cloudflare-os is a standalone Worker (Durable Objects, Workers AI, its own Worker Loader). A zone route
-// sends /demos/cloudflare-os* to it before the hub sees the request. This source only runs if that route
-// is missing, and it sends the visitor to the demo subdomain.
-const cloudflareOsFallbackSource = `export default {
-  fetch(request) {
-    const url = new URL(request.url);
-    const rest = url.pathname.replace(/^\\/demos\\/cloudflare-os/, "") || "/";
-    return Response.redirect("https://cloudflare-os.tech-demos.theserverless.dev" + rest + url.search, 302);
-  },
-};
-`;
+function standalone(slug: string, origin = standaloneOrigin(slug)): string {
+  return redirectSource(slug, origin);
+}
 
-// apollo-desk is a standalone Worker (Agents SDK Durable Object, Workers AI). Same pattern as cloudflare-os:
-// the zone route wins, and this source only redirects if that route is missing.
-const apolloDeskFallbackSource = `export default {
-  fetch(request) {
-    const url = new URL(request.url);
-    const rest = url.pathname.replace(/^\\/demos\\/apollo-desk/, "") || "/";
-    return Response.redirect("https://apollo-desk.tech-demos.theserverless.dev" + rest + url.search, 302);
-  },
-};
-`;
+// cloudflare-os is a standalone Worker (ASSETS, LOADER, AI, WORKSPACES, METER, AGENT_LIMIT, CODE_LIMIT).
+// A zone route sends /demos/cloudflare-os* to it before the hub sees the request. This source only runs
+// if that route is missing, and it sends the visitor to the demo subdomain.
+const cloudflareOsFallbackSource = standalone("cloudflare-os");
 
-// temp-email is a standalone Worker (Email Worker, D1, cron). Its home is email.lomvic.com, because
-// the addresses live on that throwaway mail zone. The TSD hub route sends /demos/temp-email* to the Worker, which redirects there.
-// This source only runs if that route is missing.
-const tempEmailFallbackSource = `export default {
-  fetch(request) {
-    const url = new URL(request.url);
-    const rest = url.pathname.replace(/^\\/demos\\/temp-email/, "") || "/";
-    return Response.redirect("https://email.lomvic.com" + rest + url.search, 302);
-  },
-};
-`;
+// apollo-desk is a standalone Worker (ASSETS, AI, Apollo, METER, TURN_LIMIT). Same pattern as
+// cloudflare-os: the zone route wins, and this source only redirects if that route is missing.
+const apolloDeskFallbackSource = standalone("apollo-desk");
 
-// resolve-hq is a standalone Worker (D1, R2, Queues, Workers AI). Same pattern as apollo-desk:
-// the zone route wins, and this source only redirects if that route is missing.
-const resolveHqFallbackSource = `export default {
-  fetch(request) {
-    const url = new URL(request.url);
-    const rest = url.pathname.replace(/^\\/demos\\/resolve-hq/, "") || "/";
-    return Response.redirect("https://resolve-hq.tech-demos.theserverless.dev" + rest + url.search, 302);
-  },
-};
-`;
+// temp-email is a standalone Worker (ASSETS, DB, ATTACHMENTS, CREATE_LIMIT, READ_LIMIT, Email, cron, Turnstile).
+// Its home is email.lomvic.com, because the addresses live on that throwaway mail zone. The TSD hub
+// route sends /demos/temp-email* to the Worker, which redirects there. This source only runs if that route is missing.
+const tempEmailFallbackSource = standalone("temp-email", "https://email.lomvic.com");
 
-// personal-agent is a standalone Worker (Agents SDK Durable Object, R2, Workers AI).
+// resolve-hq is a standalone Worker (ASSETS, AI, DB, ATTACHMENTS, INBOUND queue, WRITE_LIMIT). Same pattern
+// as apollo-desk: the zone route wins, and this source only redirects if that route is missing.
+const resolveHqFallbackSource = standalone("resolve-hq");
+
+// personal-agent is a standalone Worker (ASSETS, AI, NOTES, ASSISTANT, CHAT_LIMIT, RESEARCH_LIMIT, READ_LIMIT, Turnstile).
 // The zone route wins, and this source only redirects if that route is missing.
-const personalAgentFallbackSource = `export default {
-  fetch(request) {
-    const url = new URL(request.url);
-    const rest = url.pathname.replace(/^\\/demos\\/personal-agent/, "") || "/";
-    return Response.redirect("https://personal-agent.tech-demos.theserverless.dev" + rest + url.search, 302);
-  },
-};
-`;
+const personalAgentFallbackSource = standalone("personal-agent");
 
-// partyserver is a standalone Worker (hibernating PartyServer Durable Object + Yjs). Same pattern as resolve-hq:
-// the zone route wins, and this source only redirects if that route is missing.
-const partyserverFallbackSource = `export default {
-  fetch(request) {
-    const url = new URL(request.url);
-    const rest = url.pathname.replace(/^\\/demos\\/partyserver/, "") || "/";
-    return Response.redirect("https://partyserver.tech-demos.theserverless.dev" + rest + url.search, 302);
-  },
-};
-`;
+// partyserver is a standalone Worker (ASSETS, BoardRoom, CREATE_LIMIT, CONNECT_LIMIT, Turnstile). Same
+// pattern as resolve-hq: the zone route wins, and this source only redirects if that route is missing.
+const partyserverFallbackSource = standalone("partyserver");
 
-// feedlog is a standalone Worker (D1, R2, Vectorize, Workers AI). Same pattern as resolve-hq:
-// the zone route wins, and this source only redirects if that route is missing.
-const feedlogFallbackSource = `export default {
-  fetch(request) {
-    const url = new URL(request.url);
-    const rest = url.pathname.replace(/^\\/demos\\/feedlog/, "") || "/";
-    return Response.redirect("https://feedlog.tech-demos.theserverless.dev" + rest + url.search, 302);
-  },
-};
-`;
-
-// company-brain is a standalone Worker (Agents SDK Durable Object, Workers AI). Same pattern as resolve-hq:
-// the zone route wins, and this source only redirects if that route is missing.
-const companyBrainFallbackSource = `export default {
-  fetch(request) {
-    const url = new URL(request.url);
-    const rest = url.pathname.replace(/^\\/demos\\/company-brain/, "") || "/";
-    return Response.redirect("https://company-brain.tech-demos.theserverless.dev" + rest + url.search, 302);
-  },
-};
-`;
-
-// clef-gate is a standalone Worker (Agents SDK Durable Object, Workers AI, D1). Same pattern as resolve-hq:
-// the zone route wins, and this source only redirects if that route is missing.
-const clefGateFallbackSource = `export default {
-  fetch(request) {
-    const url = new URL(request.url);
-    const rest = url.pathname.replace(/^\\/demos\\/clef-gate/, "") || "/";
-    return Response.redirect("https://clef-gate.tech-demos.theserverless.dev" + rest + url.search, 302);
-  },
-};
-`;
-
-// tanbase is a standalone Worker (D1, Board Durable Object, R2, Workflows, Workers AI).
-// The zone route wins; this source only redirects if that route is missing.
-const tanbaseFallbackSource = `export default {
-  fetch(request) {
-    const url = new URL(request.url);
-    const rest = url.pathname.replace(/^\\/demos\\/tanbase/, "") || "/";
-    return Response.redirect("https://tanbase.tech-demos.theserverless.dev" + rest + url.search, 302);
-  },
-};
-`;
-
-// actor-lab is a standalone Worker (SQLite Durable Objects, Workers AI, hibernatable WebSockets).
+// feedlog is a standalone Worker (ASSETS, AI, DB, IMAGES, VECTORS, POST_LIMIT, VOTE_LIMIT, AI_LIMIT, Turnstile).
 // Same pattern as resolve-hq: the zone route wins, and this source only redirects if that route is missing.
-const actorLabFallbackSource = `export default {
-  fetch(request) {
-    const url = new URL(request.url);
-    const rest = url.pathname.replace(/^\\/demos\\/actor-lab/, "") || "/";
-    return Response.redirect("https://actor-lab.tech-demos.theserverless.dev" + rest + url.search, 302);
-  },
-};
-`;
+const feedlogFallbackSource = standalone("feedlog");
 
-// repo-per-agent is a standalone Worker (Artifacts, Agents SDK, D1). Same pattern as resolve-hq:
-// the zone route wins, and this source only redirects if that route is missing.
-const repoPerAgentFallbackSource = `export default {
-  fetch(request) {
-    const url = new URL(request.url);
-    const rest = url.pathname.replace(/^\\/demos\\/repo-per-agent/, "") || "/";
-    return Response.redirect("https://repo-per-agent.tech-demos.theserverless.dev" + rest + url.search, 302);
-  },
-};
-`;
+// company-brain is a standalone Worker (ASSETS, AI, ORG, CREATE_LIMIT, CHAT_LIMIT, WRITE_LIMIT, READ_LIMIT, Turnstile).
+// Same pattern as resolve-hq: the zone route wins, and this source only redirects if that route is missing.
+const companyBrainFallbackSource = standalone("company-brain");
 
-// memory-repo is a standalone Worker (Artifacts, Agents SDK, D1, Workers AI). Same pattern as repo-per-agent:
-// the zone route wins, and this source only redirects if that route is missing.
-const memoryRepoFallbackSource = `export default {
-  fetch(request) {
-    const url = new URL(request.url);
-    const rest = url.pathname.replace(/^\\/demos\\/memory-repo/, "") || "/";
-    return Response.redirect("https://memory-repo.tech-demos.theserverless.dev" + rest + url.search, 302);
-  },
-};
-`;
+// clef-gate is a standalone Worker (ASSETS, AI, DB, GATE, CHAT_LIMIT, SESSION_LIMIT, cron, Turnstile). Same
+// pattern as resolve-hq: the zone route wins, and this source only redirects if that route is missing.
+const clefGateFallbackSource = standalone("clef-gate");
 
-// edgechat is a standalone Worker (Durable Objects, D1, KV, R2). Same pattern as resolve-hq:
-// the zone route wins, and this source only redirects if that route is missing.
-const edgechatFallbackSource = `export default {
-  fetch(request) {
-    const url = new URL(request.url);
-    const rest = url.pathname.replace(/^\\/demos\\/edgechat/, "") || "/";
-    return Response.redirect("https://edgechat.tech-demos.theserverless.dev" + rest + url.search, 302);
-  },
-};
-`;
+// tanbase is a standalone Worker (ASSETS, AI, DB, FILES, BOARD, SPLIT_TASK, WRITE_LIMIT, UPLOAD_LIMIT, AI_LIMIT, cron, Turnstile).
+// The zone route wins; this source only redirects if that route is missing.
+const tanbaseFallbackSource = standalone("tanbase");
 
-// goodvibes is a standalone Worker (Durable Objects + Static Assets). Same pattern as resolve-hq:
-// the zone route wins, and this source only redirects if that route is missing.
-const goodvibesFallbackSource = `export default {
-  fetch(request) {
-    const url = new URL(request.url);
-    const rest = url.pathname.replace(/^\\/demos\\/goodvibes/, "") || "/";
-    return Response.redirect("https://goodvibes.tech-demos.theserverless.dev" + rest + url.search, 302);
-  },
-};
-`;
+// actor-lab is a standalone Worker (ASSETS, AI, RACE, CHAT, RACE_LIMIT, CHAT_LIMIT, AI_LIMIT, Turnstile).
+// Same pattern as resolve-hq: the zone route wins, and this source only redirects if that route is missing.
+const actorLabFallbackSource = standalone("actor-lab");
+
+// repo-per-agent is a standalone Worker (ASSETS, AI, ARTIFACTS, DB, TaskAgent, CREATE_LIMIT, RUN_LIMIT, TOKEN_LIMIT, READ_LIMIT, cron, Turnstile).
+// Same pattern as resolve-hq: the zone route wins, and this source only redirects if that route is missing.
+const repoPerAgentFallbackSource = standalone("repo-per-agent");
+
+// memory-repo is a standalone Worker (ASSETS, AI, ARTIFACTS, DB, ChatAgent, MemoryAgent, CHAT_LIMIT, DREAM_LIMIT, CREATE_LIMIT, READ_LIMIT, cron, Turnstile).
+// Same pattern as repo-per-agent: the zone route wins, and this source only redirects if that route is missing.
+const memoryRepoFallbackSource = standalone("memory-repo");
+
+// edgechat is a standalone Worker (ASSETS, ROOM, DB, SESSIONS, FILES, WRITE_LIMIT). Same pattern as
+// resolve-hq: the zone route wins, and this source only redirects if that route is missing.
+const edgechatFallbackSource = standalone("edgechat");
+
+// goodvibes is a standalone Worker (ASSETS, ROOM, CREATE_LIMIT). Same pattern as resolve-hq: the zone
+// route wins, and this source only redirects if that route is missing.
+const goodvibesFallbackSource = standalone("goodvibes");
 
 export const demos: DemoEntry[] = [
   {
@@ -230,6 +98,7 @@ export const demos: DemoEntry[] = [
       "Any room that should hibernate when the last player leaves",
     ],
     tags: ["durable-objects", "websockets", "threejs", "game"],
+    kind: "standalone",
     source: goodvibesFallbackSource,
   },
   {
@@ -240,7 +109,7 @@ export const demos: DemoEntry[] = [
       "One ChatRoom Durable Object per room name fans out hibernating WebSockets. D1 keeps the transcript across refresh, KV stores the display name, and R2 holds an attachment the message can link to.",
     capabilities: [
       "Join the same room in two tabs and watch a message arrive in both",
-      "Refresh and still see the transcript stored in D1",
+      "Refresh and still see the last 80 messages stored in D1",
       "Set a display name that is kept in KV",
       "Attach a file; the message links to the R2 object, and images preview",
     ],
@@ -250,6 +119,7 @@ export const demos: DemoEntry[] = [
       "A support room that hibernates when nobody is connected",
     ],
     tags: ["durable-objects", "d1", "kv", "r2", "websockets"],
+    kind: "standalone",
     source: edgechatFallbackSource,
   },
   {
@@ -270,6 +140,7 @@ export const demos: DemoEntry[] = [
       "A reply desk that still fills a draft when the model is down",
     ],
     tags: ["d1", "r2", "queues", "workers-ai"],
+    kind: "standalone",
     source: resolveHqFallbackSource,
   },
   {
@@ -290,7 +161,8 @@ export const demos: DemoEntry[] = [
       "An agent that waits on the next message instead of sharing one API secret",
       "A self-hosted mail zone with the same Email Worker, D1, and R2 layout",
     ],
-    tags: ["email-workers", "email-routing", "d1", "cron", "agents"],
+    tags: ["email-workers", "email-routing", "d1", "cron", "agents", "r2", "turnstile"],
+    kind: "standalone",
     source: tempEmailFallbackSource,
   },
   {
@@ -298,11 +170,11 @@ export const demos: DemoEntry[] = [
     title: "Apollo desk",
     description: "A browser desk that talks to one Agents SDK brain and keeps the conversation.",
     demonstrates:
-      "One Agents SDK Durable Object per desk runs the voice turn — speech to text, a tool loop, then speech — and stores SQLite memory with vector recall, schedules, and a confirmation gate. The desk is an MCP server the brain calls on the same WebSocket.",
+      "One Agents SDK Durable Object per desk runs the voice turn — speech to text, a tool loop, then speech — and stores SQLite memory with vector recall, schedules, and a confirmation gate. The desk is an MCP-style JSON-RPC tool server the brain calls on the same WebSocket.",
     capabilities: [
       "Hold to talk, type, or tap a suggested turn",
       "Save a fact, a list item, or a timer, then refresh and see them return",
-      "Ask it to change the volume; the brain calls the MCP server in the desk",
+      "Ask it to change the volume; the brain calls an MCP-style JSON-RPC tool server in the desk",
       "Ask it to forget everything and confirm or cancel within 30 seconds",
       "Open the console for the SQLite transcript, vector scores, and the turn trace",
     ],
@@ -312,12 +184,13 @@ export const demos: DemoEntry[] = [
       "An agent that asks before it runs an unsafe tool",
     ],
     tags: ["agents-sdk", "durable-objects", "workers-ai", "voice", "mcp"],
+    kind: "standalone",
     source: apolloDeskFallbackSource,
   },
   {
     slug: "cloudflare-os",
     title: "Cloudflare OS, sliced",
-    description: "An agent workspace where each gadget runs in its own Dynamic Worker.",
+    description: "An agent workspace where each gadget is a sandboxed Durable Object facet with its own SQLite",
     demonstrates:
       "Gadgets run as Durable Object facets inside Dynamic Workers, each with private SQLite. The sandboxed UI calls the facet over Cap'n Web, and a gatekeeper holds an outside read until a person approves it.",
     capabilities: [
@@ -332,7 +205,8 @@ export const demos: DemoEntry[] = [
       "An agent that can edit a gadget but cannot fetch until someone approves",
       "A host for small multiplayer apps that share one workspace link",
     ],
-    tags: ["dynamic-workers", "do-facets", "capnweb", "workers-ai", "agents"],
+    tags: ["dynamic-workers", "do-facets", "capnweb", "workers-ai", "agents", "durable-objects"],
+    kind: "standalone",
     source: cloudflareOsFallbackSource,
   },
   {
@@ -352,6 +226,7 @@ export const demos: DemoEntry[] = [
       "A check that the loader path works before you add bindings",
     ],
     tags: ["dynamic-workers", "starter"],
+    kind: "loader",
     source: helloDynamicSource,
   },
   {
@@ -372,7 +247,8 @@ export const demos: DemoEntry[] = [
       "A research sidebar that only fetches an allowlist",
       "A demo tenant that deletes its own storage on a timer",
     ],
-    tags: ["agents-sdk", "durable-objects", "r2", "workers-ai"],
+    tags: ["agents-sdk", "durable-objects", "r2", "workers-ai", "turnstile"],
+    kind: "standalone",
     source: personalAgentFallbackSource,
   },
   {
@@ -385,14 +261,15 @@ export const demos: DemoEntry[] = [
       "Open a room after the Turnstile check and send the link",
       "Draw and watch the stroke sync to another tab",
       "See live cursors that disappear when the socket closes",
-      "Hit the caps: 8 people, 240 strokes, and a 256 KB snapshot",
+      "Hit the caps: 8 connections, 240 strokes, and a 256 KB snapshot",
     ],
     useCases: [
       "A collaborative whiteboard that deletes itself",
       "Live annotation on a shared page",
       "A classroom sketch room with a hard cap on size and time",
     ],
-    tags: ["partyserver", "yjs", "durable-objects", "websockets"],
+    tags: ["partyserver", "yjs", "durable-objects", "websockets", "turnstile"],
+    kind: "standalone",
     source: partyserverFallbackSource,
   },
   {
@@ -405,7 +282,7 @@ export const demos: DemoEntry[] = [
       "Read the seeded ideas, vote once from this browser, and open the roadmap and changelog",
       "Write a post and watch similar posts appear as you type",
       "Attach a JPEG, PNG, GIF, or WebP under 1.5 MB",
-      "See the lexical label when Vectorize is not available",
+      "See the 'matched on words' note when Vectorize is unavailable",
     ],
     useCases: [
       "A public roadmap with one vote per browser",
@@ -413,6 +290,7 @@ export const demos: DemoEntry[] = [
       "A request form that warns when a near-duplicate already exists",
     ],
     tags: ["d1", "r2", "vectorize", "workers-ai", "turnstile"],
+    kind: "standalone",
     source: feedlogFallbackSource,
   },
   {
@@ -425,7 +303,7 @@ export const demos: DemoEntry[] = [
       "Create a private org seeded with a few Northline facts and decisions",
       "Ask a question and see cited fact or decision ids, or a refusal when nothing matches",
       "Add a fact or decision in the memory pane",
-      "Ingest a row with the token shown once at creation",
+      "Ingest a row with the ingest token returned at creation",
     ],
     useCases: [
       "An onboarding bot that only quotes the rows you loaded",
@@ -433,6 +311,7 @@ export const demos: DemoEntry[] = [
       "A sandbox for the “I don't know” path before you add connectors",
     ],
     tags: ["agents-sdk", "durable-objects", "workers-ai", "turnstile"],
+    kind: "standalone",
     source: companyBrainFallbackSource,
   },
   {
@@ -440,11 +319,11 @@ export const demos: DemoEntry[] = [
     title: "Clef Gate",
     description: "A desk where every sandboxed tool call stops for a Clef decision.",
     demonstrates:
-      "Every tool call is a choice from Clef or Clef-flash: allow, deny, or ask-human, with probabilities. Ask-human and low-confidence calls wait in the session Durable Object until you approve or deny. The five tools are fakes — nothing is sent, fetched, or deleted — and each verdict is written to D1.",
+      "Every tool call is a choice from Clef or Clef-flash: allow, deny, or ask-human, with probabilities. Ask-human and low-confidence calls wait in the session Durable Object until you approve or deny, or ten minutes pass. The five tools are fakes — nothing is sent, fetched, or deleted — and each verdict is written to D1.",
     capabilities: [
       "Ask the desk to use one of the five sandboxed tools",
       "Read the verdict and the probabilities",
-      "Approve or deny a paused call; it resumes in the same Durable Object",
+      "Approve or deny a paused call; it resumes in the same Durable Object, or ten minutes pass",
       "Open the audit list for the tool, the decision, and the model",
       "See that send, delete, and SQL tools only describe what they would have done",
     ],
@@ -453,7 +332,8 @@ export const demos: DemoEntry[] = [
       "An audit log of model verdicts before a real side effect exists",
       "A gate you can later put in front of mail, SQL, or deletes",
     ],
-    tags: ["workers-ai", "agents-sdk", "d1", "durable-objects"],
+    tags: ["workers-ai", "agents-sdk", "d1", "durable-objects", "turnstile"],
+    kind: "standalone",
     source: clefGateFallbackSource,
   },
   {
@@ -473,7 +353,8 @@ export const demos: DemoEntry[] = [
       "Live card updates across every open tab",
       "A “split this task” action backed by a Workflow",
     ],
-    tags: ["d1", "durable-objects", "r2", "workflows", "workers-ai"],
+    tags: ["d1", "durable-objects", "r2", "workflows", "workers-ai", "turnstile"],
+    kind: "standalone",
     source: tanbaseFallbackSource,
   },
   {
@@ -483,7 +364,7 @@ export const demos: DemoEntry[] = [
     demonstrates:
       "A SQLite-backed actor persists fields through a state proxy, and mailbox handlers run one at a time. An await on Workers AI opens the input gate, so interleaved updates lose increments. The chat actor hibernates; a simulated eviction drops isolate memory and reloads the transcript from SQLite.",
     capabilities: [
-      "Arm a race after Turnstile and fire Interleaved: the counter ends below the number of updates",
+      "Arm a race after Turnstile and fire Interleaved: the counter usually ends below the number of updates",
       "Fire Serialized mailbox: the counter reaches the number of updates",
       "Chat in a room over a hibernating WebSocket",
       "Simulate evict: the scratch note disappears and the SQLite transcript remains",
@@ -494,6 +375,7 @@ export const demos: DemoEntry[] = [
       "A bench for teaching the Durable Object input gate",
     ],
     tags: ["durable-objects", "workers-ai", "websockets", "turnstile"],
+    kind: "standalone",
     source: actorLabFallbackSource,
   },
   {
@@ -507,14 +389,15 @@ export const demos: DemoEntry[] = [
       "Run the agent and, when the model changes a file, see the commit",
       "Read the commit log and the unified diff",
       "Mint a ten-minute read-only git clone token",
-      "Watch an unchanged model response commit nothing",
+      "An unchanged model response is reported as an error and commits nothing",
     ],
     useCases: [
       "A coding agent with one repo per ticket",
       "A review page that shows the diff before anyone clones",
       "A scratch repo that a cron deletes with its log rows",
     ],
-    tags: ["artifacts", "agents-sdk", "workers-ai", "d1", "turnstile"],
+    tags: ["artifacts", "agents-sdk", "workers-ai", "d1", "turnstile", "durable-objects"],
+    kind: "standalone",
     source: repoPerAgentFallbackSource,
   },
   {
@@ -522,7 +405,7 @@ export const demos: DemoEntry[] = [
     title: "Memory repo",
     description: "An agent's memory is markdown in a git repo. Facts and dreams are commits you can diff.",
     demonstrates:
-      "One ChatAgent Durable Object per thread recalls an FTS5 index, then Workers AI replies. One MemoryAgent per anonymous visitor owns an Artifacts git repo of markdown. Every memory write is a commit, and a dream alarm consolidates the files into another commit. If the model output is unusable, nothing is committed. A cron deletes the repo and rows 24 hours after the last message.",
+      "One ChatAgent Durable Object per visitor recalls an FTS5 index, then Workers AI replies. One MemoryAgent per visitor owns an Artifacts git repo of markdown. Every memory write is a commit, and a dream alarm consolidates the files into another commit. If the model output is unusable, nothing is committed. The repo and rows are deleted 24 h after the last activity.",
     capabilities: [
       "Pass Turnstile and open a memory repo for this browser",
       "State a name, preference, or project and see the commit",
@@ -531,11 +414,12 @@ export const demos: DemoEntry[] = [
       "Run Dream now and see the steps, or why nothing was committed",
     ],
     useCases: [
-      "A personal agent whose memory you can clone and audit",
+      "A personal agent with memory that lives in a git repo",
       "A consolidation job that rewrites notes and leaves a diff",
       "A demo tenant whose git repo deletes itself on a timer",
     ],
-    tags: ["artifacts", "agents-sdk", "workers-ai", "d1", "turnstile"],
+    tags: ["artifacts", "agents-sdk", "workers-ai", "d1", "turnstile", "durable-objects"],
+    kind: "standalone",
     source: memoryRepoFallbackSource,
   },
 ];
