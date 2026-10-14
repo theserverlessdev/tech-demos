@@ -84,7 +84,7 @@ Per-visitor race actors are named by an `HttpOnly` cookie. Chat actors are named
 
 - Two Durable Objects per active visitor/room, SQLite writes of a counter and a short transcript.
 - Race N ≤ 6, `max_tokens` 8 on the race model call, chat replies capped.
-- `RACE_LIMIT` / `CHAT_LIMIT` / `AI_LIMIT` at 30/min per IP. GET `/api/race/result` and GET `/api/rooms/:code` are limited. WebSocket say/scratch frames use `CHAT_LIMIT`. Model calls consume `AI_LIMIT`. More than 20 frames in 10s closes the socket (1008).
+- `RACE_LIMIT` / `CHAT_LIMIT` / `AI_LIMIT` at 30/min per IP. GET `/api/race/result` and GET `/api/rooms/:code` are limited. WebSocket say uses `CHAT_LIMIT`. Scratch uses a per-socket cap (12/10s) and is not charged to `CHAT_LIMIT`. Model calls consume `AI_LIMIT`. More than 20 non-scratch frames in 10s closes the socket (1008).
 - Turnstile in front of every race arm (`race-arm`) and every AI unlock (`chat-unlock`).
 - No Containers, Browser Rendering, Vectorize, or Workers for Platforms.
 
@@ -93,7 +93,7 @@ Per-visitor race actors are named by an `HttpOnly` cookie. Chat actors are named
 - `bun run typecheck`
 - `bun test test/guards.test.ts`
 - `bun run dev` uses `wrangler.dev.jsonc` (no Workers AI binding) so it boots without a Cloudflare login. `bun run dev:ai` uses the real binding after `wrangler login`. Deploy uses `wrangler.jsonc`.
-- `scripts/smoke.ts` against `wrangler dev`: health, Turnstile rejection, interleaved loss, serialized counter, room say, reserved name, websocket fan-out, frame flood, scratch cleared on evict, minted-cookie 404, deep-path 404.
+- `scripts/smoke.ts` against `wrangler dev`: health, Turnstile rejection, interleaved loss, serialized counter, room say, reserved name, websocket fan-out, frame flood, rapid scratch without 1008, scratch cleared on evict, actor name still Actor after evict, minted-cookie 404, deep-path 404.
 - Browser pass of both modes, then chat, scratch, simulate evict. Screenshot and short video.
 
 ## Deferred

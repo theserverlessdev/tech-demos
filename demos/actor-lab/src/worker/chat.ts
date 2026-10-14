@@ -1,4 +1,4 @@
-import { admitFrame, admitSay, isReservedName, livePeers, SCRATCH_COALESCE_MS } from "../shared/guards";
+import { admitFrame, admitSay, admitScratch, clipSpeakerName, isReservedName, livePeers, SCRATCH_COALESCE_MS } from "../shared/guards";
 import { actorReply } from "./ai";
 import { Actor, isRecord } from "./actor";
 import type { RpcResult } from "./race";
@@ -14,7 +14,7 @@ type ChatState = {
   says: number[];
 };
 
-type SocketMeta = { name: string; ip: string; frames: number[] };
+type SocketMeta = { name: string; ip: string; frames: number[]; scratchAt: number[] };
 
 function fail(status: number, code: string, message: string): RpcResult<never> {
   return { ok: false, status, code, message };
@@ -48,7 +48,7 @@ function clipMessage(message: ChatMessage): ChatMessage {
   return {
     id: message.id.slice(0, 80),
     at: message.at,
-    name: cleanName(message.name),
+    name: clipSpeakerName(message.role, cleanName(message.name)),
     role: message.role,
     text: cleanText(message.text, MESSAGE_MAX),
     source: message.source === "workers-ai" || message.source === "fallback" ? message.source : "",
@@ -166,7 +166,7 @@ export class ChatActor extends Actor<ChatState> {
     const client = pair[0];
     const server = pair[1];
     this.ctx.acceptWebSocket(server);
-    server.serializeAttachment({ name, ip, frames: [] } satisfies SocketMeta);
+    server.serializeAttachment({ name, ip, frames: [], scratchAt: [] } satisfies SocketMeta);
     // Hibernated actors stay asleep for a raw ping. JSON still wakes onMessage.
     this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
     const peers = this.livePeers();
@@ -177,17 +177,6 @@ export class ChatActor extends Actor<ChatState> {
 
   async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer): Promise<void> {
     const meta = attachment(ws);
-    const admitted = admitFrame(meta.frames, Date.now());
-    meta.frames = admitted.frames;
-    ws.serializeAttachment(meta);
-    if (!admitted.ok) {
-      try {
-        ws.close(1008, "Too many frames");
-      } catch {
-        // Already closing.
-      }
-      return;
-    }
     const text = typeof raw === "string" ? raw : new TextDecoder().decode(raw);
     if (text === "ping") return;
     if (text.length > 8_000) {
@@ -206,11 +195,22 @@ export class ChatActor extends Actor<ChatState> {
       return;
     }
     if (parsed.type === "scratch") {
-      if (!(await this.#limitIp(meta.ip, "chat"))) {
-        this.#send(ws, { type: "error", code: "rate_limited", message: "Too many chat. Wait a minute." });
-        return;
-      }
+      const scratch = admitScratch(meta.scratchAt, Date.now());
+      meta.scratchAt = scratch.frames;
+      ws.serializeAttachment(meta);
+      if (!scratch.ok) return;
       this.#queueScratch(cleanText(parsed.text, SCRATCH_MAX));
+      return;
+    }
+    const admitted = admitFrame(meta.frames, Date.now());
+    meta.frames = admitted.frames;
+    ws.serializeAttachment(meta);
+    if (!admitted.ok) {
+      try {
+        ws.close(1008, "Too many frames");
+      } catch {
+        // Already closing.
+      }
       return;
     }
     if (parsed.type !== "say") {
@@ -384,8 +384,9 @@ function attachment(ws: WebSocket): SocketMeta {
   const raw = ws.deserializeAttachment() as unknown;
   if (isRecord(raw) && typeof raw.name === "string") {
     const frames = Array.isArray(raw.frames) ? raw.frames.filter((at): at is number => typeof at === "number") : [];
+    const scratchAt = Array.isArray(raw.scratchAt) ? raw.scratchAt.filter((at): at is number => typeof at === "number") : [];
     const ip = typeof raw.ip === "string" && raw.ip ? raw.ip.slice(0, 64) : "local";
-    return { name: cleanName(raw.name), ip, frames };
+    return { name: cleanName(raw.name), ip, frames, scratchAt };
   }
-  return { name: "Guest", ip: "local", frames: [] };
+  return { name: "Guest", ip: "local", frames: [], scratchAt: [] };
 }

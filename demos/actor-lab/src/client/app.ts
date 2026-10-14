@@ -1,4 +1,4 @@
-import { isTurnstileApi, TURNSTILE_RACE, TURNSTILE_UNLOCK } from "../shared/guards";
+import { isTurnstileApi, nextScratchWait, RECONNECT_MAX, shouldReconnect, TURNSTILE_RACE, TURNSTILE_UNLOCK } from "../shared/guards";
 import type { LabConfig, RaceMode, RaceResult, RoomResponse, RoomView, ServerEvent } from "../shared/types";
 
 const API_BASE = location.pathname.startsWith("/demos/actor-lab") ? "/demos/actor-lab" : "";
@@ -41,6 +41,8 @@ let roomCode = "";
 let socket: WebSocket | null = null;
 let scratchTimer = 0;
 let scratchFromUs = false;
+let lastScratchSent = "";
+let lastScratchAt = 0;
 let pendingSay = "";
 let reconnectTimer = 0;
 let reconnectAttempt = 0;
@@ -269,7 +271,10 @@ function renderRoom(room: RoomView, code = roomCode): void {
   }
   list.scrollTop = list.scrollHeight;
   const scratch = must<HTMLTextAreaElement>("scratch");
-  if (document.activeElement !== scratch && scratch.value !== room.scratch) scratch.value = room.scratch;
+  if (document.activeElement !== scratch && scratch.value !== room.scratch) {
+    scratch.value = room.scratch;
+    lastScratchSent = room.scratch;
+  }
   void mountUnlockWidget();
 }
 
@@ -317,6 +322,8 @@ function startPing(ws: WebSocket): void {
 }
 
 function connect(code: string): void {
+  window.clearTimeout(reconnectTimer);
+  reconnectTimer = 0;
   socket?.close();
   wantSocket = true;
   const nick = must<HTMLInputElement>("nick").value.trim() || "Guest";
@@ -343,8 +350,9 @@ function connect(code: string): void {
   next.addEventListener("close", (ev) => {
     stopPing();
     if (socket !== next) return;
-    if (!wantSocket || !roomCode) {
-      setStatus("The socket closed. Join again if the room is still there.");
+    if (!wantSocket || !roomCode || !shouldReconnect(ev.code, reconnectAttempt)) {
+      wantSocket = false;
+      setStatus(ev.code === 1001 || reconnectAttempt >= RECONNECT_MAX ? "Room is gone." : "The socket closed. Join again if the room is still there.");
       return;
     }
     const delay = Math.min(15_000, 500 * 2 ** reconnectAttempt);
@@ -357,6 +365,7 @@ function connect(code: string): void {
 }
 
 async function openRoom(code: string): Promise<void> {
+  reconnectAttempt = 0;
   const view = await call<RoomResponse>(`/api/rooms/${code}`);
   roomCode = view.code;
   const url = new URL(location.href);
@@ -368,6 +377,7 @@ async function openRoom(code: string): Promise<void> {
 
 async function createRoom(): Promise<void> {
   setStatus("");
+  reconnectAttempt = 0;
   try {
     const view = await call<RoomResponse>("/api/rooms", { method: "POST", body: {} });
     roomCode = view.code;
@@ -433,23 +443,30 @@ async function evict(): Promise<void> {
   }
 }
 
+function flushScratch(): void {
+  if (!roomCode) return;
+  const text = must<HTMLTextAreaElement>("scratch").value;
+  if (text === lastScratchSent) return;
+  lastScratchSent = text;
+  lastScratchAt = Date.now();
+  scratchFromUs = true;
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ type: "scratch", text }));
+    window.setTimeout(() => {
+      scratchFromUs = false;
+    }, 400);
+    return;
+  }
+  void call(`/api/rooms/${roomCode}/scratch`, { method: "POST", body: { text } }).catch((err: unknown) => {
+    setStatus(err instanceof Error ? err.message : "Could not save the scratch note.");
+  });
+}
+
 function scheduleScratch(): void {
+  const text = must<HTMLTextAreaElement>("scratch").value;
+  if (text === lastScratchSent) return;
   window.clearTimeout(scratchTimer);
-  scratchTimer = window.setTimeout(() => {
-    if (!roomCode) return;
-    const text = must<HTMLTextAreaElement>("scratch").value;
-    scratchFromUs = true;
-    if (socket && socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ type: "scratch", text }));
-      window.setTimeout(() => {
-        scratchFromUs = false;
-      }, 400);
-      return;
-    }
-    void call(`/api/rooms/${roomCode}/scratch`, { method: "POST", body: { text } }).catch((err: unknown) => {
-      setStatus(err instanceof Error ? err.message : "Could not save the scratch note.");
-    });
-  }, 180);
+  scratchTimer = window.setTimeout(flushScratch, nextScratchWait(lastScratchAt, Date.now()));
 }
 
 function bind(): void {

@@ -143,6 +143,33 @@ if (code) {
 }
 check("more than 20 frames in 10s closes the socket with 1008", flooded);
 
+let scratchOpen = false;
+let scratchSaid = false;
+if (code) {
+  const note = new WebSocket(`${base.replace(/^http/, "ws")}/api/rooms/${code}/socket?name=Note`);
+  await opened(note);
+  let closedCode = 0;
+  note.addEventListener("close", (ev) => {
+    closedCode = ev.code;
+  });
+  const heard = new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => resolve(false), 4_000);
+    note.addEventListener("message", (ev) => {
+      if (typeof ev.data !== "string" || !ev.data.includes("after-scratch")) return;
+      clearTimeout(timer);
+      resolve(true);
+    });
+  });
+  for (let i = 0; i < 45; i++) note.send(JSON.stringify({ type: "scratch", text: `note ${i}` }));
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  scratchOpen = note.readyState === WebSocket.OPEN && closedCode !== 1008;
+  if (scratchOpen) note.send(JSON.stringify({ type: "say", text: "after-scratch", ask: false }));
+  scratchSaid = scratchOpen && (await heard);
+  note.close();
+}
+check("45 rapid scratch frames do not close the socket with 1008", scratchOpen);
+check("a say still lands after rapid scratch", scratchSaid);
+
 const locked = code
   ? await call(`/api/rooms/${code}/say`, { method: "POST", body: { name: "Smoke", text: "Ask anyway.", ask: true } })
   : { status: 0, data: null, text: "" };
@@ -158,17 +185,19 @@ const asked = code
   : { status: 0, data: null, text: "" };
 check(
   "ask returns an actor line (Workers AI or fallback)",
-  asked.status === 201 && (asked.data?.actor?.text.length ?? 0) > 10,
-  { source: asked.data?.actor?.source, preview: asked.data?.actor?.text.slice(0, 80) },
+  asked.status === 201 && (asked.data?.actor?.text.length ?? 0) > 10 && asked.data?.actor?.name === "Actor",
+  { source: asked.data?.actor?.source, name: asked.data?.actor?.name, preview: asked.data?.actor?.text.slice(0, 80) },
 );
 
 const evicted = code ? await call<RoomResponse>(`/api/rooms/${code}/evict`, { method: "POST", body: {} }) : { status: 0, data: null, text: "" };
 const kept = evicted.data?.messages.some((message) => message.text === "Persist this line.") ?? false;
+const actorKept = evicted.data?.messages.some((message) => message.role === "actor" && message.name === "Actor") ?? false;
 check("simulate evict keeps SQLite messages and drops scratch", evicted.status === 200 && evicted.data?.scratch === "" && evicted.data?.memory === "reloaded" && kept, {
   memory: evicted.data?.memory,
   scratch: evicted.data?.scratch,
   messages: evicted.data?.messages.length,
 });
+check("evict keeps the actor name Actor", actorKept, evicted.data?.messages.filter((message) => message.role === "actor"));
 
 const missing = await call("/api/rooms/ZZZZZZ");
 check("unknown room is 404", missing.status === 404, missing.data);

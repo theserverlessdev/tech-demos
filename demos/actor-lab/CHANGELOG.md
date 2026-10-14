@@ -45,10 +45,10 @@ Opus audit of `192a789`:
 
 - `#turnstile` no longer shadows `window.turnstile`. `?room=` joins before the widget mounts. Same id fix in personal-agent.
 - GET `/api/rooms/:code` and GET `/api/race/result` are rate-limited. A minted cookie does not create a race actor. Tables and alarms are lazy. Expiry calls `deleteAll()`.
-- WebSocket say/scratch use `CHAT_LIMIT` per IP. More than 20 frames in 10s closes with 1008. Scratch broadcasts coalesce. The per-room say window is SQLite. `AI_LIMIT` runs before every model call.
-- Turnstile actions are `race-arm` and `chat-unlock`. Hosts are exact. The widget resets after every send.
+- WebSocket say uses `CHAT_LIMIT` per IP. Scratch is not charged to `CHAT_LIMIT`; each socket may send 12 scratch frames per 10s and extras are dropped. More than 20 non-scratch frames in 10s closes with 1008. The page sends about one scratch frame per second. Scratch broadcasts coalesce. The per-room say window is SQLite. `AI_LIMIT` runs before every model call.
+- Turnstile actions are `race-arm` and `chat-unlock`. An empty action is rejected. Hosts are exact. Production has `workers_dev: false`. The widget resets after every send.
 - Peers count uses `livePeers()` (OPEN sockets only).
-- Copy, 44px targets, scoped inputs, CSP nonce + WebKit `child-src`/`wasm-unsafe-eval`, reconnect with backoff, reserved name `Actor`.
+- Copy, 44px targets, scoped inputs, CSP nonce + WebKit `child-src`/`wasm-unsafe-eval`, reconnect with backoff (stops on 1001 or after 5 tries), reserved name `Actor`. Stored actor lines keep the name Actor across wake and evict.
 
 ## 2026-10-09
 

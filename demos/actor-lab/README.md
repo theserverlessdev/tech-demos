@@ -38,8 +38,8 @@ Walkthrough stills and a short video: [artifacts/](./artifacts/).
 | --- | --- |
 | **Durable Objects (SQLite)** | One race actor per visitor cookie, one chat actor per room code. A `state` proxy writes fields to SQLite. Handlers on the mailbox run one at a time. |
 | **Workers AI** | Each race update awaits the model between the read and the write, which opens the input gate. The room actor can answer after a Turnstile unlock. |
-| **Hibernatable WebSockets** | The room stays connected across hibernation. Send the text frame `ping` and the actor answers `pong` without waking. The page also sends that heartbeat. More than 20 frames in 10 seconds closes the socket (1008). |
-| **Rate limiting** | `RACE_LIMIT` (7351) covers arm, step, and GET `/api/race/result`. `CHAT_LIMIT` (7352) covers room create/join/say/scratch/unlock and each WebSocket say or scratch frame. `AI_LIMIT` (7353) runs before every model call. Each binding is 30 requests a minute per IP. Rooms also keep a 30-says-per-minute window in SQLite. Actor-lab keeps 7351–7353; tanbase is moving off that range. |
+| **Hibernatable WebSockets** | The room stays connected across hibernation. Send the text frame `ping` and the actor answers `pong` without waking. The page also sends that heartbeat. More than 20 non-scratch frames in 10 seconds closes the socket (1008). Scratch is capped per socket (12/10s) and extras are dropped. |
+| **Rate limiting** | `RACE_LIMIT` (7351) covers arm, step, and GET `/api/race/result`. `CHAT_LIMIT` (7352) covers room create/join/say/unlock and each WebSocket say. Scratch is not charged to `CHAT_LIMIT`. `AI_LIMIT` (7353) runs before every model call. Each binding is 30 requests a minute per IP. Rooms also keep a 30-says-per-minute window in SQLite. Actor-lab keeps 7351–7353; tanbase is moving off that range. |
 | **Turnstile** | Required to arm a race and to unlock chat AI. The live worker's health check reports AI ready. |
 | **Alarms** | Actor rows are deleted after 6 hours idle. |
 

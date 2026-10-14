@@ -4,6 +4,10 @@ export const FRAME_MAX = 20;
 export const SAYS_PER_MINUTE = 30;
 export const SAY_WINDOW_MS = 60_000;
 export const SCRATCH_COALESCE_MS = 80;
+export const SCRATCH_MIN_INTERVAL_MS = 1_000;
+export const SCRATCH_SOCKET_MAX = 12;
+export const SCRATCH_SOCKET_WINDOW_MS = 10_000;
+export const RECONNECT_MAX = 5;
 export const RESERVED_NAMES = new Set(["actor"]);
 
 export const TURNSTILE_RACE = "race-arm";
@@ -37,6 +41,31 @@ export function admitSay(says: number[], now: number): { ok: boolean; says: numb
   if (next.length >= SAYS_PER_MINUTE) return { ok: false, says: next };
   next.push(now);
   return { ok: true, says: next };
+}
+
+export function admitScratch(frames: number[], now: number): { ok: boolean; frames: number[] } {
+  const next = frames.filter((at) => now - at < SCRATCH_SOCKET_WINDOW_MS);
+  if (next.length >= SCRATCH_SOCKET_MAX) return { ok: false, frames: next };
+  next.push(now);
+  return { ok: true, frames: next };
+}
+
+export function nextScratchWait(lastAt: number, now: number, min = SCRATCH_MIN_INTERVAL_MS): number {
+  if (lastAt <= 0) return 0;
+  return Math.max(0, min - (now - lastAt));
+}
+
+export function clipSpeakerName(role: "human" | "actor", name: string): string {
+  return role === "actor" ? "Actor" : name;
+}
+
+export function shouldReconnect(code: number, attempt: number, max = RECONNECT_MAX): boolean {
+  if (code === 1001) return false;
+  return attempt < max;
+}
+
+export function turnstileActionOk(got: string | undefined, expected: string): boolean {
+  return got === expected;
 }
 
 export function livePeers(sockets: { readyState: number }[], except?: object): number {

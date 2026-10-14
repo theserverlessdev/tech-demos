@@ -1,4 +1,4 @@
-import { hostAllowed, TURNSTILE_RACE, TURNSTILE_UNLOCK } from "../shared/guards";
+import { hostAllowed, turnstileActionOk, TURNSTILE_RACE, TURNSTILE_UNLOCK } from "../shared/guards";
 
 const SITEVERIFY = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 /** Published always-pass test secret. Local `.dev.vars` only. */
@@ -78,7 +78,7 @@ export async function assertTurnstile(env: Env, request: Request, token: unknown
   if (!hostAllowed(result.hostname ?? "")) {
     throw new HttpError(403, "turnstile_failed", "Turnstile check failed. Refresh and try again.");
   }
-  if (result.action && result.action !== action) {
+  if (!turnstileActionOk(result.action, action)) {
     throw new HttpError(403, "turnstile_failed", "Turnstile check failed. Refresh and try again.");
   }
 }

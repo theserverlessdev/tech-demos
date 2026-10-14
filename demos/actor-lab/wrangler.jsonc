@@ -34,6 +34,6 @@
     { "pattern": "tech-demos.theserverless.dev/demos/actor-lab/*", "zone_name": "theserverless.dev" },
     { "pattern": "actor-lab.tech-demos.theserverless.dev/*", "zone_name": "theserverless.dev" }
   ],
-  "workers_dev": true,
+  "workers_dev": false,
   "observability": { "enabled": true }
 }
