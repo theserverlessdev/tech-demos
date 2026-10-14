@@ -130,19 +130,19 @@ test("user-initiated gadget use counts as activity; timer ticks do not", () => {
   const ws = new IdleWorkspace(t0);
   const client = ws.openSession();
   client.subscribe(t0);
-  client.paint(t0 + SESSION_IDLE_MS - 1_000, t0 + SESSION_IDLE_MS - 1_000);
-  expect(ws.lastActivity).toBe(t0 + SESSION_IDLE_MS - 1_000);
+  const painted = t0 + SESSION_IDLE_MS - 1_000;
+  client.paint(painted, painted);
+  expect(ws.lastActivity).toBe(painted);
   expect(decideUserRpc(t0 + SESSION_IDLE_MS, ws.lastActivity, ws.listeners)).toBe("touch");
 
-  const later = t0 + SESSION_IDLE_MS + 10_000;
-  client.timerTick(later, t0 + SESSION_IDLE_MS - 1_000);
-  expect(ws.lastActivity).toBe(t0 + SESSION_IDLE_MS - 1_000);
-  expect(isUserInitiatedActivity(later, t0 + SESSION_IDLE_MS - 1_000)).toBe(false);
+  const later = painted + USER_ACTIVITY_WINDOW_MS;
+  client.timerTick(later, painted);
+  expect(ws.lastActivity).toBe(painted);
+  expect(isUserInitiatedActivity(later, painted)).toBe(false);
 
-  const poll = t0 + 4_000;
-  for (let i = 1; i <= 20; i++) client.timerTick(poll + i * 3_000, t0);
-  expect(ws.lastActivity).toBe(t0);
-  expect(decideUserRpc(t0 + SESSION_IDLE_MS, ws.lastActivity, ws.listeners)).toBe("reap");
+  for (let i = 1; i <= 20; i++) client.timerTick(later + i * 3_000, painted);
+  expect(ws.lastActivity).toBe(painted);
+  expect(decideUserRpc(later + SESSION_IDLE_MS, ws.lastActivity, 1)).toBe("reap");
 });
 
 test("isUserInitiatedActivity is a few-minute window after real input", () => {
