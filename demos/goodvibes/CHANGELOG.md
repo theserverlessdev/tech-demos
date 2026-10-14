@@ -13,7 +13,7 @@ We did not copy the upstream `src/game`, `src/ui`, `src/controls`, or `vibescale
 | Multiplayer | `vibescale` + commented DO stub | `VibeRoom` hibernation WS, **server-authoritative round** |
 | Loop | Starter sandbox | Ember Rush: countdown, 75s collect, scoreboard, rematch |
 | UI | Tailwind, DaisyUI, vanjs | Graphite & Ember HUD |
-| Rate limits | Not the point | `CREATE_LIMIT` on room create |
+| Rate limits | Not the point | Turnstile + HMAC join ticket; `CONNECT_LIMIT` on the WebSocket |
 
 ## What we cut
 
@@ -32,6 +32,10 @@ We did not copy the upstream `src/game`, `src/ui`, `src/controls`, or `vibescale
 ## Branding
 
 Hub Graphite & Ember. Ember `#c2410c`, background `#0e0e11`. LogoMark SVG. No purple-to-cyan logo.
+
+## 2026-10-14
+
+Opus audit of `279668d`. Disconnects no longer leave ghosts; an empty room `deleteAll`s. The no-op `CREATE_LIMIT` is gone. Joining is Turnstile-gated and mints an HMAC ticket; `/ws` checks the ticket, `CONNECT_LIMIT` (7480), a per-socket frame budget, and two sockets per IP. Player ids are server-assigned. Movement is speed-clamped. Exactly one gold orb. 390px camera, scoreboard dots, and 2D hint are readable. Copy matches what the demo does.
 
 ## 2026-10-09
 
