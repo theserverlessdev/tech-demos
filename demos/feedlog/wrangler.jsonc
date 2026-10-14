@@ -45,14 +45,14 @@
     "EMBED_MODEL": "@cf/baai/bge-small-en-v1.5",
     "TURNSTILE_SITE_KEY": "0x4AAAAAAFRgq04SvYB_gEMr"
   },
-  // Secrets, never commit: TURNSTILE_SECRET, ADMIN_TOKEN (set on the Worker; the owner holds ADMIN_TOKEN).
+  // Secrets, never commit: TURNSTILE_SECRET, ADMIN_TOKEN, GATE_SECRET (set on the Worker; the owner holds them).
   // Local `bun run dev` writes .dev.vars with Cloudflare's always-pass test pair, which overrides these
-  // vars on your machine. wrangler dev presents the zone route host, so a loopback check on the URL is not enough.
+  // vars on your machine. wrangler dev often binds 127.0.0.1, so loopback fallbacks apply too.
   "routes": [
     { "pattern": "tech-demos.theserverless.dev/demos/feedlog*", "zone_name": "theserverless.dev" },
     { "pattern": "feedlog.tech-demos.theserverless.dev/*", "zone_name": "theserverless.dev" }
   ],
-  "workers_dev": true,
+  "workers_dev": false,
   "observability": {
     "enabled": true,
     "traces": { "enabled": true }

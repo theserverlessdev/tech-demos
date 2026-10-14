@@ -52,24 +52,28 @@ async function hmac(secret: string, payload: string): Promise<Uint8Array> {
   return new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload)));
 }
 
-export async function signGate(secret: string, visitorId: string, now: number): Promise<string> {
+export type GatePayload = { nonce: string; exp: number };
+
+export async function signGate(secret: string, visitorId: string, nonce: string, now: number): Promise<string> {
   const exp = now + GATE_TTL_SECONDS * 1000;
-  const payload = `${exp}.${visitorId}`;
+  const payload = `v2.${exp}.${visitorId}.${nonce}`;
   return `${payload}.${bytesToB64url(await hmac(secret, payload))}`;
 }
 
-export async function gateCookieValid(secret: string, cookie: string | null, visitorId: string, now: number): Promise<boolean> {
-  if (!cookie) return false;
+export async function readGate(secret: string, cookie: string | null, visitorId: string, now: number): Promise<GatePayload | null> {
+  if (!cookie) return null;
   const parts = cookie.split(".");
-  if (parts.length !== 3) return false;
-  const exp = Number(parts[0]);
-  const visitor = parts[1] ?? "";
-  const sig = b64urlToBytes(parts[2] ?? "");
-  if (!sig || !Number.isFinite(exp) || visitor !== visitorId) return false;
-  if (exp < now || exp > now + GATE_TTL_SECONDS * 1000 + 5_000) return false;
-  const expected = await hmac(secret, `${exp}.${visitor}`);
-  if (expected.byteLength !== sig.byteLength) return false;
-  return crypto.subtle.timingSafeEqual(expected, sig);
+  if (parts.length !== 5 || parts[0] !== "v2") return null;
+  const exp = Number(parts[1]);
+  const visitor = parts[2] ?? "";
+  const nonce = parts[3] ?? "";
+  const sig = b64urlToBytes(parts[4] ?? "");
+  if (!sig || !Number.isFinite(exp) || visitor !== visitorId || !/^[a-f0-9]{32}$/.test(nonce)) return null;
+  if (exp < now || exp > now + GATE_TTL_SECONDS * 1000 + 5_000) return null;
+  const expected = await hmac(secret, `v2.${exp}.${visitor}.${nonce}`);
+  if (expected.byteLength !== sig.byteLength) return null;
+  if (!crypto.subtle.timingSafeEqual(expected, sig)) return null;
+  return { nonce, exp };
 }
 
 export function randomHex(bytes: number): string {

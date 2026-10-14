@@ -13,6 +13,7 @@ type ErrorBody = { error?: { message?: string } };
 type Tab = "board" | "roadmap" | "changelog" | "post";
 
 const FILTERS: Array<"all" | PostStatus> = ["all", "open", "planned", "in_progress", "done", "closed"];
+const ADMIN_HOST = "feedlog.tech-demos.theserverless.dev";
 
 const state = {
   config: null as BoardConfig | null,
@@ -20,18 +21,36 @@ const state = {
   entries: [] as ChangelogEntry[],
   filter: "all" as "all" | PostStatus,
   sort: "top" as "top" | "new",
-  admin: readAdmin(),
+  admin: "",
   gated: false,
   turnstileId: null as string | null,
   similarTimer: 0,
+  similarSeq: 0,
   detailId: "",
+  voting: new Set<string>(),
 };
 
+function adminStorageAllowed(): boolean {
+  const host = location.hostname;
+  return host === ADMIN_HOST || host === "127.0.0.1" || host === "localhost" || host === "[::1]";
+}
+
 function readAdmin(): string {
+  if (!adminStorageAllowed()) return "";
   try {
     return sessionStorage.getItem("feedlog-admin") ?? "";
   } catch {
     return "";
+  }
+}
+
+function writeAdmin(token: string): void {
+  if (!adminStorageAllowed()) return;
+  try {
+    if (token) sessionStorage.setItem("feedlog-admin", token);
+    else sessionStorage.removeItem("feedlog-admin");
+  } catch {
+    /* private mode */
   }
 }
 
@@ -93,6 +112,7 @@ function voteButton(post: Post): HTMLButtonElement {
   button.type = "button";
   button.className = post.voted ? "vote is-on" : "vote";
   button.dataset.vote = post.id;
+  button.disabled = state.voting.has(post.id);
   button.setAttribute("aria-pressed", post.voted ? "true" : "false");
   button.setAttribute("aria-label", `${post.voted ? "Remove vote from" : "Upvote"} ${post.title}`);
   const count = document.createElement("b");
@@ -120,6 +140,48 @@ function statusSelect(post: Post): HTMLSelectElement | null {
   return select;
 }
 
+function adminActions(post: Post): HTMLElement | null {
+  if (!state.admin) return null;
+  const wrap = document.createElement("div");
+  wrap.className = "admin-actions";
+  const select = statusSelect(post);
+  if (select) wrap.append(select);
+  if (post.imagePending) {
+    const approve = document.createElement("button");
+    approve.type = "button";
+    approve.className = "btn";
+    approve.dataset.approve = post.id;
+    approve.textContent = "Approve image";
+    wrap.append(approve);
+  }
+  const del = document.createElement("button");
+  del.type = "button";
+  del.className = "btn btn-ghost";
+  del.dataset.delete = post.id;
+  del.textContent = "Delete";
+  wrap.append(del);
+  return wrap;
+}
+
+function attachImage(body: HTMLElement, post: Post, heading: string): void {
+  if (post.hasImage) {
+    const img = document.createElement("img");
+    img.className = "post__image";
+    img.src = imageUrl(post.id);
+    img.alt = "";
+    img.loading = "lazy";
+    img.decoding = "async";
+    body.append(img);
+    return;
+  }
+  if (post.imagePending) {
+    const pending = document.createElement("p");
+    pending.className = "hint";
+    pending.textContent = state.admin ? "Image waiting for review." : `${heading} is waiting for review.`;
+    body.append(pending);
+  }
+}
+
 function postCard(post: Post, clamp: boolean): HTMLElement {
   const article = document.createElement("article");
   article.className = "post";
@@ -140,18 +202,25 @@ function postCard(post: Post, clamp: boolean): HTMLElement {
   const who = document.createElement("span");
   who.textContent = post.displayName;
   meta.append(who);
-  const select = statusSelect(post);
-  if (select) meta.append(select);
+  const actions = adminActions(post);
+  if (actions) meta.append(actions);
   body.append(title, copy, meta);
-  if (post.hasImage) {
-    const img = document.createElement("img");
-    img.className = "post__image";
-    img.src = imageUrl(post.id);
-    img.alt = "";
-    body.append(img);
-  }
+  attachImage(body, post, "Your image");
   article.append(body);
   return article;
+}
+
+function renderFilters(): void {
+  document.querySelectorAll<HTMLButtonElement>("[data-filter]").forEach((button) => {
+    const on = button.dataset.filter === state.filter;
+    button.classList.toggle("is-on", on);
+    button.setAttribute("aria-pressed", on ? "true" : "false");
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-sort]").forEach((button) => {
+    const on = button.dataset.sort === state.sort;
+    button.classList.toggle("is-on", on);
+    button.setAttribute("aria-pressed", on ? "true" : "false");
+  });
 }
 
 function visiblePosts(): Post[] {
@@ -161,6 +230,7 @@ function visiblePosts(): Post[] {
 function renderBoard(): void {
   const posts = visiblePosts();
   $("count").textContent = String(posts.length);
+  renderFilters();
   const list = $("posts");
   list.replaceChildren();
   if (posts.length === 0) {
@@ -171,12 +241,6 @@ function renderBoard(): void {
     return;
   }
   for (const post of posts) list.append(postCard(post, true));
-  document.querySelectorAll<HTMLButtonElement>("[data-filter]").forEach((button) => {
-    button.classList.toggle("is-on", button.dataset.filter === state.filter);
-  });
-  document.querySelectorAll<HTMLButtonElement>("[data-sort]").forEach((button) => {
-    button.classList.toggle("is-on", button.dataset.sort === state.sort);
-  });
 }
 
 function renderRoadmap(): void {
@@ -244,6 +308,7 @@ function renderChangelog(): void {
 function renderDetail(post: Post | null): void {
   const root = $("post-detail");
   root.replaceChildren();
+  root.className = "";
   if (!post) {
     const missing = document.createElement("p");
     missing.className = "empty";
@@ -252,7 +317,27 @@ function renderDetail(post: Post | null): void {
     return;
   }
   root.className = "detail";
-  root.append(postCard(post, false));
+  const row = document.createElement("div");
+  row.className = "detail__row";
+  row.append(voteButton(post));
+  const body = document.createElement("div");
+  const title = document.createElement("h2");
+  title.textContent = post.title;
+  const copy = document.createElement("p");
+  copy.className = "post__body";
+  copy.textContent = post.body;
+  const meta = document.createElement("div");
+  meta.className = "post__meta";
+  meta.append(chip(post.status));
+  const who = document.createElement("span");
+  who.textContent = post.displayName;
+  meta.append(who);
+  const actions = adminActions(post);
+  if (actions) meta.append(actions);
+  body.append(title, copy, meta);
+  attachImage(body, post, "This image");
+  row.append(body);
+  root.append(row);
 }
 
 function show(tab: Tab): void {
@@ -269,7 +354,7 @@ function show(tab: Tab): void {
 }
 
 async function loadPosts(): Promise<void> {
-  const res = await call<{ posts: Post[] }>(`/posts?sort=${state.sort}`);
+  const res = await call<{ posts: Post[] }>(`/posts?sort=${state.sort}`, { admin: Boolean(state.admin) });
   if (!res.data) {
     $("posts").textContent = res.error ?? "The board could not be loaded.";
     return;
@@ -291,7 +376,7 @@ async function openDetail(id: string): Promise<void> {
   show("post");
   const known = state.posts.find((post) => post.id === id) ?? null;
   renderDetail(known);
-  const res = await call<{ post: Post }>(`/posts/${id}`);
+  const res = await call<{ post: Post }>(`/posts/${id}`, { admin: Boolean(state.admin) });
   if (state.detailId !== id) return;
   renderDetail(res.data?.post ?? null);
 }
@@ -326,6 +411,7 @@ async function runSimilar(): Promise<void> {
   const title = ($("title") as HTMLInputElement).value.trim();
   const body = ($("body") as HTMLTextAreaElement).value.trim();
   const list = $("similar-list");
+  const seq = ++state.similarSeq;
   if (`${title} ${body}`.trim().length < 12) {
     hint("similar-hint", "Type a title. If someone already asked, it shows up here.");
     list.replaceChildren();
@@ -336,19 +422,20 @@ async function runSimilar(): Promise<void> {
     return;
   }
   const res = await call<SimilarResult>("/similar", { method: "POST", body: { title, body } });
+  if (seq !== state.similarSeq) return;
   if (!res.data) {
     hint("similar-hint", res.error ?? "Could not look for duplicates.", "error");
     return;
   }
   if (res.data.source === "skipped" || res.data.similar.length === 0) {
-    hint("similar-hint", res.data.source === "vectorize" ? "No close match in the index." : "No close match yet.");
+    hint("similar-hint", "No close match yet.");
     list.replaceChildren();
     return;
   }
   const source =
     res.data.source === "vectorize"
-      ? "Matched with Workers AI and Vectorize."
-      : "Matched on words. Workers AI and Vectorize run when those bindings answer.";
+      ? "Possible duplicate from the index."
+      : "Possible duplicate from word overlap. Production uses Workers AI and Vectorize when those bindings answer.";
   hint("similar-hint", source);
   list.replaceChildren();
   for (const hit of res.data.similar) {
@@ -417,6 +504,9 @@ async function onSubmit(event: Event): Promise<void> {
   form.set("displayName", ($("display-name") as HTMLInputElement).value);
   const file = ($("image") as HTMLInputElement).files?.[0];
   if (file) form.set("image", file);
+  const widget = turnstileApi();
+  const token = state.turnstileId && widget ? widget.getResponse(state.turnstileId) : "";
+  if (token) form.set("turnstileToken", token);
   const res = await call<{ post: Post }>("/posts", { method: "POST", form });
   button.disabled = !state.gated;
   if (!res.data) {
@@ -426,33 +516,41 @@ async function onSubmit(event: Event): Promise<void> {
   ($("title") as HTMLInputElement).value = "";
   ($("body") as HTMLTextAreaElement).value = "";
   ($("image") as HTMLInputElement).value = "";
-  hint("form-hint", "Posted.", "ok");
+  hint("form-hint", res.data.post.imagePending ? "Posted. The image stays hidden until it is approved." : "Posted.", "ok");
   hint("similar-hint", "Type a title. If someone already asked, it shows up here.");
   $("similar-list").replaceChildren();
   state.posts = [res.data.post, ...state.posts.filter((post) => post.id !== res.data?.post.id)];
   if (state.sort === "top") state.posts.sort((a, b) => b.votes - a.votes || b.createdAt - a.createdAt);
   renderBoard();
   renderRoadmap();
-  const widget = turnstileApi();
   if (state.turnstileId && widget) widget.reset(state.turnstileId);
   state.gated = false;
   button.disabled = true;
 }
 
 async function onVote(id: string): Promise<void> {
-  const res = await call<VoteResult>(`/posts/${id}/vote`, { method: "POST" });
-  if (!res.data) {
-    hint("form-hint", res.error ?? "The vote was not saved.", "error");
-    return;
+  if (state.voting.has(id)) return;
+  state.voting.add(id);
+  document.querySelectorAll<HTMLButtonElement>(`[data-vote="${id}"]`).forEach((button) => {
+    button.disabled = true;
+  });
+  try {
+    const res = await call<VoteResult>(`/posts/${id}/vote`, { method: "POST" });
+    if (!res.data) {
+      hint("form-hint", res.error ?? "The vote was not saved.", "error");
+      return;
+    }
+    const post = state.posts.find((item) => item.id === id);
+    if (post) {
+      post.votes = res.data.votes;
+      post.voted = res.data.voted;
+    }
+    renderBoard();
+    renderRoadmap();
+    if (state.detailId === id && post) renderDetail(post);
+  } finally {
+    state.voting.delete(id);
   }
-  const post = state.posts.find((item) => item.id === id);
-  if (post) {
-    post.votes = res.data.votes;
-    post.voted = res.data.voted;
-  }
-  renderBoard();
-  renderRoadmap();
-  if (state.detailId === id && post) renderDetail(post);
 }
 
 async function onStatus(id: string, status: PostStatus): Promise<void> {
@@ -469,10 +567,44 @@ async function onStatus(id: string, status: PostStatus): Promise<void> {
   if (state.detailId === id) renderDetail(state.posts.find((post) => post.id === id) ?? null);
 }
 
+async function onApprove(id: string): Promise<void> {
+  const res = await call<{ post: Post }>(`/posts/${id}`, { method: "PATCH", admin: true, body: { imageApproved: true } });
+  if (!res.data) {
+    hint("admin-hint", res.error ?? "The image was not approved.", "error");
+    return;
+  }
+  state.posts = state.posts.map((post) => (post.id === id ? { ...res.data!.post, voted: post.voted } : post));
+  hint("admin-hint", "Image approved.", "ok");
+  renderBoard();
+  renderRoadmap();
+  if (state.detailId === id) renderDetail(state.posts.find((post) => post.id === id) ?? null);
+}
+
+async function onDelete(id: string): Promise<void> {
+  if (!window.confirm("Delete this post, its image, and its votes?")) return;
+  const res = await call<{ ok: boolean }>(`/posts/${id}`, { method: "DELETE", admin: true });
+  if (res.status !== 200) {
+    hint("admin-hint", res.error ?? "The post was not deleted.", "error");
+    return;
+  }
+  state.posts = state.posts.filter((post) => post.id !== id);
+  hint("admin-hint", "Post deleted.", "ok");
+  renderBoard();
+  renderRoadmap();
+  if (state.detailId === id) {
+    state.detailId = "";
+    location.hash = "#/board";
+  }
+}
+
 function syncAdmin(): void {
   const input = $("admin-token") as HTMLInputElement;
   input.value = state.admin;
-  hint("admin-hint", state.admin ? "Token stored for this tab." : "No token in this tab.", state.admin ? "ok" : undefined);
+  if (!adminStorageAllowed()) {
+    hint("admin-hint", "Use the admin panel on feedlog.tech-demos.theserverless.dev. This shared hub origin can be read by other demos.");
+  } else {
+    hint("admin-hint", state.admin ? "Token stored for this tab." : "No token in this tab.", state.admin ? "ok" : undefined);
+  }
   renderBoard();
   renderChangelog();
   if (state.detailId) {
@@ -495,19 +627,26 @@ function bind(): void {
   $("compose").addEventListener("submit", (event) => void onSubmit(event));
   $("title").addEventListener("input", scheduleSimilar);
   $("body").addEventListener("input", scheduleSimilar);
-  $("posts").addEventListener("click", (event) => {
-    const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-vote]");
-    if (!button?.dataset.vote) return;
-    void onVote(button.dataset.vote);
+  document.addEventListener("click", (event) => {
+    const target = event.target as HTMLElement;
+    const vote = target.closest<HTMLButtonElement>("[data-vote]");
+    if (vote?.dataset.vote) {
+      void onVote(vote.dataset.vote);
+      return;
+    }
+    const approve = target.closest<HTMLButtonElement>("[data-approve]");
+    if (approve?.dataset.approve) {
+      void onApprove(approve.dataset.approve);
+      return;
+    }
+    const del = target.closest<HTMLButtonElement>("[data-delete]");
+    if (del?.dataset.delete) {
+      void onDelete(del.dataset.delete);
+    }
   });
-  $("post-detail").addEventListener("click", (event) => {
-    const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-vote]");
-    if (!button?.dataset.vote) return;
-    void onVote(button.dataset.vote);
-  });
-  $("posts").addEventListener("change", (event) => {
+  document.addEventListener("change", (event) => {
     const select = event.target as HTMLSelectElement;
-    if (!select.dataset.statusFor) return;
+    if (!select.dataset?.statusFor) return;
     void onStatus(select.dataset.statusFor, select.value as PostStatus);
   });
   document.querySelector(".filters")?.addEventListener("click", (event) => {
@@ -526,22 +665,15 @@ function bind(): void {
   });
   $("admin-save").addEventListener("click", () => {
     state.admin = ($("admin-token") as HTMLInputElement).value.trim();
-    try {
-      if (state.admin) sessionStorage.setItem("feedlog-admin", state.admin);
-      else sessionStorage.removeItem("feedlog-admin");
-    } catch {
-      /* ignore */
-    }
+    writeAdmin(state.admin);
     syncAdmin();
+    void loadPosts();
   });
   $("admin-clear").addEventListener("click", () => {
     state.admin = "";
-    try {
-      sessionStorage.removeItem("feedlog-admin");
-    } catch {
-      /* ignore */
-    }
+    writeAdmin("");
     syncAdmin();
+    void loadPosts();
   });
   $("changelog-form").addEventListener("submit", (event) => {
     event.preventDefault();
@@ -563,6 +695,7 @@ function bind(): void {
 }
 
 async function main(): Promise<void> {
+  state.admin = readAdmin();
   bind();
   syncAdmin();
   const config = await call<BoardConfig>("/config");

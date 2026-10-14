@@ -11,7 +11,7 @@ The product note: <https://x.com/ceoplanet519/status/2087056479459119500>.
 | Runtime | Nuxt 4, Vue, Drizzle, Tailwind, shadcn-vue | One Worker, plain `fetch()` router, vanilla TS |
 | Store | Postgres 17 + pgvector, often via Hyperdrive | D1: `posts`, `votes`, `changelog` |
 | Similar ideas | OpenAI `text-embedding-3-large` (768) | Workers AI `@cf/baai/bge-small-en-v1.5` (384) + Vectorize cosine |
-| Auth | better-auth: email, Google, GitHub, admin role | Anonymous visitor cookie. `ADMIN_TOKEN` for status and changelog |
+| Auth | better-auth: email, Google, GitHub, admin role | Anonymous visitor cookie. `ADMIN_TOKEN` for status, image review, delete, and changelog |
 | Files | R2 on the Workers deploy path | R2 images with a type allowlist, size cap, and magic-byte check |
 | Boards | Public or private, categories, comments | One public board. No comments |
 | Roadmap | Drag and drop | Three columns: planned, in progress, done |
@@ -47,6 +47,10 @@ Hub Graphite & Ember. Ember accent `#c2410c`, background `#0e0e11`. The hub mark
 ## Local similarity
 
 Vectorize has no local simulation, and Workers AI needs an account. When either call throws, `/api/similar` answers with `source: "lexical"` (word overlap against D1) and the page says so. Production uses `source: "vectorize"` when the bindings respond.
+
+## 2026-10-14
+
+Audit fixes. Images stay hidden until an admin approves them. `DELETE /api/posts/:id` takes a post down (row, votes, R2, vector). Votes are atomic. The Turnstile gate is bound to the visitor cookie with 30 similar uses and one create credit. Bodies need Content-Length and a streamed size cap. Seed vectors are flagged only after every upsert. Votes are indexed and old seed votes expire. Cross-site and cookieless votes are rejected. The 80-post cap evicts after insert. Admin status and delete work on the detail view. On a 390px screen the board is first and the header is static. Smoke against a remote Worker is read-only.
 
 ## 2026-10-09
 

@@ -49,7 +49,7 @@ Framework subagents were not used. The brief already rules out Nuxt and names th
 4. Embed + Vectorize index/query/delete, with a labeled word-overlap fallback.
 5. Vanilla TS UI: board, roadmap, changelog, admin token kept in the tab session.
 6. Smoke script against the local API. Screenshot and video.
-7. Deploy only if `wrangler whoami` is authenticated. It is not, in this environment.
+7. The Worker is already live. This environment does not redeploy.
 
 ## Stack
 
@@ -102,9 +102,19 @@ The client uses hash routes (`#/board`, `#/roadmap`, `#/changelog`, `#/p/…`) s
 - `scripts/smoke.ts` against `wrangler dev`: seed list, vote toggle, Turnstile rejection, similar-post hit, image allowlist, admin rejection, cleanup of an already-expired loopback post.
 - Playwright screenshot and short video of the running UI.
 
+## Audit fixes (2026-10-14)
+
+Opus audit at `/cursor/stores/bot/audits/feedlog-audit.md` (`279668d`). This slice stays one public board (seeds + visitor text, votes, similar, roadmap). It does **not** switch to per-visitor sandbox boards — that would hide the public loop the demo exists to show.
+
+**Safety choice (B1).** Hidden-until-approved images + admin takedown. Visitor text still lands on the board (capped at 3 live posts per cookie, 80 total). Images stay off the public board and return 404 until an admin approves them. `DELETE /api/posts/:id` removes the row, votes, R2 object, and vector. Image cache is `private, max-age=300`.
+
+Other fixes in this slice: atomic votes, session-bound `fl_gate` with separate similar/create remaining counts, Content-Length + streamed body cap before Turnstile, seed-vector flag only after every upsert, votes index + 14-day seed-vote sweep, same-site + existing-cookie votes, insert-then-evict at the 80-post cap, live admin controls on the detail view, board-first 390px layout, accurate README/hub copy, and a read-only remote smoke path.
+
+**Owner (not this environment).** Set Worker secret `GATE_SECRET`. Confirm Vectorize `getByIds` for the five seed ids; if missing, delete the `vectors_seeded` meta row. Redeploy. No Cloudflare API calls from this environment.
+
 ## Deferred
 
-- Real Turnstile widget hostnames and `ADMIN_TOKEN` (owner secrets; this environment has no Cloudflare login).
+- Real Turnstile widget hostnames, `ADMIN_TOKEN`, and `GATE_SECRET` (owner secrets; this environment has no Cloudflare login).
 - Email when a voted post ships.
 - Comments, merge, and drag-and-drop on the roadmap.
 - AI-written changelog drafts.

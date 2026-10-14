@@ -42,7 +42,7 @@ const personalAgentFallbackSource = standalone("personal-agent");
 // pattern as resolve-hq: the zone route wins, and this source only redirects if that route is missing.
 const partyserverFallbackSource = standalone("partyserver");
 
-// feedlog is a standalone Worker (ASSETS, AI, DB, IMAGES, VECTORS, POST_LIMIT, VOTE_LIMIT, AI_LIMIT, Turnstile).
+// feedlog is a standalone Worker (ASSETS, AI, DB, IMAGES, VECTORS, POST_LIMIT, VOTE_LIMIT, AI_LIMIT, ADMIN_LIMIT, cron, Turnstile).
 // Same pattern as resolve-hq: the zone route wins, and this source only redirects if that route is missing.
 const feedlogFallbackSource = standalone("feedlog");
 
@@ -281,8 +281,8 @@ export const demos: DemoEntry[] = [
     capabilities: [
       "Read the seeded ideas, vote once from this browser, and open the roadmap and changelog",
       "Write a post and watch similar posts appear as you type",
-      "Attach a JPEG, PNG, GIF, or WebP under 1.5 MB",
-      "See the 'matched on words' note when Vectorize is unavailable",
+      "Attach a JPEG, PNG, GIF, or WebP under 1.5 MB (it stays hidden until an admin approves it)",
+      "Type a near-copy of a seeded title (try 'Dark mode for the roadmap') and see it flagged as a possible duplicate",
     ],
     useCases: [
       "A public roadmap with one vote per browser",
