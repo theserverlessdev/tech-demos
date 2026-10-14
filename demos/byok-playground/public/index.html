@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark light" />
+  <meta name="theme-color" content="#0e0e11" />
+  <meta name="referrer" content="no-referrer" />
+  <title>BYOK playground · Tech Demos · theserverless.dev</title>
+  <meta name="description" content="A safe bring-your-own-key proxy on Cloudflare Workers: your OpenAI-compatible key stays in the browser, SSRF is blocked, and Workers AI comparison is Turnstile-gated." />
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Hanken+Grotesk:wght@400..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script src="./assets/theme.js"></script>
+  <link rel="stylesheet" href="./assets/app.css" />
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="https://tech-demos.theserverless.dev/" aria-label="Tech Demos gallery">
+      <svg class="brand__mark" width="26" height="26" viewBox="0 -3 128 128" aria-hidden="true">
+        <g stroke="currentColor" stroke-width="6" stroke-linecap="round" opacity="0.45"><line x1="4" y1="58" x2="20" y2="58"/><line x1="1" y1="72" x2="19" y2="72"/><line x1="6" y1="86" x2="22" y2="86"/></g>
+        <path d="M44 92 C31 92 20 82 20 69 C20 57 29 47 41 46 C45 33 57 24 70 24 C85 24 98 35 100 51 C110 53 118 62 118 72 C118 83 109 92 97 92 Z" fill="none" stroke="currentColor" stroke-width="7.5" stroke-linejoin="round"/>
+        <path d="M69 36 L50 71 L63 71 L57 102 L88 60 L72 60 L80 36 Z" fill="currentColor"/>
+      </svg>
+      <span>Tech Demos</span>
+    </a>
+    <div class="topbar__title">
+      <h1>BYOK playground</h1>
+      <p>Your key, your endpoint, a Worker that refuses to store either</p>
+    </div>
+    <div class="topbar__actions">
+      <a class="btn" href="https://theserverless.dev/contact" rel="noopener noreferrer">Contact</a>
+      <button class="btn btn-ghost btn-icon" id="theme" type="button" aria-label="Switch colour theme">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9Z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <p class="shows shows--bar"><span class="shows__k">What this shows</span> A Worker can proxy a visitor’s OpenAI-compatible key without becoming an open proxy: the key lives in this browser, SSRF is blocked, redirects are refused, and Workers AI comparison is Turnstile-gated with a daily budget.</p>
+
+  <section class="intro" aria-labelledby="try-title">
+    <div>
+      <h2 id="try-title">What you can try</h2>
+      <ul>
+        <li>Paste a key, an https base URL, and a model id, then stream a chat.</li>
+        <li>List models from <code>GET /models</code>.</li>
+        <li>Send the same prompt to your model and to Workers AI, and read latency, time to first token, and tokens.</li>
+        <li>Probe streaming, tools, JSON schema, and vision. Each check is pass, fail, or unsupported, with the raw error.</li>
+      </ul>
+    </div>
+    <div>
+      <h2>What you could build</h2>
+      <ul>
+        <li>A product that accepts a customer’s OpenAI-compatible key without writing it to disk.</li>
+        <li>A migration bench that compares a provider against Workers AI on the same prompt.</li>
+        <li>An eval harness that records which capabilities an endpoint actually implements.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="panel keys" aria-labelledby="keys-title">
+    <header class="panel__head">
+      <h2 id="keys-title">Your endpoint</h2>
+      <p>The key is never written on the Worker. It is sent per request in a header, then dropped. Errors and logs strip it. Session storage is the default; Remember keeps it in this browser only.</p>
+    </header>
+    <div class="fields">
+      <label>API key
+        <input id="api-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-… or a provider key" />
+      </label>
+      <label>Base URL
+        <input id="base-url" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://api.openai.com/v1" />
+      </label>
+      <label>Model id
+        <input id="model" type="text" list="model-list" autocomplete="off" spellcheck="false" placeholder="gpt-4.1-mini" />
+        <datalist id="model-list"></datalist>
+      </label>
+    </div>
+    <div class="key-actions">
+      <label class="check"><input id="remember" type="checkbox" /> Remember on this device</label>
+      <button class="btn btn-ghost" id="clear-key" type="button">Clear</button>
+      <button class="btn btn-ghost" id="list-models" type="button">List models</button>
+    </div>
+    <p id="models-note" class="hint" role="status"></p>
+  </section>
+
+  <div class="tabs" role="tablist" aria-label="Playground">
+    <button class="tab is-on" type="button" role="tab" aria-selected="true" data-tab="chat">Chat</button>
+    <button class="tab" type="button" role="tab" aria-selected="false" data-tab="compare">Compare</button>
+    <button class="tab" type="button" role="tab" aria-selected="false" data-tab="caps">Capabilities</button>
+  </div>
+
+  <section class="panel tab-panel" id="panel-chat" data-panel="chat" aria-labelledby="chat-title">
+    <header class="panel__head">
+      <h2 id="chat-title">Streaming chat</h2>
+      <p>SSE passthrough to <code>/chat/completions</code>. Output is rendered as text, never HTML.</p>
+    </header>
+    <div class="controls">
+      <label>System prompt
+        <textarea id="system" rows="2" placeholder="You are a concise assistant."></textarea>
+      </label>
+      <div class="sliders">
+        <label>Temperature <output id="temp-out">0.4</output>
+          <input id="temperature" type="range" min="0" max="2" step="0.1" value="0.4" />
+        </label>
+        <label>Max tokens <output id="tokens-out">256</output>
+          <input id="max-tokens" type="range" min="16" max="1024" step="16" value="256" />
+        </label>
+      </div>
+    </div>
+    <ol id="transcript" class="transcript" aria-live="polite"></ol>
+    <form id="composer" class="composer">
+      <label class="sr-only" for="prompt">Message</label>
+      <textarea id="prompt" rows="2" placeholder="Ask your model…" required></textarea>
+      <button class="btn" id="send" type="submit">Send</button>
+    </form>
+  </section>
+
+  <section class="panel tab-panel" id="panel-compare" data-panel="compare" hidden aria-labelledby="compare-title">
+    <header class="panel__head">
+      <h2 id="compare-title">Same prompt, two models</h2>
+      <p>Your endpoint on the left. Workers AI on our account on the right — Turnstile plus a shared daily budget. Completing the check spends one compare.</p>
+    </header>
+    <div class="compare-bar">
+      <div id="turnstile" class="turnstile"></div>
+      <p id="budget-note" class="hint">Checking the daily budget…</p>
+      <button class="btn" id="compare" type="button">Compare</button>
+    </div>
+    <div class="compare-grid">
+      <article class="lane" aria-labelledby="yours-title">
+        <h3 id="yours-title">Yours</h3>
+        <p class="metrics" id="yours-metrics">Latency · TTFT · tokens</p>
+        <pre class="out" id="yours-out"></pre>
+      </article>
+      <article class="lane" aria-labelledby="ours-title">
+        <h3 id="ours-title">Workers AI</h3>
+        <p class="metrics" id="ours-metrics">Latency · TTFT · tokens</p>
+        <pre class="out" id="ours-out"></pre>
+      </article>
+    </div>
+  </section>
+
+  <section class="panel tab-panel" id="panel-caps" data-panel="caps" hidden aria-labelledby="caps-title">
+    <header class="panel__head">
+      <h2 id="caps-title">Capability checks</h2>
+      <p>Four small requests against your endpoint. Failures show the raw error, with the key stripped.</p>
+    </header>
+    <button class="btn" id="run-caps" type="button">Run checks</button>
+    <ul id="caps" class="caps"></ul>
+  </section>
+
+  <p id="status" class="status" role="status"></p>
+
+  <footer class="foot">
+    <p>The Worker allows only <code>/chat/completions</code> and <code>/models</code> under the base you paste. https only. No redirects. No visitor cookies forwarded.</p>
+    <p><a href="https://theserverless.dev/contact" rel="noopener noreferrer">Contact</a> · <a href="https://tech-demos.theserverless.dev/">All demos</a></p>
+  </footer>
+  <noscript><p class="status">This playground needs JavaScript to talk to your endpoint.</p></noscript>
+  <script src="./assets/app.js" type="module"></script>
+</body>
+</html>

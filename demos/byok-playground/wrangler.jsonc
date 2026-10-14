@@ -1,0 +1,50 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tech-demos-byok-playground",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-10-14",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none"
+  },
+  "ai": { "binding": "AI" },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "tech-demos-byok-playground",
+      "database_id": "00000000-0000-4000-8000-000000007461",
+      "migrations_dir": "migrations"
+    }
+  ],
+  // 7461–7463 are unused elsewhere in this repo.
+  "ratelimits": [
+    { "name": "CHAT_LIMIT", "namespace_id": "7461", "simple": { "limit": 20, "period": 60 } },
+    { "name": "MODELS_LIMIT", "namespace_id": "7462", "simple": { "limit": 20, "period": 60 } },
+    { "name": "COMPARE_LIMIT", "namespace_id": "7463", "simple": { "limit": 8, "period": 60 } }
+  ],
+  "vars": {
+    "AI_MODEL": "@cf/meta/llama-3.2-1b-instruct",
+    "DAILY_COMPARE_CAP": "200",
+    "IP_COMPARE_CAP": "12",
+    // Empty in production. .dev.vars / wrangler.local.jsonc set "local" so
+    // wrangler dev (which rewrites Host to the first route) can use test keys
+    // and allow http://localhost to the mock OpenAI server.
+    "ENVIRONMENT": "",
+    // Replace after creating the widget. Local wrangler.local.jsonc uses the always-pass test key.
+    "TURNSTILE_SITE_KEY": "REPLACE_ME"
+  },
+  "secrets": { "required": ["TURNSTILE_SECRET", "IP_HASH_SECRET"] },
+  "routes": [
+    { "pattern": "tech-demos.theserverless.dev/demos/byok-playground*", "zone_name": "theserverless.dev" },
+    { "pattern": "byok-playground.tech-demos.theserverless.dev/*", "zone_name": "theserverless.dev" }
+  ],
+  "workers_dev": true,
+  "observability": {
+    "enabled": true,
+    "logs": { "enabled": true, "head_sampling_rate": 1 },
+    "traces": { "enabled": true, "head_sampling_rate": 1 }
+  }
+}

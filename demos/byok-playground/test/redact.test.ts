@@ -1,0 +1,40 @@
+import { describe, expect, test } from "bun:test";
+import { createLogger, jsonError, redact, redactUnknown } from "../src/worker/redact";
+import { failFromUpstream } from "../src/worker/proxy";
+
+const KEY = "sk-secret-test-key-12345DEADBEEF";
+
+describe("key never appears in logs or errors", () => {
+  test("redact strips the literal key and Bearer tokens", () => {
+    const raw = `upstream 401: Incorrect API key provided: ${KEY}. Bearer ${KEY} is invalid.`;
+    const cleaned = redact(raw, [KEY]);
+    expect(cleaned).not.toContain(KEY);
+    expect(cleaned).not.toContain("sk-secret");
+    expect(cleaned).toContain("[redacted]");
+  });
+
+  test("logger output never contains the key", () => {
+    const lines: string[] = [];
+    const log = createLogger([KEY], (line) => lines.push(line));
+    log.error("upstream_failed", new Error(`401 invalid api key: ${KEY}`), { body: `{"error":"${KEY}"}` });
+    const joined = lines.join("\n");
+    expect(joined).not.toContain(KEY);
+    expect(joined).toContain("[redacted]");
+    expect(joined).toContain("upstream_failed");
+  });
+
+  test("jsonError body never contains the key", async () => {
+    const res = jsonError(401, "upstream", `Incorrect API key provided: ${KEY}`, [KEY]);
+    const body = await res.text();
+    expect(body).not.toContain(KEY);
+    expect(body).toContain("[redacted]");
+    expect(JSON.parse(body).error.code).toBe("upstream");
+  });
+
+  test("failFromUpstream redacts a provider error that echoes the key", () => {
+    const err = failFromUpstream(401, JSON.stringify({ error: { message: `Incorrect API key provided: ${KEY}` } }), [KEY]);
+    expect(err.message).not.toContain(KEY);
+    expect(err.message).toContain("[redacted]");
+    expect(redactUnknown(err, [KEY])).not.toContain(KEY);
+  });
+});

@@ -1,0 +1,37 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tech-demos-byok-playground",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-10-14",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none"
+  },
+  // No Workers AI binding. Wrangler treats that binding as remote-only and
+  // will not boot `wrangler dev` until you log in. Compare uses a labelled stub.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "tech-demos-byok-playground",
+      "database_id": "00000000-0000-4000-8000-000000007461",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "ratelimits": [
+    { "name": "CHAT_LIMIT", "namespace_id": "7461", "simple": { "limit": 20, "period": 60 } },
+    { "name": "MODELS_LIMIT", "namespace_id": "7462", "simple": { "limit": 20, "period": 60 } },
+    { "name": "COMPARE_LIMIT", "namespace_id": "7463", "simple": { "limit": 8, "period": 60 } }
+  ],
+  "vars": {
+    "AI_MODEL": "@cf/meta/llama-3.2-1b-instruct",
+    "DAILY_COMPARE_CAP": "200",
+    "IP_COMPARE_CAP": "12",
+    "ENVIRONMENT": "local",
+    "TURNSTILE_SITE_KEY": "1x00000000000000000000AA"
+  },
+  "workers_dev": true,
+  "observability": { "enabled": true }
+}
