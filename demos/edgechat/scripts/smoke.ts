@@ -86,6 +86,9 @@ if (uploaded.data?.attachment) {
   const file = await fetch(`${base}/api/files/${uploaded.data.attachment.id}`, { headers: { cookie: cookieHeader() } });
   const body = await file.text();
   check("uploaded file round-trips from R2", file.ok && body.includes("smoke attachment"), { status: file.status, bytes: body.length });
+  check("non-image is served as an attachment", file.headers.get("content-disposition")?.startsWith("attachment"), file.headers.get("content-disposition"));
+  check("non-image content-type is octet-stream", file.headers.get("content-type") === "application/octet-stream", file.headers.get("content-type"));
+  check("file response has a sandbox CSP", file.headers.get("content-security-policy") === "default-src 'none'; sandbox", file.headers.get("content-security-policy"));
 }
 
 const seed = history.data?.messages.find((m) => m.attachment?.id === "att_lobby_seed");

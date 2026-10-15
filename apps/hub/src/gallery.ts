@@ -45,6 +45,63 @@ function renderItems(items: string[]): string {
   return items.map((item) => `<li>${escapeHtml(item)}</li>`).join("");
 }
 
+/** Hashed by the hub Worker for the gallery Content-Security-Policy. */
+export const THEME_BOOT_SCRIPT = `(function () {
+      try {
+        var stored = localStorage.getItem("theme");
+        var theme = stored || (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+        document.documentElement.setAttribute("data-theme", theme);
+      } catch (e) {}
+    })();`;
+
+export const GALLERY_UI_SCRIPT = `(function () {
+      var header = document.getElementById("main-header");
+      var ticking = false;
+      function apply() {
+        var y = window.pageYOffset || document.documentElement.scrollTop;
+        if (header) header.classList.toggle("scrolled", y > 8);
+        ticking = false;
+      }
+      window.addEventListener("scroll", function () {
+        if (!ticking) { window.requestAnimationFrame(apply); ticking = true; }
+      }, { passive: true });
+      apply();
+    })();
+
+    (function () {
+      var toggle = document.querySelector(".theme-toggle");
+      if (toggle) {
+        toggle.addEventListener("click", function () {
+          var next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+          document.documentElement.setAttribute("data-theme", next);
+          try { localStorage.setItem("theme", next); } catch (e) {}
+        });
+      }
+      var menu = document.querySelector(".nav-toggle");
+      var nav = document.querySelector(".nav");
+      function closeMenu() {
+        if (!nav || !menu) return;
+        nav.classList.remove("is-open");
+        menu.setAttribute("aria-expanded", "false");
+      }
+      if (menu && nav) {
+        menu.addEventListener("click", function (event) {
+          event.stopPropagation();
+          var open = nav.classList.toggle("is-open");
+          menu.setAttribute("aria-expanded", open ? "true" : "false");
+        });
+        document.addEventListener("keydown", function (event) {
+          if (event.key === "Escape") closeMenu();
+        });
+        document.addEventListener("pointerdown", function (event) {
+          if (!nav.classList.contains("is-open")) return;
+          var target = event.target;
+          if (target instanceof Node && (nav.contains(target) || menu.contains(target))) return;
+          closeMenu();
+        });
+      }
+    })();`;
+
 function renderCard(demo: DemoEntry, index: number): string {
   const path = demoPath(demo.slug);
   const tags = (demo.tags || [])
@@ -109,16 +166,7 @@ export function renderGallery(demos: DemoEntry[]): string {
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Hanken+Grotesk:wght@400..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <script>
-    // Apply the stored theme before paint so the page never flashes.
-    (function () {
-      try {
-        var stored = localStorage.getItem("theme");
-        var theme = stored || (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
-        document.documentElement.setAttribute("data-theme", theme);
-      } catch (e) {}
-    })();
-  </script>
+  <script>${THEME_BOOT_SCRIPT}</script>
   <style>
     /* =================================================================
        Graphite & Ember — tokens mirrored from theserverless.dev
@@ -196,6 +244,7 @@ export function renderGallery(demos: DemoEntry[]): string {
 
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html { font-size: 16px; scroll-behavior: smooth; }
+    :root { --header-content-h: 50px; }
 
     body {
       font-family: var(--font-body);
@@ -289,7 +338,8 @@ export function renderGallery(demos: DemoEntry[]): string {
       justify-content: space-between;
       align-items: center;
       gap: var(--space-4);
-      height: 50px;
+      height: var(--header-content-h);
+      flex-wrap: nowrap;
     }
 
     .logo { display: flex; align-items: center; gap: 0.55rem; }
@@ -430,7 +480,8 @@ export function renderGallery(demos: DemoEntry[]): string {
     [data-theme="light"] .theme-toggle .icon-moon { display: block; }
 
     /* ------------------------------- Main ---------------------------- */
-    main { position: relative; z-index: 1; padding-top: var(--space-8); }
+    main { position: relative; z-index: 1; padding-top: calc(var(--header-content-h) + var(--space-3) * 2 + env(safe-area-inset-top)); }
+    #demos { scroll-margin-top: calc(var(--header-content-h) + var(--space-3) * 2 + env(safe-area-inset-top)); }
 
     .hero { padding: var(--space-7) 0 var(--space-6); }
     .eyebrow {
@@ -737,7 +788,13 @@ export function renderGallery(demos: DemoEntry[]): string {
       margin-bottom: var(--space-3);
     }
     .footer-section li { margin-bottom: var(--space-2); }
-    .footer-section a { font-size: var(--text-sm); color: var(--color-text); }
+    .footer-section a {
+      display: inline-flex;
+      align-items: center;
+      min-height: 44px;
+      font-size: var(--text-sm);
+      color: var(--color-text);
+    }
     .footer-section a:hover { color: var(--color-accent-text); }
     .footer-bottom {
       margin-top: var(--space-5);
@@ -754,7 +811,7 @@ export function renderGallery(demos: DemoEntry[]): string {
 
     @media (max-width: 899px) {
       .nav-toggle { display: inline-flex; }
-      .header-content { height: auto; min-height: 50px; flex-wrap: wrap; gap: var(--space-2); }
+      .header-content { height: var(--header-content-h); flex-wrap: nowrap; gap: var(--space-2); }
       .nav {
         position: absolute;
         top: 100%;
@@ -773,13 +830,14 @@ export function renderGallery(demos: DemoEntry[]): string {
       .nav a { min-height: 44px; padding: 0.65rem 0; }
       .button { min-height: 44px; }
       .theme-toggle { width: 44px; height: 44px; }
-      main { padding-top: calc(var(--space-8) + env(safe-area-inset-top)); }
+      main { padding-top: calc(var(--header-content-h) + var(--space-3) * 2 + env(safe-area-inset-top)); }
     }
 
     @media (max-width: 600px) {
-      .header-content { gap: var(--space-2); }
-      .logo-word { font-size: 1rem; }
-      .button { padding: var(--space-2) var(--space-3); }
+      .header-content { flex-wrap: nowrap; white-space: nowrap; gap: var(--space-2); }
+      .logo-word { display: none; }
+      .header-actions { gap: var(--space-2); }
+      .button { padding: var(--space-1) var(--space-2); }
 
       .facts { grid-template-columns: 1fr; }
       .fact { padding: var(--space-3) 0; }
@@ -849,7 +907,7 @@ export function renderGallery(demos: DemoEntry[]): string {
             <div class="fact__label">Live demo${count === 1 ? "" : "s"}</div>
           </div>
           <div class="fact">
-            <div class="fact__value">Dynamic Workers</div>
+            <div class="fact__value">Cloudflare Workers · 1 Dynamic Worker</div>
             <div class="fact__label">Runtime</div>
           </div>
           <div class="fact">
@@ -913,42 +971,7 @@ ${cards || empty}
     </div>
   </footer>
 
-  <script>
-    // Header hairline appears once the page scrolls. rAF-throttled.
-    (function () {
-      var header = document.getElementById("main-header");
-      var ticking = false;
-      function apply() {
-        var y = window.pageYOffset || document.documentElement.scrollTop;
-        if (header) header.classList.toggle("scrolled", y > 8);
-        ticking = false;
-      }
-      window.addEventListener("scroll", function () {
-        if (!ticking) { window.requestAnimationFrame(apply); ticking = true; }
-      }, { passive: true });
-      apply();
-    })();
-
-    // Theme toggle. CSS drives icon visibility from [data-theme].
-    (function () {
-      var toggle = document.querySelector(".theme-toggle");
-      if (toggle) {
-        toggle.addEventListener("click", function () {
-          var next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
-          document.documentElement.setAttribute("data-theme", next);
-          try { localStorage.setItem("theme", next); } catch (e) {}
-        });
-      }
-      var menu = document.querySelector(".nav-toggle");
-      var nav = document.querySelector(".nav");
-      if (menu && nav) {
-        menu.addEventListener("click", function () {
-          var open = nav.classList.toggle("is-open");
-          menu.setAttribute("aria-expanded", open ? "true" : "false");
-        });
-      }
-    })();
-  </script>
+  <script>${GALLERY_UI_SCRIPT}</script>
 </body>
 </html>`;
 }
