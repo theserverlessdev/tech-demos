@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark light" />
+  <meta name="theme-color" content="#0e0e11" />
+  <title>Omni Judge · Tech Demos · theserverless.dev</title>
+  <meta name="description" content="One Clef-omni call returns a probability for every allowed answer about a photo, a voice note, or a short video." />
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Hanken+Grotesk:wght@400..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script src="./assets/theme.js"></script>
+  <link rel="stylesheet" href="./assets/app.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="https://tech-demos.theserverless.dev/" aria-label="Tech Demos gallery">
+      <svg class="brand__mark" width="26" height="26" viewBox="0 -3 128 128" aria-hidden="true">
+        <g stroke="currentColor" stroke-width="6" stroke-linecap="round" opacity="0.45"><line x1="4" y1="58" x2="20" y2="58"/><line x1="1" y1="72" x2="19" y2="72"/><line x1="6" y1="86" x2="22" y2="86"/></g>
+        <path d="M44 92 C31 92 20 82 20 69 C20 57 29 47 41 46 C45 33 57 24 70 24 C85 24 98 35 100 51 C110 53 118 62 118 72 C118 83 109 92 97 92 Z" fill="none" stroke="currentColor" stroke-width="7.5" stroke-linejoin="round"/>
+        <path d="M69 36 L50 71 L63 71 L57 102 L88 60 L72 60 L80 36 Z" fill="currentColor"/>
+      </svg>
+      <span>Tech Demos</span>
+    </a>
+    <div class="topbar__title">
+      <h1>Omni Judge</h1>
+      <p>One call, every allowed answer</p>
+    </div>
+    <div class="topbar__actions">
+      <a class="btn btn-ghost" href="https://theserverless.dev/contact" rel="noopener">Contact</a>
+      <button class="btn btn-ghost btn-icon" id="theme" type="button" aria-label="Switch colour theme">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9Z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <p class="shows"><span class="shows__k">What this shows</span> Clef-omni reads a photo, a voice note, or a short video in one request and returns a probability for each allowed answer. There is no transcribe-then-classify chain unless you ask for the comparison.</p>
+
+  <section class="can" aria-labelledby="can-title">
+    <h2 id="can-title">What you can do</h2>
+    <ul>
+      <li>Snap a photo, record a voice note, or film up to 10 seconds.</li>
+      <li>Or start from a small self-made sample.</li>
+      <li>Pick a preset checklist, or write up to five questions with two to six options each.</li>
+      <li>Read the top answer, the bar for every option, and the latency.</li>
+      <li>Compare that with Whisper or a vision model, then Clef, on the same image or audio.</li>
+      <li>Look back at recent judgments from this browser.</li>
+    </ul>
+  </section>
+
+  <p class="strip" id="strip" role="status">Media you upload is deleted after 24 hours. Model text is untrusted.</p>
+
+  <main class="layout">
+    <section class="panel" aria-label="Media">
+      <p class="eyebrow">Media</p>
+      <div class="captures">
+        <button class="btn record" id="snap" type="button">Snap a photo</button>
+        <button class="btn record" id="voice" type="button">Record a voice note</button>
+        <button class="btn record" id="film" type="button">Film 10 seconds</button>
+      </div>
+      <div class="files">
+        <label class="btn btn-ghost file">Choose a file
+          <input id="file" type="file" accept="image/png,image/jpeg,image/webp,audio/wav,audio/mpeg,audio/mp3,video/mp4,video/webm" />
+        </label>
+        <label class="btn btn-ghost file">Use the camera roll
+          <input id="capture" type="file" accept="image/*,video/*" />
+        </label>
+      </div>
+      <p class="hint" id="roll-hint">On an iPhone, the camera roll can return HEVC or a file over the size limit. Photos are resized here. Video must be MP4 or WebM, within 10 seconds and 6 MB.</p>
+      <p class="hint" id="perm" hidden></p>
+      <input id="snap-cam" type="file" accept="image/*" capture="environment" hidden />
+      <div class="samples" role="group" aria-label="Samples">
+        <button class="chip" type="button" data-sample="voicemail">Voicemail tone</button>
+        <button class="chip" type="button" data-sample="machine">Machine tone</button>
+        <button class="chip" type="button" data-sample="gallery">Gallery still</button>
+        <button class="chip" type="button" data-sample="package">Package still</button>
+        <button class="chip" type="button" data-sample="clip">Short clip</button>
+      </div>
+      <p class="hint" id="media-note">Nothing selected yet.</p>
+      <div class="preview" id="preview" hidden></div>
+    </section>
+
+    <section class="panel" aria-label="Questions">
+      <p class="eyebrow">Checklist</p>
+      <div class="samples" id="presets" role="group" aria-label="Presets"></div>
+      <div id="questions"></div>
+      <div class="q-actions">
+        <button class="btn btn-ghost" id="add-question" type="button">Add a question</button>
+        <button class="btn btn-ghost" id="own" type="button">Write your own</button>
+      </div>
+      <label class="check">
+        <input id="compare" type="checkbox" />
+        <span>Also run the classic chain and compare latency</span>
+      </label>
+      <p class="hint">On a video, the chain is skipped. Whisper and the vision model do not read the clip.</p>
+      <div class="submit-row">
+        <div id="turnstile" class="turnstile"></div>
+        <button class="btn btn-primary" id="judge" type="button">Judge</button>
+      </div>
+      <p class="hint" id="form-error" role="alert" hidden></p>
+    </section>
+
+    <section class="panel results" id="results" hidden aria-live="polite" aria-label="Results"></section>
+
+    <section class="panel" aria-label="History">
+      <h2>Recent judgments</h2>
+      <ol id="history"></ol>
+      <p class="hint" id="history-empty">Judgments from this browser show up here for 24 hours.</p>
+    </section>
+  </main>
+
+  <div class="overlay" id="overlay" hidden>
+    <div class="overlay__card" role="dialog" aria-modal="true" aria-labelledby="count-label">
+      <p class="eyebrow" id="count-label">Recording</p>
+      <video id="finder" class="finder" muted playsinline autoplay hidden></video>
+      <p class="count" id="count">0:10</p>
+      <p class="hint" id="count-hint">Stops on its own at the limit.</p>
+      <button class="btn btn-primary shutter" id="shutter" type="button" hidden>Take photo</button>
+      <div class="overlay__actions">
+        <button class="btn" id="cancel-rec" type="button">Cancel</button>
+        <button class="btn btn-primary" id="stop-rec" type="button">Stop</button>
+      </div>
+    </div>
+  </div>
+
+  <footer class="foot">
+    <p>
+      Clef-omni on Workers AI.
+      <a href="https://developers.cloudflare.com/workers-ai/models/clef-omni/" rel="noopener">Model page</a>.
+      <a href="https://theserverless.dev/contact" rel="noopener">Contact</a>.
+    </p>
+    <p class="hint" id="test-note" hidden>This page is using the local stub and Cloudflare’s always-pass Turnstile test widget. Production calls Clef-omni.</p>
+  </footer>
+
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" defer></script>
+  <script type="module" src="./assets/app.js"></script>
+</body>
+</html>

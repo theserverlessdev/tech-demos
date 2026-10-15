@@ -1,0 +1,60 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tech-demos-omni-judge",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none"
+  },
+  "ai": { "binding": "AI" },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "tech-demos-omni-judge",
+      "database_id": "268d17af-2a56-4565-bdb7-7fbf71a22bea",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "BUCKET",
+      "bucket_name": "tech-demos-omni-judge"
+      // Lifecycle is not a wrangler.jsonc field. After the bucket exists:
+      // wrangler r2 bucket lifecycle add tech-demos-omni-judge media-expiry media/ --expire-days 1
+    }
+  ],
+  // 7451 judge, 7452 compare, 7453 read. Grep of this repo found none of these ids in use.
+  "ratelimits": [
+    { "name": "JUDGE_LIMIT", "namespace_id": "7451", "simple": { "limit": 6, "period": 60 } },
+    { "name": "COMPARE_LIMIT", "namespace_id": "7452", "simple": { "limit": 4, "period": 60 } },
+    { "name": "READ_LIMIT", "namespace_id": "7453", "simple": { "limit": 60, "period": 60 } }
+  ],
+  "triggers": { "crons": ["17 * * * *"] },
+  "vars": {
+    "OMNI_MODEL": "@cf/cloudflare/clef-omni",
+    "CLEF_MODEL": "@cf/cloudflare/clef",
+    "WHISPER_MODEL": "@cf/openai/whisper-large-v3-turbo",
+    "VISION_MODEL": "@cf/meta/llama-3.2-11b-vision-instruct",
+    // Empty in production. .dev.vars sets "local" so the Turnstile test secret
+    // works under wrangler dev, which rewrites Host to the first route.
+    // "local" also skips Workers AI and returns the labelled stub.
+    "ENVIRONMENT": "",
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFXRuxaIlcSffdZ4"
+  },
+  "secrets": { "required": ["TURNSTILE_SECRET", "IP_HASH_SECRET"] },
+  "routes": [
+    { "pattern": "tech-demos.theserverless.dev/demos/omni-judge*", "zone_name": "theserverless.dev" },
+    { "pattern": "omni-judge.tech-demos.theserverless.dev/*", "zone_name": "theserverless.dev" }
+  ],
+  "workers_dev": false,
+  "limits": { "cpu_ms": 2000 },
+  "observability": {
+    "enabled": true,
+    "logs": { "enabled": true, "head_sampling_rate": 1 },
+    "traces": { "enabled": true, "head_sampling_rate": 1 }
+  }
+}
