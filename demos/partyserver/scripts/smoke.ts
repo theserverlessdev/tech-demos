@@ -225,19 +225,32 @@ if (burst?.id) {
   providerBurst.disconnect();
   providerSeen.disconnect();
   await sleep(400);
-  const junkDoc = new Y.Doc();
-  const providerJunk = new YProvider(host, burst.id, junkDoc, { party: PARTY, disableBc: true });
-  await waitFor(() => providerJunk.wsconnected, 8000);
-  junkDoc.getText("junk").insert(0, "x".repeat(200));
-  junkDoc.getMap("strokes").set("bad", "not-json");
-  await sleep(600);
+  const junkText = new Y.Doc();
+  junkText.getText("junk").insert(0, "x".repeat(200));
+  const junkTextWs = await openSocket(`${base.replace(/^http/, "ws")}/parties/board-room/${burst.id}?_pk=junktext`);
+  junkTextWs.send(wrapSyncFrame(Y.encodeStateAsUpdate(junkText)));
+  await sleep(400);
+  try {
+    junkTextWs.close();
+  } catch {
+    /* already closed */
+  }
+  const junkMap = new Y.Doc();
+  junkMap.getMap("strokes").set("bad", "not-json");
+  const junkMapWs = await openSocket(`${base.replace(/^http/, "ws")}/parties/board-room/${burst.id}?_pk=junkmap`);
+  junkMapWs.send(wrapSyncFrame(Y.encodeStateAsUpdate(junkMap)));
+  await sleep(400);
+  try {
+    junkMapWs.close();
+  } catch {
+    /* already closed */
+  }
   const junkPeer = new Y.Doc();
   const providerJunkPeer = new YProvider(host, burst.id, junkPeer, { party: PARTY, disableBc: true });
   await waitFor(() => providerJunkPeer.wsconnected, 8000);
   await sleep(400);
   check("foreign root text is emptied", junkPeer.getText("junk").length === 0, junkPeer.getText("junk").length);
   check("invalid stroke keys are dropped", !junkPeer.getMap("strokes").has("bad"));
-  providerJunk.disconnect();
   providerJunkPeer.disconnect();
 }
 
@@ -245,14 +258,26 @@ const arrRoom = await call("/api/rooms", { method: "POST", body: { turnstileToke
 const arr = arrRoom.data as CreatedRoom | null;
 check("room for strokes array probe", arrRoom.status === 201 && !!arr && ROOM_ID.test(arr.id), arrRoom.data);
 if (arr?.id) {
-  const docArr = new Y.Doc();
-  const providerArr = new YProvider(host, arr.id, docArr, { party: PARTY, disableBc: true });
-  await waitFor(() => providerArr.wsconnected, 8000);
   const freshAttack = new Y.Doc();
   freshAttack.getArray("strokes").insert(0, ["junk-item", "another"]);
-  Y.applyUpdate(docArr, Y.encodeStateAsUpdate(freshAttack));
-  docArr.getMap("strokes").set("bad", "not-json");
-  await sleep(600);
+  const arrAtk = await openSocket(`${base.replace(/^http/, "ws")}/parties/board-room/${arr.id}?_pk=arratk2`);
+  arrAtk.send(wrapSyncFrame(Y.encodeStateAsUpdate(freshAttack)));
+  await sleep(400);
+  try {
+    arrAtk.close();
+  } catch {
+    /* already closed */
+  }
+  const badMap = new Y.Doc();
+  badMap.getMap("strokes").set("bad", "not-json");
+  const badWs = await openSocket(`${base.replace(/^http/, "ws")}/parties/board-room/${arr.id}?_pk=arrbad`);
+  badWs.send(wrapSyncFrame(Y.encodeStateAsUpdate(badMap)));
+  await sleep(400);
+  try {
+    badWs.close();
+  } catch {
+    /* already closed */
+  }
   const docArrPeer = new Y.Doc();
   const providerArrPeer = new YProvider(host, arr.id, docArrPeer, { party: PARTY, disableBc: true });
   await waitFor(() => providerArrPeer.wsconnected, 8000);
@@ -268,7 +293,6 @@ if (arr?.id) {
   );
   const afterFresh = await waitFor(() => docArrPeer.getMap("strokes").has("okfresh"), 8000);
   check("new stroke still syncs after an array write", afterFresh);
-  providerArr.disconnect();
   providerArrPeer.disconnect();
   providerOk.disconnect();
 }
