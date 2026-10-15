@@ -1,9 +1,11 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "tech-demos-temp-email",
+  "name": "temp-email",
   "main": "src/worker/index.ts",
   "compatibility_date": "2026-08-18",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": ["nodejs_compat", "enable_request_signal"],
+  "dev": { "port": 8797 },
+  "limits": { "cpu_ms": 5000 },
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
@@ -13,38 +15,35 @@
   "r2_buckets": [
     {
       "binding": "ATTACHMENTS",
-      "bucket_name": "tech-demos-temp-email"
+      "bucket_name": "temp-email"
     }
   ],
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "tech-demos-temp-email",
-      "database_id": "c41b5408-e3fd-44d4-9455-f355016b483b",
+      "database_name": "temp-email",
+      "database_id": "00000000-0000-0000-0000-000000000000",
       "migrations_dir": "migrations"
     }
   ],
   "ratelimits": [
-    { "name": "CREATE_LIMIT", "namespace_id": "7321", "simple": { "limit": 6, "period": 60 } },
-    { "name": "READ_LIMIT", "namespace_id": "7322", "simple": { "limit": 90, "period": 60 } }
+    { "name": "CREATE_LIMIT", "namespace_id": "1001", "simple": { "limit": 6, "period": 60 } },
+    { "name": "READ_LIMIT", "namespace_id": "1002", "simple": { "limit": 90, "period": 60 } },
+    { "name": "SMTP_LIMIT", "namespace_id": "7550", "simple": { "limit": 30, "period": 60 } },
+    { "name": "GATE_LIMIT", "namespace_id": "7551", "simple": { "limit": 120, "period": 60 } },
+    { "name": "WEB_CREATE_LIMIT", "namespace_id": "7552", "simple": { "limit": 2, "period": 60 } }
   ],
   "vars": {
-    "MAIL_DOMAIN": "email.lomvic.com",
-    "PUBLIC_ORIGIN": "https://email.lomvic.com",
+    "MAIL_DOMAIN": "mail.example.com",
+    "PUBLIC_ORIGIN": "https://temp-email.example.com",
     "WEB_TTL_MINUTES": "60",
     "MAX_TTL_MINUTES": "1440",
-    // Hosted public demo. Self-host: set "false" and use wrangler.selfhost.jsonc.
-    "HOSTED_MODE": "true",
-    // Public Turnstile site key. Secret is TURNSTILE_SECRET_KEY (wrangler secret put).
-    "TURNSTILE_SITE_KEY": "0x4AAAAAAEwRTER6EMQiuBqw"
+    "HOSTED_MODE": "false",
+    "TURNSTILE_SITE_KEY": ""
   },
-  // Secrets (never commit): AGENT_API_KEY (admin/fleet only), TURNSTILE_SECRET_KEY
+  "secrets": { "required": ["AGENT_API_KEY", "TURNSTILE_SECRET_KEY"] },
+  // Secrets: AGENT_API_KEY (your admin/fleet key), TURNSTILE_SECRET_KEY
   "triggers": { "crons": ["*/15 * * * *"] },
-  "routes": [
-    { "pattern": "email.lomvic.com", "custom_domain": true },
-    { "pattern": "tech-demos.theserverless.dev/demos/temp-email*", "zone_name": "theserverless.dev" },
-    { "pattern": "temp-email.tech-demos.theserverless.dev/*", "zone_name": "theserverless.dev" }
-  ],
   "workers_dev": true,
   "observability": { "enabled": true }
 }

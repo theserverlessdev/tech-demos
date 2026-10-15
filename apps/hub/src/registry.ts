@@ -177,7 +177,7 @@ export const demos: DemoEntry[] = [
     title: "Temp email",
     description: "Disposable inboxes on email.lomvic.com, plus a key you mint for an agent.",
     demonstrates:
-      "An Email Worker receives catch-all mail, parses the MIME message, and stores metadata in D1 and attachment bytes in R2. A cron deletes expired inboxes. An agent mints its own Turnstile-gated key and can long-poll for the next message.",
+      "An Email Worker receives catch-all mail, parses the MIME message, and stores metadata in D1 and message bodies plus attachments in R2. A cron deletes expired inboxes. An agent mints its own Turnstile-gated key and can long-poll for the next message.",
     capabilities: [
       "Mint a short-lived address and copy it",
       "Send the sample message and read the extracted code or link",

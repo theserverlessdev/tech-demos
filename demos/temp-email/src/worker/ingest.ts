@@ -1,10 +1,10 @@
 import PostalMime, { type Address } from "postal-mime";
 import type { AttachmentMeta, DeliveryVia, MessageFull } from "../shared/types";
-import { storeAttachments, messagePrefix, deletePrefix } from "./attachments";
+import { storeAttachments, storeBodies, messagePrefix, deletePrefix } from "./attachments";
 import { newId } from "./auth";
-import { countMessages, insertMessage, type InboxRow } from "./db";
+import { countMessages, hydrateBodies, insertMessage, InsertRefused, sumRawSize, type InboxRow } from "./db";
 import { extractCodes, extractLinks, htmlToText, snippetOf } from "./extract";
-import { MAX_HTML_CHARS, MAX_MESSAGES_PER_INBOX, MAX_RAW_BYTES, MAX_TEXT_CHARS } from "./limits";
+import { MAX_HTML_CHARS, MAX_INBOX_BYTES, MAX_MESSAGES_PER_INBOX, MAX_RAW_BYTES, MAX_TEXT_CHARS } from "./limits";
 
 export type IngestInput = {
   /** PostalMime reads a stream directly, so email() never buffers a message that fails a check. */
@@ -17,7 +17,7 @@ export type IngestInput = {
 /** A reason the message was refused. email() turns it into an SMTP reject, and the API into a 4xx. */
 export class Refusal extends Error {
   constructor(
-    readonly code: "too_large" | "inbox_full",
+    readonly code: "too_large" | "inbox_full" | "storage_budget",
     message: string,
   ) {
     super(message);
@@ -53,6 +53,10 @@ export async function ingest(db: D1Database, bucket: R2Bucket, inbox: InboxRow, 
   if ((await countMessages(db, inbox.id)) >= MAX_MESSAGES_PER_INBOX) {
     throw new Refusal("inbox_full", `The inbox already holds ${MAX_MESSAGES_PER_INBOX} messages.`);
   }
+  const used = await sumRawSize(db, inbox.id);
+  if (used + input.rawSize > MAX_INBOX_BYTES) {
+    throw new Refusal("storage_budget", "This inbox has reached its 5 MB storage budget.");
+  }
 
   const parsed = await PostalMime.parse(input.raw, { attachmentEncoding: "arraybuffer" });
   const text = cap(parsed.text, MAX_TEXT_CHARS);
@@ -65,7 +69,8 @@ export async function ingest(db: D1Database, bucket: R2Bucket, inbox: InboxRow, 
   let attachments: AttachmentMeta[] = [];
   try {
     attachments = await storeAttachments(bucket, inbox.id, id, parsed.attachments);
-    return await insertMessage(db, {
+    const bodies = await storeBodies(bucket, inbox.id, id, text.value, html.value);
+    const row = await insertMessage(db, {
       id,
       inbox_id: inbox.id,
       via: input.via,
@@ -76,8 +81,10 @@ export async function ingest(db: D1Database, bucket: R2Bucket, inbox: InboxRow, 
       to_header: formatAddresses(parsed.to),
       subject: subject.slice(0, 998),
       snippet: snippetOf(readable),
-      text_body: text.value,
-      html_body: html.value,
+      text_body: null,
+      html_body: null,
+      text_r2_key: bodies.textKey,
+      html_r2_key: bodies.htmlKey,
       truncated: text.cut || html.cut,
       raw_size: input.rawSize,
       message_id: parsed.messageId ?? null,
@@ -86,8 +93,17 @@ export async function ingest(db: D1Database, bucket: R2Bucket, inbox: InboxRow, 
       links: JSON.stringify(extractLinks(text.value ?? "", html.value ?? "")),
       attachments: JSON.stringify(attachments),
     });
+    return await hydrateBodies(bucket, row);
   } catch (err) {
     await deletePrefix(bucket, messagePrefix(inbox.id, id));
+    if (err instanceof InsertRefused) {
+      throw new Refusal(
+        err.reason,
+        err.reason === "inbox_full"
+          ? `The inbox already holds ${MAX_MESSAGES_PER_INBOX} messages.`
+          : "This inbox has reached its 5 MB storage budget.",
+      );
+    }
     throw err;
   }
 }

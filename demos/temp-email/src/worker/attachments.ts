@@ -92,11 +92,46 @@ export async function deletePrefix(bucket: R2Bucket, prefix: string): Promise<nu
   }
 }
 
+export function textBodyKey(inboxId: string, messageId: string): string {
+  return `${inboxId}/${messageId}/body.txt`;
+}
+
+export function htmlBodyKey(inboxId: string, messageId: string): string {
+  return `${inboxId}/${messageId}/body.html`;
+}
+
+export async function storeBodies(
+  bucket: R2Bucket,
+  inboxId: string,
+  messageId: string,
+  text: string | null,
+  html: string | null,
+): Promise<{ textKey: string | null; htmlKey: string | null }> {
+  let textKey: string | null = null;
+  let htmlKey: string | null = null;
+  try {
+    if (text) {
+      textKey = textBodyKey(inboxId, messageId);
+      await bucket.put(textKey, text, { httpMetadata: { contentType: "text/plain; charset=utf-8" } });
+    }
+    if (html) {
+      htmlKey = htmlBodyKey(inboxId, messageId);
+      await bucket.put(htmlKey, html, { httpMetadata: { contentType: "text/html; charset=utf-8" } });
+    }
+  } catch (err) {
+    await deletePrefix(bucket, messagePrefix(inboxId, messageId));
+    throw err;
+  }
+  return { textKey, htmlKey };
+}
+
 export function downloadHeaders(object: R2ObjectBody, filename: string | null, mimeType: string): Headers {
   const headers = new Headers();
   object.writeHttpMetadata(headers);
   headers.set("etag", object.httpEtag);
   headers.set("cache-control", "no-store");
+  headers.set("x-content-type-options", "nosniff");
+  headers.set("content-security-policy", "sandbox");
   if (!headers.has("content-type")) headers.set("content-type", mimeType || "application/octet-stream");
   headers.set("content-disposition", contentDisposition(filename));
   return headers;

@@ -1,7 +1,10 @@
 export const MAX_RAW_BYTES = 1024 * 1024;
 export const MAX_MESSAGES_PER_INBOX = 50;
+export const MAX_INBOX_BYTES = 5 * 1024 * 1024;
 export const MAX_TEXT_CHARS = 256 * 1024;
 export const MAX_HTML_CHARS = 512 * 1024;
+export const HTML_TO_TEXT_MAX = 64 * 1024;
+export const JSON_BODY_MAX = 16 * 1024;
 export const MAX_WAIT_SECONDS = 25;
 export const WAIT_POLL_MS = 1000;
 export const SNIPPET_CHARS = 160;
@@ -13,3 +16,8 @@ export const KEY_CREATE_LIMIT = 40;
 export const KEY_WINDOW_MS = 24 * 60 * 60 * 1000;
 export const MAX_KEY_NAME = 64;
 export const API_KEY_PREFIX = "te1_";
+/** Web inboxes cannot be extended past created_at + this many minutes. */
+export const WEB_MAX_TTL_MINUTES = 180;
+export const TOUCH_THROTTLE_MS = 60_000;
+export const CLEANUP_PAGE = 200;
+export const CLEANUP_BUDGET_MS = 20_000;

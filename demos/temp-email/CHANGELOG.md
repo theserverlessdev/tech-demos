@@ -22,7 +22,7 @@ Tempik ties inboxes to a **browser session** cookie/token.
 
 This demo uses three callers:
 
-1. **Web** — no bearer. Create at short TTL. The create response returns an **inbox token** once; the server stores SHA-256. The browser keeps tokens in `localStorage`.
+1. **Web** — no bearer. Create at 60 minutes, extend in 1-hour steps up to 3 hours from creation. The create response returns an **inbox token** once; the server stores SHA-256. The browser keeps tokens in `localStorage`.
 2. **Minted agent key** — Turnstile-gated `POST /api/v1/keys`. Key shown once, stored hashed, quota + revoke. Bearer opens **only inboxes that key created**. Can set `ttlMinutes`, long-poll `wait`, and `deliver` raw MIME for tests.
 3. **Admin `AGENT_API_KEY`** — owner/fleet bootstrap. Timing-safe compare. Opens every inbox. **Not** the public agent path.
 
@@ -36,8 +36,16 @@ Hosted mode is not a free open agent API with a shared secret.
 
 ## Hosting model
 
-- **Hosted:** `email.lomvic.com` on throwaway zone `lomvic.com`. Demo / no SLA, short TTL, Turnstile mint, legal notices. Do **not** touch apex MX on `theserverless.dev` (Google Workspace).
-- **Self-host:** Deploy to Cloudflare button + `wrangler.selfhost.jsonc`. Operator sets `MAIL_DOMAIN`, Turnstile keys, their own admin secret, and an **R2 bucket** for attachments. Full Email Worker + D1 + R2 + agent API on their account.
+- **Hosted:** `email.lomvic.com` on throwaway zone `lomvic.com`. Demo / no SLA, web inboxes last up to 3 hours, Turnstile mint, legal notices. Do **not** touch apex MX on `theserverless.dev` (Google Workspace). Owner deploys with `wrangler.hosted.jsonc`.
+- **Self-host:** Deploy to Cloudflare button uses `wrangler.jsonc` in this folder (no parent imports). Operator sets `MAIL_DOMAIN`, Turnstile keys, their own admin secret, and an **R2 bucket** for bodies and attachments. Full Email Worker + D1 + R2 + agent API on their account.
+
+## 2026-10-15 audit
+
+- Worker folder builds alone (`safeRedirectTarget` vendored; `wrangler.jsonc` is the self-host template).
+- `htmlToText` is linear-time; `email()` has a per-inbox rate limit and a 5 s CPU cap.
+- Per-key create quota is atomic. Web inboxes cannot extend past 3 hours from creation.
+- HTML/text bodies live in R2. Each inbox has a 5 MB raw-size budget.
+- Agent snippet waits on the address the key created. Mobile message view scrolls the Back control into view.
 
 ## Branding
 

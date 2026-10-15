@@ -30,7 +30,7 @@
     </a>
     <div class="topbar__title">
       <h1>Temp email</h1>
-      <p>Disposable inboxes. An Email Worker writes each message to D1.</p>
+      <p>Disposable inboxes. Metadata in D1, bodies in R2.</p>
     </div>
     <div class="topbar__actions">
       <a class="btn btn-ghost" href="#mint-card" id="agent-link">Agent key</a>
@@ -41,7 +41,7 @@
     </div>
   </header>
 
-  <p class="shows shows--bar"><span class="shows__k">What this shows</span> An Email Worker writes each message to D1 and attachment bytes to R2. A cron deletes expired inboxes. Agents mint their own key.</p>
+  <p class="shows shows--bar"><span class="shows__k">What this shows</span> An Email Worker stores metadata in D1 and message bodies plus attachments in R2. A cron deletes expired inboxes. Agents mint their own key.</p>
 
   <div class="mx" id="mx" data-state="checking" role="status">
     <span class="mx__dot"></span>
@@ -49,7 +49,7 @@
   </div>
 
   <div class="notices" id="notices" hidden>
-    <p><strong>Demo, no SLA.</strong> Mail may drop, delay, or be deleted. Testing only. Inboxes expire after a short TTL. This is not a shared public agent API — mint your own key below.</p>
+    <p><strong>Demo, no SLA.</strong> Mail may drop, delay, or be deleted. Testing only. Web inboxes last up to 3 hours from creation. Agent inboxes last up to 24 hours. This is not a shared public agent API — mint your own key below.</p>
   </div>
 
   <main class="layout" id="layout" data-view="list">
@@ -84,7 +84,7 @@
 
       <section class="card sample">
         <p class="eyebrow">No mail yet?</p>
-        <p>Send a sample sign-up message. It goes through the same MIME parser and D1 insert as inbound SMTP.</p>
+        <p>Send a sample sign-up message. It goes through the same MIME parser and storage path as inbound SMTP.</p>
         <button class="btn" id="send-sample" type="button" disabled>Send sample</button>
       </section>
 

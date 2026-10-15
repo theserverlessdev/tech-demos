@@ -13,10 +13,22 @@ import {
   toInboxInfo,
   type InboxRow,
 } from "./db";
-import { consumeCreateQuota, countActiveInboxes, findKeyByHash, insertApiKey, revokeKey, toKeyInfo, touchKey, type ApiKeyRow } from "./keys";
-import { deletePrefix, downloadHeaders, messagePrefix } from "./attachments";
+import { consumeCreateQuota, findKeyByHash, insertApiKey, revokeKey, toKeyInfo, touchKey, type ApiKeyRow } from "./keys";
+import { downloadHeaders } from "./attachments";
 import { ingest, Refusal, sampleMime } from "./ingest";
-import { KEY_CREATE_LIMIT, KEY_INBOX_LIMIT, MAX_KEY_NAME, MAX_MESSAGES_PER_INBOX, MAX_RAW_BYTES, MAX_WAIT_SECONDS, MINUTE_MS, WAIT_POLL_MS } from "./limits";
+import {
+  JSON_BODY_MAX,
+  KEY_CREATE_LIMIT,
+  KEY_INBOX_LIMIT,
+  MAX_INBOX_BYTES,
+  MAX_KEY_NAME,
+  MAX_MESSAGES_PER_INBOX,
+  MAX_RAW_BYTES,
+  MAX_WAIT_SECONDS,
+  MINUTE_MS,
+  WAIT_POLL_MS,
+  WEB_MAX_TTL_MINUTES,
+} from "./limits";
 import { mxStatus } from "./mx";
 import { checkLocalPart, randomLocalPart } from "./names";
 import { mintEnabled, verifyTurnstile } from "./turnstile";
@@ -51,8 +63,40 @@ function intParam(url: URL, name: string, fallback: number, min: number, max: nu
   return Math.min(max, Math.max(min, n));
 }
 
+export async function readCapped(request: Request, maxBytes: number): Promise<Uint8Array> {
+  const declared = request.headers.get("content-length");
+  if (declared !== null && declared !== "") {
+    const n = Number(declared);
+    if (!Number.isFinite(n) || n < 0 || n > maxBytes) {
+      throw new HttpError(413, "too_large", `Body must be ${maxBytes} bytes or smaller.`);
+    }
+  }
+  if (!request.body) return new Uint8Array();
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > maxBytes) {
+      await reader.cancel();
+      throw new HttpError(413, "too_large", `Body must be ${maxBytes} bytes or smaller.`);
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
+}
+
 async function readJson(request: Request): Promise<Record<string, unknown>> {
-  const text = await request.text();
+  const bytes = await readCapped(request, JSON_BODY_MAX);
+  const text = new TextDecoder().decode(bytes);
   if (!text.trim()) return {};
   try {
     const body = JSON.parse(text);
@@ -84,10 +128,7 @@ async function resolveCaller(request: Request, env: Env): Promise<Caller> {
   if (!token) return { admin: false, agent: false, key: null, token: null, ip };
   if (await isAdminKey(token, env)) return { admin: true, agent: true, key: null, token: null, ip };
   const key = await findKeyByHash(env.DB, await sha256Hex(token));
-  if (key) {
-    await touchKey(env.DB, key.id, Date.now());
-    return { admin: false, agent: true, key, token: null, ip };
-  }
+  if (key) return { admin: false, agent: true, key, token: null, ip };
   return { admin: false, agent: false, key: null, token, ip };
 }
 
@@ -134,6 +175,7 @@ async function mintKey(request: Request, env: Env, caller: Caller): Promise<Resp
     throw new HttpError(503, "mint_disabled", "Key mint is off. Set TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY, or use the admin key.");
   }
   const body = await readJson(request);
+  const name = keyName(body);
   const turnstileToken = typeof body.turnstileToken === "string" ? body.turnstileToken.trim() : "";
   if (!(await verifyTurnstile(env, turnstileToken, caller.ip))) {
     throw new HttpError(403, "turnstile_failed", "Turnstile did not pass. Retry the check, then mint again.");
@@ -142,7 +184,7 @@ async function mintKey(request: Request, env: Env, caller: Caller): Promise<Resp
   const now = Date.now();
   const row = await insertApiKey(env.DB, {
     id: newId(),
-    name: keyName(body),
+    name,
     key_hash: await sha256Hex(plaintext),
     created_at: now,
   });
@@ -167,15 +209,9 @@ async function requireMintedKey(caller: Caller): Promise<ApiKeyRow> {
 async function createInbox(request: Request, env: Env, caller: Caller): Promise<Response> {
   if (caller.key) {
     await limit(env.CREATE_LIMIT, `create:key:${caller.key.id}`);
-    const active = await countActiveInboxes(env.DB, caller.key.id);
-    if (active >= caller.key.inbox_limit) {
-      throw new HttpError(429, "quota", `This key already has ${caller.key.inbox_limit} active inboxes. Delete or wait for expiry.`);
-    }
-    if (!(await consumeCreateQuota(env.DB, caller.key))) {
-      throw new HttpError(429, "quota", `This key reached ${caller.key.create_limit} inbox creates in 24 hours.`);
-    }
   } else if (!caller.admin) {
     await limit(env.CREATE_LIMIT, `create:${caller.ip}`);
+    if (hostedMode(env)) await limit(env.WEB_CREATE_LIMIT, `webcreate:${caller.ip}`);
   }
 
   const body = await readJson(request);
@@ -201,21 +237,37 @@ async function createInbox(request: Request, env: Env, caller: Caller): Promise<
   const tokenHash = await sha256Hex(token);
   for (let attempt = 0; attempt < 5; attempt++) {
     const now = Date.now();
-    const row = await insertInbox(env.DB, env.ATTACHMENTS, {
-      id: newId(),
-      local_part: custom ?? randomLocalPart(),
-      token_hash: tokenHash,
-      source: caller.agent ? "agent" : "web",
-      created_at: now,
-      expires_at: now + ttlMinutes * MINUTE_MS,
-      api_key_id: caller.key?.id ?? null,
-    });
-    if (row) {
-      const created: CreatedInbox = { ...toInboxInfo(row, env.MAIL_DOMAIN, 0), token };
-      console.log(JSON.stringify({ event: "inbox_created", source: row.source, custom: custom !== null, ttlMinutes, keyed: caller.key !== null }));
-      return json(created, 201);
+    const inserted = await insertInbox(
+      env.DB,
+      env.ATTACHMENTS,
+      {
+        id: newId(),
+        local_part: custom ?? randomLocalPart(),
+        token_hash: tokenHash,
+        source: caller.agent ? "agent" : "web",
+        created_at: now,
+        expires_at: now + ttlMinutes * MINUTE_MS,
+        api_key_id: caller.key?.id ?? null,
+      },
+      caller.key ? { activeLimit: caller.key.inbox_limit } : undefined,
+    );
+    if ("error" in inserted) {
+      if (inserted.error === "quota") {
+        throw new HttpError(429, "quota", `This key already has ${caller.key?.inbox_limit} active inboxes. Delete or wait for expiry.`);
+      }
+      if (custom !== null) throw new HttpError(409, "taken", `${custom}@${env.MAIL_DOMAIN} is in use. Choose another name.`);
+      continue;
     }
-    if (custom !== null) throw new HttpError(409, "taken", `${custom}@${env.MAIL_DOMAIN} is in use. Choose another name.`);
+    const row = inserted.ok;
+    if (caller.key) {
+      if (!(await consumeCreateQuota(env.DB, caller.key))) {
+        await deleteInbox(env.DB, env.ATTACHMENTS, row.id);
+        throw new HttpError(429, "quota", `This key reached ${caller.key.create_limit} inbox creates in 24 hours.`);
+      }
+    }
+    const created: CreatedInbox = { ...toInboxInfo(row, env.MAIL_DOMAIN, 0), token };
+    console.log(JSON.stringify({ event: "inbox_created", source: row.source, custom: custom !== null, ttlMinutes, keyed: caller.key !== null }));
+    return json(created, 201);
   }
   throw new HttpError(503, "name_collision", "No free random name was found. Try again.");
 }
@@ -232,7 +284,19 @@ async function extendInbox(request: Request, env: Env, caller: Caller, inbox: In
     minutes = caller.agent ? (body.minutes as number) : Math.min(step, body.minutes as number);
   }
   const now = Date.now();
-  const expiresAt = Math.min(Math.max(inbox.expires_at, now) + minutes * MINUTE_MS, now + maxTtl * MINUTE_MS);
+  const ceiling = caller.agent
+    ? inbox.created_at + maxTtl * MINUTE_MS
+    : inbox.created_at + WEB_MAX_TTL_MINUTES * MINUTE_MS;
+  const expiresAt = Math.min(Math.max(inbox.expires_at, now) + minutes * MINUTE_MS, ceiling);
+  if (expiresAt <= inbox.expires_at) {
+    throw new HttpError(
+      400,
+      "ttl_capped",
+      caller.agent
+        ? `This inbox cannot extend past ${maxTtl} minutes from creation.`
+        : `Web inboxes last at most ${WEB_MAX_TTL_MINUTES} minutes from creation.`,
+    );
+  }
   await setExpiry(env.DB, inbox.id, expiresAt);
   return json(await inboxInfo(env, { ...inbox, expires_at: expiresAt }));
 }
@@ -242,7 +306,7 @@ async function wait(request: Request, env: Env, url: URL, inbox: InboxRow): Prom
   const timeout = intParam(url, "timeout", 20, 0, MAX_WAIT_SECONDS);
   const deadline = Date.now() + timeout * 1000;
   for (;;) {
-    const messages = await listFullAfter(env.DB, inbox.id, after, 10);
+    const messages = await listFullAfter(env.DB, env.ATTACHMENTS, inbox.id, after, 10);
     const done = messages.length > 0 || Date.now() + WAIT_POLL_MS > deadline || request.signal.aborted;
     if (done) {
       const result: WaitResult = {
@@ -264,18 +328,25 @@ async function deliver(request: Request, env: Env, inbox: InboxRow, via: "sample
     raw = sampleMime(`${inbox.local_part}@${env.MAIL_DOMAIN}`, env.PUBLIC_ORIGIN, env.MAIL_DOMAIN);
     envelopeFrom = `sample@${env.MAIL_DOMAIN}`;
   } else {
-    const declared = Number(request.headers.get("content-length") ?? "0");
-    if (declared > MAX_RAW_BYTES) throw new HttpError(413, "too_large", "The message is larger than 1 MB.");
-    raw = await request.text();
+    const bytes = await readCapped(request, MAX_RAW_BYTES);
+    raw = new TextDecoder().decode(bytes);
     if (!raw.trim()) throw new HttpError(400, "bad_request", "Send the raw MIME message as the request body.");
     envelopeFrom = request.headers.get("x-envelope-from") ?? "test@localhost";
   }
   try {
-    const message = await ingest(env.DB, env.ATTACHMENTS, inbox, { raw, rawSize: new TextEncoder().encode(raw).byteLength, envelopeFrom, via });
+    const message = await ingest(env.DB, env.ATTACHMENTS, inbox, {
+      raw,
+      rawSize: new TextEncoder().encode(raw).byteLength,
+      envelopeFrom,
+      via,
+    });
     console.log(JSON.stringify({ event: "message_stored", via, size: message.rawSize }));
     return json(message, 201);
   } catch (err) {
-    if (err instanceof Refusal) throw new HttpError(err.code === "too_large" ? 413 : 409, err.code, err.message);
+    if (err instanceof Refusal) {
+      const status = err.code === "too_large" ? 413 : 409;
+      throw new HttpError(status, err.code, err.message);
+    }
     throw err;
   }
 }
@@ -283,7 +354,7 @@ async function deliver(request: Request, env: Env, inbox: InboxRow, via: "sample
 async function streamAttachment(env: Env, inbox: InboxRow, messageId: string, indexRaw: string): Promise<Response> {
   const index = Number(indexRaw);
   if (!Number.isInteger(index) || index < 0) throw new HttpError(400, "bad_request", "Attachment index must be a non-negative integer.");
-  const message = await getMessage(env.DB, inbox.id, messageId);
+  const message = await getMessage(env.DB, env.ATTACHMENTS, inbox.id, messageId);
   if (!message) throw new HttpError(404, "not_found", "No message has this ID in the inbox.");
   const meta = message.attachments[index];
   if (!meta?.r2Key) throw new HttpError(404, "not_found", "No stored file for this attachment.");
@@ -292,13 +363,19 @@ async function streamAttachment(env: Env, inbox: InboxRow, messageId: string, in
   return new Response(object.body, { headers: downloadHeaders(object, meta.filename, meta.mimeType) });
 }
 
-export async function handleApi(request: Request, env: Env, path: string): Promise<Response> {
+export async function handleApi(request: Request, env: Env, path: string, ctx: ExecutionContext): Promise<Response> {
   const url = new URL(request.url);
+  const ip = request.headers.get("cf-connecting-ip") ?? "local";
+  const token = bearerToken(request);
+  const admin = await isAdminKey(token, env);
+  if (!admin) await limit(env.GATE_LIMIT, `gate:${ip}`);
+
   const caller = await resolveCaller(request, env);
   if (!caller.admin) {
     const bucket = caller.key ? `read:key:${caller.key.id}` : `read:${caller.ip}`;
     await limit(env.READ_LIMIT, bucket);
   }
+  if (caller.key) ctx.waitUntil(touchKey(env.DB, caller.key.id, Date.now()));
 
   const method = request.method;
   const parts = path.replace(/^\/api\/v1\/?/, "").split("/").filter(Boolean);
@@ -307,9 +384,11 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
     const config: AppConfig = {
       domain: env.MAIL_DOMAIN,
       webTtlMinutes: Number(env.WEB_TTL_MINUTES),
+      webMaxTtlMinutes: WEB_MAX_TTL_MINUTES,
       maxTtlMinutes: Number(env.MAX_TTL_MINUTES),
       maxMessagesPerInbox: MAX_MESSAGES_PER_INBOX,
       maxMessageBytes: MAX_RAW_BYTES,
+      maxInboxBytes: MAX_INBOX_BYTES,
       mx: await mxStatus(env.MAIL_DOMAIN),
       hosted: hostedMode(env),
       mint: mintConfig(env),
@@ -353,7 +432,8 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
   } else if (section === "wait" && method === "GET" && !messageId) {
     return wait(request, env, url, inbox);
   } else if (section === "sample" && method === "POST" && !messageId) {
-    if (!caller.agent) await limit(env.CREATE_LIMIT, `sample:${caller.ip}`);
+    if (caller.key) await limit(env.CREATE_LIMIT, `sample:key:${caller.key.id}`);
+    else if (!caller.admin) await limit(env.CREATE_LIMIT, `sample:${caller.ip}`);
     return deliver(request, env, inbox, "sample");
   } else if (section === "deliver" && method === "POST" && !messageId) {
     if (!caller.agent) throw new HttpError(403, "forbidden", "Only an API key can deliver raw MIME.");
@@ -375,13 +455,14 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
       return json(list);
     }
     if (messageId && method === "GET") {
-      const message = await getMessage(env.DB, inbox.id, messageId);
+      const message = await getMessage(env.DB, env.ATTACHMENTS, inbox.id, messageId);
       if (!message) throw new HttpError(404, "not_found", "No message has this ID in the inbox.");
       return json(message);
     }
     if (messageId && method === "DELETE") {
-      await deletePrefix(env.ATTACHMENTS, messagePrefix(inbox.id, messageId));
-      if (!(await deleteMessage(env.DB, inbox.id, messageId))) throw new HttpError(404, "not_found", "No message has this ID in the inbox.");
+      if (!(await deleteMessage(env.DB, env.ATTACHMENTS, inbox.id, messageId))) {
+        throw new HttpError(404, "not_found", "No message has this ID in the inbox.");
+      }
       return json({ deleted: true });
     }
   }

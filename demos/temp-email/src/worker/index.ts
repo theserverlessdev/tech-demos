@@ -1,8 +1,8 @@
-import { safeRedirectTarget } from "../../../../packages/shared/src/index";
 import { handleApi, HttpError } from "./api";
 import { cleanupExpired, findActiveInbox } from "./db";
 import { ingest, Refusal } from "./ingest";
 import { MAX_RAW_BYTES } from "./limits";
+import { safeRedirectTarget } from "./redirect";
 
 /** The hub path and the hub-style subdomain both send the visitor to the mail domain, where the addresses live. */
 const REDIRECT_HOSTS = new Set(["tech-demos.theserverless.dev", "temp-email.tech-demos.theserverless.dev"]);
@@ -47,7 +47,7 @@ async function serveAsset(request: Request, env: Env, path: string): Promise<Res
 }
 
 export default {
-  async fetch(request, env): Promise<Response> {
+  async fetch(request, env, ctx): Promise<Response> {
     const url = new URL(request.url);
 
     if (REDIRECT_HOSTS.has(url.hostname)) {
@@ -58,7 +58,7 @@ export default {
 
     if (url.pathname.startsWith("/api/")) {
       try {
-        return await handleApi(request, env, url.pathname);
+        return await handleApi(request, env, url.pathname, ctx);
       } catch (err) {
         return errorResponse(err);
       }
@@ -88,6 +88,12 @@ export default {
     if (!inbox) {
       log("rejected_unknown");
       message.setReject("No active inbox has this address. It may have expired.");
+      return;
+    }
+    const { success } = await env.SMTP_LIMIT.limit({ key: `smtp:${inbox.id}` });
+    if (!success) {
+      log("rejected_rate");
+      message.setReject("This inbox is receiving mail too quickly. Try again in a minute.");
       return;
     }
     try {

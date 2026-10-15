@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { safeRedirectTarget } from "../../packages/shared/src/index.ts";
+import { rewriteDemoPath, safeRedirectTarget } from "./src/worker/redirect.ts";
 
 const origin = "https://email.lomvic.com";
 
@@ -21,4 +21,10 @@ test("prefix without a slash boundary does not jump off the mail origin", () => 
   expect(target?.origin).toBe(origin);
   expect(target?.hostname).toBe("email.lomvic.com");
   expect(target?.href).not.toBe("https://email.lomvic.com.evil.example");
+});
+
+test("rewriteDemoPath requires a slash boundary", () => {
+  expect(rewriteDemoPath("/demos/temp-email", "temp-email")).toBe("/");
+  expect(rewriteDemoPath("/demos/temp-email/inbox", "temp-email")).toBe("/inbox");
+  expect(rewriteDemoPath("/demos/temp-emailx", "temp-email")).toBe("/demos/temp-emailx");
 });

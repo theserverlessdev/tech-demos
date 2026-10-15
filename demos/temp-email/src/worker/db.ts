@@ -1,5 +1,6 @@
 import type { AttachmentMeta, DeliveryVia, InboxInfo, InboxSource, MessageFull, MessageSummary } from "../shared/types";
-import { deletePrefix, inboxPrefix } from "./attachments";
+import { deletePrefix, inboxPrefix, messagePrefix } from "./attachments";
+import { CLEANUP_BUDGET_MS, CLEANUP_PAGE, MAX_INBOX_BYTES, MAX_MESSAGES_PER_INBOX } from "./limits";
 
 export type InboxRow = {
   id: string;
@@ -25,6 +26,8 @@ type MessageRow = {
   snippet: string;
   text_body: string | null;
   html_body: string | null;
+  text_r2_key: string | null;
+  html_r2_key: string | null;
   truncated: number;
   raw_size: number;
   message_id: string | null;
@@ -37,9 +40,10 @@ type MessageRow = {
 export type NewMessage = Omit<MessageRow, "seq" | "truncated"> & { truncated: boolean };
 
 const SUMMARY_COLUMNS = `seq, id, inbox_id, via, received_at, envelope_from, from_name, from_address, to_header, subject, snippet,
-  text_body IS NOT NULL AS has_text, html_body IS NOT NULL AS has_html, codes, attachments`;
+  (text_body IS NOT NULL OR text_r2_key IS NOT NULL) AS has_text,
+  (html_body IS NOT NULL OR html_r2_key IS NOT NULL) AS has_html, codes, attachments`;
 
-type SummaryRow = Omit<MessageRow, "text_body" | "html_body" | "truncated" | "raw_size" | "message_id" | "date_header" | "links"> & {
+type SummaryRow = Omit<MessageRow, "text_body" | "html_body" | "truncated" | "raw_size" | "message_id" | "date_header" | "links" | "text_r2_key" | "html_r2_key"> & {
   has_text: number;
   has_html: number;
 };
@@ -83,7 +87,11 @@ function toSummary(row: SummaryRow): MessageSummary {
 
 function toFull(row: MessageRow): MessageFull {
   return {
-    ...toSummary({ ...row, has_text: row.text_body === null ? 0 : 1, has_html: row.html_body === null ? 0 : 1 }),
+    ...toSummary({
+      ...row,
+      has_text: row.text_body === null && !row.text_r2_key ? 0 : 1,
+      has_html: row.html_body === null && !row.html_r2_key ? 0 : 1,
+    }),
     to: row.to_header,
     text: row.text_body,
     html: row.html_body,
@@ -96,6 +104,19 @@ function toFull(row: MessageRow): MessageFull {
   };
 }
 
+async function readBody(bucket: R2Bucket, key: string | null): Promise<string | null> {
+  if (!key) return null;
+  const object = await bucket.get(key);
+  return object ? object.text() : null;
+}
+
+export async function hydrateBodies(bucket: R2Bucket, row: MessageRow): Promise<MessageFull> {
+  const full = toFull(row);
+  if (full.text == null) full.text = await readBody(bucket, row.text_r2_key);
+  if (full.html == null) full.html = await readBody(bucket, row.html_r2_key);
+  return full;
+}
+
 export async function findActiveInbox(db: D1Database, localPart: string, now = Date.now()): Promise<InboxRow | null> {
   return db
     .prepare("SELECT * FROM inboxes WHERE local_part = ? AND expires_at > ?")
@@ -103,20 +124,50 @@ export async function findActiveInbox(db: D1Database, localPart: string, now = D
     .first<InboxRow>();
 }
 
-/** Returns null when an active inbox already uses the name. */
-export async function insertInbox(db: D1Database, bucket: R2Bucket, row: InboxRow): Promise<InboxRow | null> {
+export type InsertInboxResult = { ok: InboxRow } | { error: "taken" | "quota" };
+
+/** Returns taken when the name is live, quota when the keyed active-inbox cap blocked the insert. */
+export async function insertInbox(
+  db: D1Database,
+  bucket: R2Bucket,
+  row: InboxRow,
+  opts?: { activeLimit?: number },
+): Promise<InsertInboxResult> {
   // An expired inbox that the cron job has not removed yet must not block the name.
   await deleteExpiredInbox(db, bucket, row.local_part, row.created_at);
   try {
+    if (row.api_key_id && opts?.activeLimit != null) {
+      const result = await db
+        .prepare(
+          `INSERT INTO inboxes (id, local_part, token_hash, source, created_at, expires_at, api_key_id)
+           SELECT ?, ?, ?, ?, ?, ?, ?
+           WHERE (SELECT COUNT(*) FROM inboxes WHERE api_key_id = ? AND expires_at > ?) < ?`,
+        )
+        .bind(
+          row.id,
+          row.local_part,
+          row.token_hash,
+          row.source,
+          row.created_at,
+          row.expires_at,
+          row.api_key_id,
+          row.api_key_id,
+          row.created_at,
+          opts.activeLimit,
+        )
+        .run();
+      if (result.meta.changes === 0) return { error: "quota" };
+      return { ok: row };
+    }
     await db
       .prepare(
         "INSERT INTO inboxes (id, local_part, token_hash, source, created_at, expires_at, api_key_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
       )
       .bind(row.id, row.local_part, row.token_hash, row.source, row.created_at, row.expires_at, row.api_key_id)
       .run();
-    return row;
+    return { ok: row };
   } catch (err) {
-    if (String(err).includes("UNIQUE")) return null;
+    if (String(err).includes("UNIQUE")) return { error: "taken" };
     throw err;
   }
 }
@@ -146,6 +197,14 @@ export async function countMessages(db: D1Database, inboxId: string): Promise<nu
   return row?.n ?? 0;
 }
 
+export async function sumRawSize(db: D1Database, inboxId: string): Promise<number> {
+  const row = await db
+    .prepare("SELECT COALESCE(SUM(raw_size), 0) AS n FROM messages WHERE inbox_id = ?")
+    .bind(inboxId)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
 export async function listSummaries(db: D1Database, inboxId: string, after: number, limit: number): Promise<MessageSummary[]> {
   const { results } = await db
     .prepare(`SELECT ${SUMMARY_COLUMNS} FROM messages WHERE inbox_id = ? AND seq > ? ORDER BY seq DESC LIMIT ?`)
@@ -155,48 +214,129 @@ export async function listSummaries(db: D1Database, inboxId: string, after: numb
 }
 
 /** Oldest first, so an agent reads new mail in arrival order. */
-export async function listFullAfter(db: D1Database, inboxId: string, after: number, limit: number): Promise<MessageFull[]> {
+export async function listFullAfter(
+  db: D1Database,
+  bucket: R2Bucket,
+  inboxId: string,
+  after: number,
+  limit: number,
+): Promise<MessageFull[]> {
   const { results } = await db
     .prepare("SELECT * FROM messages WHERE inbox_id = ? AND seq > ? ORDER BY seq ASC LIMIT ?")
     .bind(inboxId, after, limit)
     .all<MessageRow>();
-  return results.map(toFull);
+  return Promise.all(results.map((row) => hydrateBodies(bucket, row)));
 }
 
-export async function getMessage(db: D1Database, inboxId: string, id: string): Promise<MessageFull | null> {
+export async function getMessage(db: D1Database, bucket: R2Bucket, inboxId: string, id: string): Promise<MessageFull | null> {
   const row = await db.prepare("SELECT * FROM messages WHERE inbox_id = ? AND id = ?").bind(inboxId, id).first<MessageRow>();
-  return row ? toFull(row) : null;
+  return row ? hydrateBodies(bucket, row) : null;
 }
 
-export async function deleteMessage(db: D1Database, inboxId: string, id: string): Promise<boolean> {
-  const result = await db.prepare("DELETE FROM messages WHERE inbox_id = ? AND id = ?").bind(inboxId, id).run();
-  return result.meta.changes > 0;
+export async function deleteMessage(db: D1Database, bucket: R2Bucket, inboxId: string, id: string): Promise<boolean> {
+  const row = await db
+    .prepare("DELETE FROM messages WHERE inbox_id = ? AND id = ? RETURNING attachments, text_r2_key, html_r2_key")
+    .bind(inboxId, id)
+    .first<{ attachments: string; text_r2_key: string | null; html_r2_key: string | null }>();
+  if (!row) return false;
+  const attachments = parseJson<AttachmentMeta[]>(row.attachments, []);
+  if (attachments.some((a) => a.r2Key) || row.text_r2_key || row.html_r2_key) {
+    await deletePrefix(bucket, messagePrefix(inboxId, id));
+  }
+  return true;
 }
 
-export async function insertMessage(db: D1Database, m: NewMessage): Promise<MessageFull> {
+export class InsertRefused extends Error {
+  constructor(readonly reason: "inbox_full" | "storage_budget") {
+    super(reason);
+  }
+}
+
+export async function insertMessage(db: D1Database, m: NewMessage): Promise<MessageRow> {
   const row = await db
     .prepare(
       `INSERT INTO messages (id, inbox_id, via, received_at, envelope_from, from_name, from_address, to_header, subject, snippet,
-        text_body, html_body, truncated, raw_size, message_id, date_header, codes, links, attachments)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        text_body, html_body, truncated, raw_size, message_id, date_header, codes, links, attachments, text_r2_key, html_r2_key)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+       WHERE (SELECT COUNT(*) FROM messages WHERE inbox_id = ?) < ?
+         AND (SELECT COALESCE(SUM(raw_size), 0) FROM messages WHERE inbox_id = ?) + ? <= ?
        RETURNING *`,
     )
     .bind(
-      m.id, m.inbox_id, m.via, m.received_at, m.envelope_from, m.from_name, m.from_address, m.to_header, m.subject, m.snippet,
-      m.text_body, m.html_body, m.truncated ? 1 : 0, m.raw_size, m.message_id, m.date_header, m.codes, m.links, m.attachments,
+      m.id,
+      m.inbox_id,
+      m.via,
+      m.received_at,
+      m.envelope_from,
+      m.from_name,
+      m.from_address,
+      m.to_header,
+      m.subject,
+      m.snippet,
+      m.text_body,
+      m.html_body,
+      m.truncated ? 1 : 0,
+      m.raw_size,
+      m.message_id,
+      m.date_header,
+      m.codes,
+      m.links,
+      m.attachments,
+      m.text_r2_key,
+      m.html_r2_key,
+      m.inbox_id,
+      MAX_MESSAGES_PER_INBOX,
+      m.inbox_id,
+      m.raw_size,
+      MAX_INBOX_BYTES,
     )
     .first<MessageRow>();
-  if (!row) throw new Error("Message insert returned no row");
-  return toFull(row);
+  if (!row) {
+    const count = await countMessages(db, m.inbox_id);
+    if (count >= MAX_MESSAGES_PER_INBOX) throw new InsertRefused("inbox_full");
+    throw new InsertRefused("storage_budget");
+  }
+  return row;
 }
 
-/** Deletes expired inboxes, their messages, and R2 attachment objects. */
-export async function cleanupExpired(db: D1Database, bucket: R2Bucket, now = Date.now()): Promise<{ inboxes: number; messages: number }> {
-  const { results } = await db.prepare("SELECT id FROM inboxes WHERE expires_at <= ?").bind(now).all<{ id: string }>();
-  for (const row of results) await deletePrefix(bucket, inboxPrefix(row.id));
-  const [messages, inboxes] = await db.batch([
-    db.prepare("DELETE FROM messages WHERE inbox_id IN (SELECT id FROM inboxes WHERE expires_at <= ?)").bind(now),
-    db.prepare("DELETE FROM inboxes WHERE expires_at <= ?").bind(now),
-  ]);
-  return { inboxes: inboxes.meta.changes, messages: messages.meta.changes };
+/** Deletes expired inboxes in pages so a backlog cannot wedge the cron. */
+export async function cleanupExpired(
+  db: D1Database,
+  bucket: R2Bucket,
+  now = Date.now(),
+): Promise<{ inboxes: number; messages: number }> {
+  const started = Date.now();
+  let inboxes = 0;
+  let messages = 0;
+  for (;;) {
+    if (Date.now() - started > CLEANUP_BUDGET_MS) break;
+    const { results } = await db
+      .prepare(
+        `SELECT i.id AS id,
+           EXISTS(
+             SELECT 1 FROM messages m
+             WHERE m.inbox_id = i.id
+               AND (m.attachments != '[]' OR m.text_r2_key IS NOT NULL OR m.html_r2_key IS NOT NULL)
+           ) AS has_r2
+         FROM inboxes i
+         WHERE i.expires_at <= ?
+         LIMIT ?`,
+      )
+      .bind(now, CLEANUP_PAGE)
+      .all<{ id: string; has_r2: number }>();
+    if (!results.length) break;
+    for (const row of results) {
+      if (row.has_r2) await deletePrefix(bucket, inboxPrefix(row.id));
+    }
+    const ids = results.map((row) => row.id);
+    const placeholders = ids.map(() => "?").join(",");
+    const [msgRes, inbRes] = await db.batch([
+      db.prepare(`DELETE FROM messages WHERE inbox_id IN (${placeholders})`).bind(...ids),
+      db.prepare(`DELETE FROM inboxes WHERE id IN (${placeholders})`).bind(...ids),
+    ]);
+    messages += msgRes.meta.changes;
+    inboxes += inbRes.meta.changes;
+    if (results.length < CLEANUP_PAGE) break;
+  }
+  return { inboxes, messages };
 }
