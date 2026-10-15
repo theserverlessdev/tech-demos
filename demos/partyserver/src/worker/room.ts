@@ -364,7 +364,7 @@ function purgeForeign(doc: Y.Doc, name: string): void {
 }
 
 function isConnection(value: unknown): value is Connection {
-  return isRecord(value) && typeof (value as Connection).send === "function";
+  return typeof value === "object" && value !== null && typeof (value as { send?: unknown }).send === "function";
 }
 
 function positiveInt(value: string | undefined, fallback: number): number {
