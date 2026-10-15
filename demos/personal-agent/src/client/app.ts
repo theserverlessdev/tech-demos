@@ -160,13 +160,21 @@ async function open(id: string) {
   renderNotes(notes.notes);
 }
 
+function turnstileApi(): TurnstileApi | null {
+  const api = window.turnstile;
+  if (!api || typeof api.render !== "function") return null;
+  if ("nodeType" in api) return null;
+  return api;
+}
+
 async function waitForTurnstile(): Promise<TurnstileApi | null> {
   const started = Date.now();
   while (Date.now() - started < 8_000) {
-    if (window.turnstile) return window.turnstile;
+    const api = turnstileApi();
+    if (api && typeof api.render === "function") return api;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  return null;
+  return turnstileApi();
 }
 
 async function mountTurnstile(siteKey: string) {
@@ -178,15 +186,20 @@ async function mountTurnstile(siteKey: string) {
     return;
   }
   const apiWidget = await waitForTurnstile();
-  if (!apiWidget) {
+  const host = $("turnstile-widget");
+  if (!apiWidget || !host) {
     hint("The Turnstile script did not load.", "error");
     return;
   }
-  turnstileId = apiWidget.render($("turnstile"), {
-    sitekey: siteKey,
-    action: DUMMY_READY,
-    theme: document.documentElement.dataset.theme === "light" ? "light" : "dark",
-  });
+  try {
+    turnstileId = apiWidget.render(host, {
+      sitekey: siteKey,
+      action: DUMMY_READY,
+      theme: document.documentElement.dataset.theme === "light" ? "light" : "dark",
+    });
+  } catch {
+    hint("The Turnstile script did not load.", "error");
+  }
 }
 
 $("theme").addEventListener("click", () => {

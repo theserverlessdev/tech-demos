@@ -39,10 +39,10 @@ async function call<T>(path: string, init: { method?: string; body?: unknown } =
 }
 
 console.log(`Target: ${base}`);
-const health = await call<{ ok: boolean; d1: boolean; artifacts: string; turnstile: boolean }>("/health");
+const health = await call<{ ok: boolean; d1: boolean; turnstile: boolean; artifacts?: string }>("/health");
 check("health reaches D1", health.status === 200 && health.data?.d1 === true, health.data);
 check("turnstile secret is configured", health.data?.turnstile === true, health.data);
-console.log(`artifacts binding: ${health.data?.artifacts ?? "unknown"}`);
+check("health does not probe Artifacts", health.data?.artifacts === undefined, health.data);
 
 const session = await call<{ siteKey: string | null; ready: boolean }>("/session");
 check("session sets a visitor cookie", session.status === 200 && cookie.startsWith("mr_vid="), { cookie: Boolean(cookie), siteKey: session.data?.siteKey });
@@ -52,8 +52,7 @@ check("missing turnstile token is rejected", rejected.status === 400 && rejected
 
 const created = await call<{ ready: boolean; repoName: string | null }>("/repo", { method: "POST", body: { turnstileToken: DUMMY } });
 const createdOk = (created.status === 201 || created.status === 200) && created.data?.ready === true;
-if (health.data?.artifacts === "ok") check("create opens an Artifacts repo", createdOk, created.data);
-else check("local mirror opens a repo when Artifacts is down", createdOk, created.data);
+check("open repo after Turnstile", createdOk, created.data);
 
 const chat = await call<{ reply: string; committed: boolean; commitHash: string | null }>("/chat", {
   method: "POST",

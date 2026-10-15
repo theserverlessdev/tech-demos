@@ -42,6 +42,7 @@ function splitLines(text: string): string[] {
   return lines;
 }
 
+/** Full-file line diff. Not a unified diff: there are no `@@` hunk headers. */
 export function unifiedDiff(path: string, before: string | null, after: string | null): string {
   const a = splitLines(before ?? "");
   const b = splitLines(after ?? "");

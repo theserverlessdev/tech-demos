@@ -4,5 +4,19 @@
     "types": [],
     "lib": ["ESNext"]
   },
-  "include": ["src/worker/**/*.ts", "src/shared/**/*.ts", "worker-configuration.d.ts"]
+  "include": [
+    "src/worker/api.ts",
+    "src/worker/db.ts",
+    "src/worker/files.ts",
+    "src/worker/http.ts",
+    "src/worker/index.ts",
+    "src/worker/limits.ts",
+    "src/worker/prune.ts",
+    "src/worker/room.ts",
+    "src/worker/session.ts",
+    "src/worker/turnstile.ts",
+    "src/shared/types.ts",
+    "src/shared/slug.ts",
+    "worker-configuration.d.ts"
+  ]
 }

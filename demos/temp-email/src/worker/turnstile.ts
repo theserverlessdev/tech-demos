@@ -1,5 +1,13 @@
+import { hostedMode } from "./auth";
+
 const SITEVERIFY = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 const ACTION = "mint-key";
+
+const DUMMY_SECRETS = new Set([
+  "1x0000000000000000000000000000000AA",
+  "1x0000000000000000000000000000000BB",
+  "1x0000000000000000000000000000000CC",
+]);
 
 type Siteverify = {
   success: boolean;
@@ -7,6 +15,10 @@ type Siteverify = {
   action?: string;
   "error-codes"?: string[];
 };
+
+function allowTestHosts(env: Env, secret: string): boolean {
+  return !hostedMode(env) || DUMMY_SECRETS.has(secret);
+}
 
 export async function verifyTurnstile(env: Env, token: string, ip: string): Promise<boolean> {
   const secret = env.TURNSTILE_SECRET_KEY;
@@ -39,6 +51,7 @@ export async function verifyTurnstile(env: Env, token: string, ip: string): Prom
     expected = "";
   }
   const testHost = host === "localhost" || host === "127.0.0.1" || host === "example.com";
+  if (testHost && !allowTestHosts(env, secret)) return false;
   if (!testHost && result.action && result.action !== ACTION) return false;
   return testHost || host === expected;
 }

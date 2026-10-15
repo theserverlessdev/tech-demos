@@ -1,0 +1,64 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tech-demos-resolve-hq",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none"
+  },
+  // No Workers AI binding. wrangler treats that binding as remote-only and
+  // will not boot `wrangler dev` until you log in. Drafts use the labelled stub.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "tech-demos-resolve-hq",
+      "database_id": "00000000-0000-4000-8000-000000007530",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "ATTACHMENTS",
+      "bucket_name": "tech-demos-resolve-hq"
+    }
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "INBOUND",
+        "queue": "tech-demos-resolve-hq-inbound"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "tech-demos-resolve-hq-inbound",
+        "max_batch_size": 5,
+        "max_batch_timeout": 2,
+        "max_retries": 3
+      }
+    ]
+  },
+  "ratelimits": [
+    { "name": "WRITE_LIMIT", "namespace_id": "7331", "simple": { "limit": 20, "period": 60 } },
+    { "name": "SESSION_LIMIT", "namespace_id": "7530", "simple": { "limit": 10, "period": 60 } },
+    { "name": "AI_LIMIT", "namespace_id": "7531", "simple": { "limit": 5, "period": 60 } },
+    { "name": "UPLOAD_LIMIT", "namespace_id": "7532", "simple": { "limit": 6, "period": 60 } },
+    { "name": "HEALTH_LIMIT", "namespace_id": "7533", "simple": { "limit": 30, "period": 60 } }
+  ],
+  "vars": {
+    "AI_MODEL": "@cf/zai-org/glm-5.3-flash",
+    "DEV_MAIL_MODE": "queue",
+    "ENVIRONMENT": "local",
+    "DAILY_DRAFT_CAP": "80",
+    "IP_DRAFT_CAP": "8",
+    "TURNSTILE_SITE_KEY": "1x00000000000000000000AA",
+    "TURNSTILE_SECRET": "1x0000000000000000000000000000000AA",
+    "SESSION_SECRET": "local-dev-session-secret"
+  },
+  "workers_dev": true,
+  "observability": { "enabled": true }
+}

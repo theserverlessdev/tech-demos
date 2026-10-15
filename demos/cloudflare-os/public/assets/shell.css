@@ -219,7 +219,12 @@ code {
 .conn__dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
 .conn[data-state="live"] .conn__dot { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 22%, transparent); }
 .conn[data-state="connecting"] .conn__dot { background: var(--warn); animation: blink 1s steps(2) infinite; }
-.conn[data-state="offline"] .conn__dot { background: var(--danger); }
+.conn[data-state="offline"] .conn__dot, .conn[data-state="paused"] .conn__dot { background: var(--danger); }
+.conn[data-state="paused"] {
+  cursor: pointer; min-height: 44px; border-radius: 99px;
+  border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
+  color: var(--danger);
+}
 @keyframes blink { 50% { opacity: 0.3; } }
 .presence { display: flex; align-items: center; padding: 0 6px; }
 .avatar {
@@ -270,7 +275,7 @@ code {
 .splitter:hover, .splitter.dragging { background: var(--ember); }
 
 /* ------------------------------------------------------------ chat */
-.chat { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-height: 0; min-width: 0; background: rgba(var(--bg-rgb), 0.5); overflow: hidden; }
+.chat { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; min-height: 0; min-width: 0; background: rgba(var(--bg-rgb), 0.5); overflow: hidden; }
 .pane-head {
   display: flex; align-items: center; gap: 10px;
   height: 48px; padding: 0 16px;
@@ -328,20 +333,21 @@ code {
 .suggestions::-webkit-scrollbar { display: none; }
 .suggestion {
   flex-shrink: 0; font-size: 12.5px; color: var(--text);
-  border: 1px solid var(--border); border-radius: 99px; padding: 5px 11px;
+  border: 1px solid var(--border); border-radius: 99px; padding: 0 14px;
+  min-height: 44px; display: inline-flex; align-items: center;
   transition: border-color var(--fast), color var(--fast);
 }
 .suggestion:hover { border-color: rgba(var(--ember-rgb), 0.55); color: var(--text-strong); }
 .composer__box {
   display: flex; align-items: flex-end; gap: 8px;
   border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface);
-  padding: 6px 6px 6px 12px;
+  padding: 6px 6px 6px 12px; min-height: 44px;
   transition: border-color var(--fast);
 }
 .composer__box:focus-within { border-color: rgba(var(--ember-rgb), 0.65); }
 .composer textarea {
   flex: 1; resize: none; border: none; outline: none; background: transparent;
-  max-height: 160px; min-height: 24px; padding: 5px 0; font-size: 14.5px; color: var(--text-strong);
+  max-height: 160px; min-height: 32px; padding: 10px 0; font-size: 14.5px; color: var(--text-strong);
 }
 .composer textarea::placeholder { color: var(--muted); }
 .composer__send { width: 34px; height: 34px; border-radius: 8px; background: var(--ember); color: #fff; display: grid; place-items: center; flex-shrink: 0; }
@@ -350,7 +356,7 @@ code {
 .composer__foot { display: flex; justify-content: space-between; gap: 8px; font: 400 11px/1.3 var(--font-mono); color: var(--muted); }
 
 /* ------------------------------------------------------------ gadget pane */
-.gadgets { display: grid; grid-template-rows: auto auto minmax(0, 1fr); min-height: 0; min-width: 0; position: relative; }
+.gadgets { display: grid; grid-template-rows: auto auto minmax(0, 1fr); min-height: 0; min-width: 0; position: relative; overflow-x: hidden; }
 .tabs {
   display: flex; align-items: stretch; gap: 2px; height: 48px; padding: 0 10px;
   border-bottom: 1px solid var(--border); overflow-x: auto; scrollbar-width: none;
@@ -571,9 +577,21 @@ td { color: var(--text-strong); }
 @media (max-width: 1100px) {
   :root { --chat-w: 340px; }
   .brand__word, .conn__label { display: none; }
+  .conn[data-state="paused"] .conn__label { display: inline; }
 }
+
+.reconnect-banner {
+  position: fixed; top: var(--topbar-h); left: 0; right: 0; z-index: 40;
+  display: flex; align-items: center; justify-content: center;
+  min-height: 44px; padding: 8px 14px;
+  background: var(--ember); color: #fff;
+  font: 600 13px/1.3 var(--font-body);
+  border: none; cursor: pointer;
+}
+.reconnect-banner:hover { background: var(--ember-2); }
 @media (max-width: 860px) {
-  body { overflow: auto; }
+  html, body { overflow-x: hidden; }
+  body { overflow-y: auto; }
   .os { grid-template-rows: var(--topbar-h) minmax(0, 1fr) 56px; }
   .main { grid-template-columns: minmax(0, 1fr) !important; }
   .rail, .splitter { display: none; }

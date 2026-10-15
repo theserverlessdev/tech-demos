@@ -1,12 +1,14 @@
 // Smoke: bun run scripts/smoke.ts [baseUrl]
-import { proposeLocally } from "../src/worker/planner";
+import { pathLimit } from "../src/worker/api";
+import { hasSqlStatement, propose, proposeLocally } from "../src/worker/planner";
+import { isPendingExpired, legacySessionId, LOCAL_SESSION_KEY, signSession, verifySession } from "../src/worker/session";
 import {
   decideFromProbabilities,
   heuristicProbabilities,
   parseChoiceAnswer,
   verdictFromClefBody,
 } from "../src/worker/tool-gate";
-import { isLocalRequest, resolveTurnstileSecret, TURNSTILE_DUMMY_TOKEN, TURNSTILE_TEST_SECRET } from "../src/worker/turnstile";
+import { isLocalMode, isLocalRequest, resolveTurnstileSecret, TURNSTILE_DUMMY_TOKEN, TURNSTILE_TEST_SECRET } from "../src/worker/turnstile";
 import type { AuditRow, HealthBody, SessionView } from "../src/shared/types";
 
 const base = (process.argv.find((arg) => arg.startsWith("http")) ?? "http://127.0.0.1:8787").replace(/\/$/, "");
@@ -21,10 +23,36 @@ const allow = decideFromProbabilities({ allow: 0.9, deny: 0.05, "ask-human": 0.0
 check("high allow stays allow", allow.decision === "allow" && allow.confidence > 0.8, allow);
 
 const soft = decideFromProbabilities({ allow: 0.4, deny: 0.3, "ask-human": 0.3 }, null, 0.62);
-check("low confidence escalates to ask-human", soft.decision === "ask-human" && soft.escalated, soft);
+check("low confidence allow escalates to ask-human", soft.decision === "ask-human" && soft.escalated, soft);
 
 const blocked = decideFromProbabilities({ allow: 0.05, deny: 0.9, "ask-human": 0.05 }, 0.85, 0.62);
 check("confident deny stays deny", blocked.decision === "deny" && !blocked.escalated, blocked);
+
+const weakDeny = decideFromProbabilities({ allow: 0.3, deny: 0.4, "ask-human": 0.3 }, null, 0.62);
+check("weak deny stays deny", weakDeny.decision === "deny" && !weakDeny.escalated, weakDeny);
+
+check("pending past expires_at is expired", isPendingExpired(1, 2));
+check("pending before expires_at is live", !isPendingExpired(10, 2));
+
+const signed = await signSession("unit-secret", "a".repeat(32), Math.floor(Date.now() / 1000) + 60);
+check("signed cookie verifies", (await verifySession("unit-secret", signed)) === "a".repeat(32));
+check("forged cookie is rejected", (await verifySession("unit-secret", `${"b".repeat(32)}.9999999999.${"c".repeat(64)}`)) === null);
+check("unsigned 32-hex cookie is rejected", (await verifySession("unit-secret", "a".repeat(32))) === null);
+check("expired signed cookie is rejected", (await verifySession("unit-secret", await signSession("unit-secret", "a".repeat(32), 1), Date.now())) === null);
+check("legacy cookie id is the bare 32-hex value", legacySessionId("ab".repeat(16)) === "ab".repeat(16));
+check("signed cookie is not a legacy id", legacySessionId(signed) === null);
+check("empty cookie is not a legacy id", legacySessionId(null) === null);
+
+check("GET /api/session is read-limited before cookie lookup", pathLimit("GET", "/api/session") === "read");
+check("GET /api/audit is read-limited before cookie lookup", pathLimit("GET", "/api/audit") === "read");
+check("GET /api/nope is read-limited before cookie lookup", pathLimit("GET", "/api/nope") === "read");
+check("DELETE /api/session is read-limited before cookie lookup", pathLimit("DELETE", "/api/session") === "read");
+check("POST /api/chat is chat-limited before cookie lookup", pathLimit("POST", "/api/chat") === "chat");
+check("PATCH /api/model is chat-limited before cookie lookup", pathLimit("PATCH", "/api/model") === "chat");
+check("POST /api/approvals is chat-limited before cookie lookup", pathLimit("POST", "/api/approvals") === "chat");
+check("POST /api/sessions uses the session limit", pathLimit("POST", "/api/sessions") === "session");
+check("GET /api/health is not rate-limited", pathLimit("GET", "/api/health") === "none");
+check("GET /api/config is not rate-limited", pathLimit("GET", "/api/config") === "none");
 
 const sample = {
   model: "clef",
@@ -43,13 +71,12 @@ check("parser rejects a bad payload", parseChoiceAnswer({ answers: { action: { p
 const fromBody = verdictFromClefBody(sample, 0.62, "@cf/cloudflare/clef");
 check("verdict uses the reported confidence", fromBody?.decision === "deny" && fromBody.source === "clef", fromBody);
 
-check("localhost without a secret uses the test secret", resolveTurnstileSecret("127.0.0.1", "").ok === true);
-check("public host without a secret fails closed", resolveTurnstileSecret("clef-gate.tech-demos.theserverless.dev", undefined).ok === false);
-check(
-  "test secret on a public host fails closed",
-  resolveTurnstileSecret("tech-demos.theserverless.dev", TURNSTILE_TEST_SECRET).ok === false,
-);
-check("a real secret on a public host is accepted", resolveTurnstileSecret("clef-gate.tech-demos.theserverless.dev", "real-secret-value").ok === true);
+check("local mode without a secret uses the test secret", resolveTurnstileSecret(true, "").ok === true);
+check("public host without a secret fails closed", resolveTurnstileSecret(false, undefined).ok === false);
+check("test secret off local mode fails closed", resolveTurnstileSecret(false, TURNSTILE_TEST_SECRET).ok === false);
+check("a real secret off local mode is accepted", resolveTurnstileSecret(false, "real-secret-value").ok === true);
+check("LOCAL_DEV=1 is local mode", isLocalMode({ LOCAL_DEV: "1" }));
+check("LOCAL_DEV=0 is not local mode", !isLocalMode({ LOCAL_DEV: "0" }));
 check(
   "wrangler dev route host with a loopback IP still counts as local",
   isLocalRequest(new Request("https://tech-demos.theserverless.dev/api/chat", { headers: { "cf-connecting-ip": "127.0.0.1" } })),
@@ -63,6 +90,24 @@ check("refund prompt maps to read_docs", proposeLocally("Look up the refund poli
 check("email prompt maps to send_email", proposeLocally("Email the customer that the ticket is closed").call?.name === "send_email");
 check("delete prompt maps to delete_record", proposeLocally("Delete customer record acct_1842").call?.args.id === "acct_1842");
 check("drop prompt maps to run_sql", proposeLocally("Run DROP TABLE tickets").call?.args.sql === "DROP TABLE tickets");
+check("remove-from-list without an id does not delete", proposeLocally("Please remove the customer from the newsletter list").call === null);
+check("email mentioning remove stays send_email", proposeLocally("Email the customer that I removed their record").call?.name === "send_email");
+check("select the privacy doc is read_docs not sql", proposeLocally("Can you select the privacy doc for me?").call?.name === "read_docs");
+check("talking about sql does not invent a statement", proposeLocally("What does this desk do with sql?").call === null);
+check("fetch without a URL does not invent one", proposeLocally("Fetch the refund doc").call?.name === "read_docs");
+check("plain English delete-from is not SQL", !hasSqlStatement("Please delete the customer from the newsletter list"));
+check("plain English delete-from does not call a tool", proposeLocally("Please delete the customer from the newsletter list").call === null);
+check("select a doc from the list is not SQL", proposeLocally("Select a doc from the list for me").call?.name !== "run_sql");
+check("insert a note into the ticket is not SQL", proposeLocally("Insert a note into the ticket").call === null);
+check("delete the email to an account is delete_record", proposeLocally("Delete the email I sent to acct_1842").call?.name === "delete_record");
+check("DROP TABLE still maps to run_sql", hasSqlStatement("Run DROP TABLE tickets") && proposeLocally("Run DROP TABLE tickets").call?.name === "run_sql");
+check("SELECT FROM table still maps to run_sql", proposeLocally("Run SELECT * FROM tickets WHERE id = 1").call?.name === "run_sql");
+const emptyPlan = await propose({
+  userText: "Look up the refund policy in the docs",
+  forceLocal: false,
+  runChat: async () => ({}),
+});
+check("empty model reply falls back to the local planner", emptyPlan.planner === "local" && emptyPlan.call?.name === "read_docs", emptyPlan);
 const drop = heuristicProbabilities({
   tool: "run_sql",
   arguments: { sql: "DROP TABLE tickets" },
@@ -154,13 +199,39 @@ async function runSession(read: { status: number; data: ChatBody | null; res: Re
   const cookie = sessionCookie(read.res);
   const readMessages = messagesOf(read.data);
   const readGate = readMessages?.find((message) => message.gate)?.gate;
-  check("read_docs is allowed and quotes the refund window", read.status === 200 && readGate?.decision === "allow" && readGate.tool === "read_docs" && Boolean(readMessages?.some((message) => message.content.includes("14 days"))), {
+  check("read_docs is allowed and quotes the refund window", read.status === 200 && readGate?.decision === "allow" && readGate.tool === "read_docs" && readGate.planner === "local" && Boolean(readMessages?.some((message) => message.content.includes("14 days"))), {
     status: read.status,
     decision: readGate?.decision,
     source: readGate?.source,
     code: errorCode(read.data),
   });
   check("session cookie is set", Boolean(cookie), cookie);
+  check("session cookie is HMAC-signed", Boolean(cookie && /clef_gate=[a-f0-9]{32}\.\d+\.[a-f0-9]{64}/.test(cookie)), cookie);
+
+  const forged = await call<{ fresh?: boolean } & ErrorBody>("/api/session", { cookie: `clef_gate=${"ab".repeat(16)}` });
+  check("unsigned cookie does not open a Durable Object", forged.status === 200 && forged.data?.fresh === true, forged.data);
+
+  const orphanSigned = await signSession(LOCAL_SESSION_KEY, "f".repeat(32), Math.floor(Date.now() / 1000) + 600);
+  const orphan = await call<{ fresh?: boolean } & ErrorBody>("/api/session", { cookie: `clef_gate=${orphanSigned}` });
+  check("signed cookie with no D1 row is reclaimed as fresh", orphan.status === 200 && orphan.data?.fresh === true, orphan.data);
+
+  const unknown = await call<ErrorBody>("/api/nope");
+  check("unknown API route without a session is 401 after the read limit", unknown.status === 401 && errorCode(unknown.data) === "no_session", unknown.data);
+
+  const tooLong = await call<ErrorBody>("/api/chat", {
+    method: "POST",
+    cookie: cookie ?? undefined,
+    headers: localHeaders,
+    body: { text: "x".repeat(501), turnstileToken: TURNSTILE_DUMMY_TOKEN },
+  });
+  check("501-character message is too_long", tooLong.status === 400 && errorCode(tooLong.data) === "too_long", tooLong.data);
+
+  const oversized = await fetch(`${base}/api/chat`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...localHeaders },
+    body: JSON.stringify({ text: "x".repeat(8_200), turnstileToken: TURNSTILE_DUMMY_TOKEN }),
+  });
+  check("body over 8k is rejected", oversized.status === 413, oversized.status);
 
   if (!cookie) {
     console.error("\nCannot continue without a session cookie.");
@@ -234,8 +305,8 @@ async function runSession(read: { status: number; data: ChatBody | null; res: Re
   const decisions = audit.data?.decisions;
   check("audit log has one row per decision", (decisions?.length ?? 0) >= 4, decisions?.length ?? errorCode(audit.data));
   check(
-    "audit rows carry probabilities and latency",
-    Boolean(decisions?.every((row) => typeof row.latencyMs === "number" && row.probabilities.allow + row.probabilities.deny + row.probabilities["ask-human"] > 0.9)),
+    "audit rows carry probabilities, latency, model, and source",
+    Boolean(decisions?.every((row) => typeof row.latencyMs === "number" && row.model && row.source && row.probabilities.allow + row.probabilities.deny + row.probabilities["ask-human"] > 0.9)),
     decisions?.[0],
   );
   check(
@@ -257,6 +328,10 @@ async function runSession(read: { status: number; data: ChatBody | null; res: Re
   });
 
   const forgotten = await call("/api/session", { method: "DELETE", cookie });
-  const after = await call<ErrorBody>("/api/session", { cookie });
-  check("forgetting a session deletes its cookie capability", forgotten.status === 200 && (after.status === 401 || after.status === 410), { forget: forgotten.status, after: after.status });
+  const after = await call<{ fresh?: boolean } & ErrorBody>("/api/session", { cookie });
+  check("forgetting a session drops its D1 row and treats the cookie as fresh", forgotten.status === 200 && after.status === 200 && after.data?.fresh === true, {
+    forget: forgotten.status,
+    after: after.status,
+    fresh: after.data?.fresh,
+  });
 }

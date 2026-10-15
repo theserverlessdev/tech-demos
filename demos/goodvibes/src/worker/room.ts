@@ -2,7 +2,13 @@ import { DurableObject } from "cloudflare:workers";
 import {
   COLLECT_RADIUS,
   COUNTDOWN_MS,
+  FRAME_BURST,
+  FRAME_MAX_BYTES,
+  FRAME_RATE,
+  IDLE_MS,
   MAX_PLAYERS,
+  MAX_SOCKETS_PER_IP,
+  MAX_SPEED,
   ORB_COUNT,
   ROUND_MS,
   clampPos,
@@ -27,6 +33,11 @@ type SocketState = {
   z: number;
   score: number;
   lastMove: number;
+  lastSeen: number;
+  ipHash: string;
+  tokens: number;
+  tokenAt: number;
+  closed: boolean;
 };
 
 type GameSnap = {
@@ -39,8 +50,8 @@ type GameSnap = {
   nextOrb: number;
 };
 
-const MOVE_MIN_MS = 32;
 const COLLECT_R2 = COLLECT_RADIUS * COLLECT_RADIUS;
+const IDLE_CHECK_MS = 60_000;
 
 function jsonEvent(event: ServerEvent): string {
   return JSON.stringify(event);
@@ -51,7 +62,6 @@ function parseClient(raw: string): ClientEvent | null {
     const data = JSON.parse(raw) as unknown;
     if (!data || typeof data !== "object" || Array.isArray(data)) return null;
     const rec = data as { type?: unknown; x?: unknown; z?: unknown };
-    if (rec.type === "ping") return { type: "ping" };
     if (rec.type === "start") return { type: "start" };
     if (rec.type === "move") return { type: "move", x: clampPos(rec.x), z: clampPos(rec.z) };
     return null;
@@ -71,11 +81,25 @@ function emptyGame(): GameSnap {
   return { phase: "waiting", round: 0, endsAt: 0, orbs: [], scores: {}, winnerId: null, nextOrb: 1 };
 }
 
+function takeToken(state: SocketState, now: number): boolean {
+  const elapsed = Math.max(0, (now - state.tokenAt) / 1000);
+  state.tokens = Math.min(FRAME_BURST, state.tokens + elapsed * FRAME_RATE);
+  state.tokenAt = now;
+  if (state.tokens < 1) return false;
+  state.tokens -= 1;
+  return true;
+}
+
 export class VibeRoom extends DurableObject<Env> {
   private game: GameSnap = emptyGame();
+  /** Sockets we already closed with 1008. workerd may still dispatch their frames. */
+  private readonly silenced = new WeakSet<WebSocket>();
+  /** drop() already ran for this socket in this isolate (leave/presence sent). */
+  private readonly dropped = new WeakSet<WebSocket>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('{"type":"ping"}', '{"type":"pong"}'));
     this.ctx.blockConcurrencyWhile(async () => {
       const saved = await this.ctx.storage.get<GameSnap>("game");
       if (saved) this.game = saved;
@@ -97,51 +121,107 @@ export class VibeRoom extends DurableObject<Env> {
     }
     if (this.game.phase === "playing" && now >= this.game.endsAt) {
       await this.endRound();
+      await this.armIdleAlarm();
+      return;
     }
+    await this.kickIdle(now);
+  }
+
+  private rejectSocket(message: string, code: number, reason: string): Response {
+    const pair = new WebSocketPair();
+    const [client, server] = Object.values(pair);
+    server.accept();
+    server.send(jsonEvent({ type: "error", message }));
+    try {
+      server.close(code, reason);
+    } catch {
+      /* already closed */
+    }
+    return new Response(null, { status: 101, webSocket: client });
   }
 
   private acceptClient(request: Request): Response {
-    const sockets = this.ctx.getWebSockets();
-    if (sockets.length >= MAX_PLAYERS) {
-      return new Response("This lobby is full (8).", { status: 503 });
+    const live = this.listedSockets();
+    if (live.length >= MAX_PLAYERS) {
+      return this.rejectSocket("This room is full (8). Try another name.", 4001, "full");
+    }
+
+    const ipHash = request.headers.get("x-goodvibes-ip") || "";
+    if (ipHash) {
+      const sameIp = live.filter((row) => row.state.ipHash === ipHash).length;
+      if (sameIp >= MAX_SOCKETS_PER_IP) {
+        return this.rejectSocket("This address already has 2 players in the room.", 4003, "ip");
+      }
     }
 
     const room = request.headers.get("x-goodvibes-room") || "lobby";
-    const id = request.headers.get("x-goodvibes-id") || crypto.randomUUID();
+    const id = crypto.randomUUID();
     const name = sanitizeName(request.headers.get("x-goodvibes-name"));
     const color = colorForId(id);
-    const spawn = spawnPoint(sockets.length, sockets.length + 1);
-    const score = this.game.scores[id] ?? 0;
+    const spawn = spawnPoint(live.length, live.length + 1);
+    const now = Date.now();
 
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
     this.ctx.acceptWebSocket(server);
 
-    const state: SocketState = { id, name, color, x: spawn.x, z: spawn.z, score, lastMove: 0 };
+    const state: SocketState = {
+      id,
+      name,
+      color,
+      x: spawn.x,
+      z: spawn.z,
+      score: 0,
+      lastMove: 0,
+      lastSeen: now,
+      ipHash,
+      tokens: FRAME_BURST,
+      tokenAt: now,
+      closed: false,
+    };
     server.serializeAttachment(state);
-    if (this.game.scores[id] === undefined) this.game.scores[id] = score;
+    this.game.scores[id] = 0;
 
     const you = this.toPlayer(state);
-    const hello: ServerEvent = { type: "hello", room, you, players: this.players(), round: this.roundState() };
+    const hello: ServerEvent = {
+      type: "hello",
+      room,
+      you,
+      players: this.players(),
+      round: this.roundState(),
+      serverNow: now,
+    };
     server.send(jsonEvent(hello));
     this.broadcast({ type: "join", player: you }, server);
     this.broadcast({ type: "presence", players: this.players() });
     void this.persist();
+    void this.armIdleAlarm();
 
     return new Response(null, { status: 101, webSocket: client });
   }
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
-    if (typeof message !== "string") return;
+    if (this.silenced.has(ws)) return;
     const state = ws.deserializeAttachment() as SocketState | null;
     if (!state) return;
-    const event = parseClient(message);
-    if (!event) {
-      ws.send(jsonEvent({ type: "error", message: "That frame was not a move, start, or ping." }));
+    if (state.closed) {
+      this.silenced.add(ws);
       return;
     }
-    if (event.type === "ping") {
-      ws.send(jsonEvent({ type: "pong" }));
+    const now = Date.now();
+    const allowed = takeToken(state, now);
+    const bad = typeof message !== "string" || message.length > FRAME_MAX_BYTES;
+    ws.serializeAttachment(state);
+    if (!allowed || bad) {
+      await this.silence(ws, state, bad ? "bad frame" : "slow down");
+      return;
+    }
+    state.lastSeen = now;
+    ws.serializeAttachment(state);
+
+    const event = parseClient(message as string);
+    if (!event) {
+      ws.send(jsonEvent({ type: "error", message: "That frame was not a move or start." }));
       return;
     }
     if (event.type === "start") {
@@ -149,14 +229,14 @@ export class VibeRoom extends DurableObject<Env> {
       return;
     }
 
-    const now = Date.now();
-    if (now - state.lastMove < MOVE_MIN_MS) return;
+    const dt = Math.min(now - state.lastMove, 250);
+    const budget = (MAX_SPEED * (state.lastMove === 0 ? 250 : dt)) / 1000 + 0.05;
     const dx = event.x - state.x;
     const dz = event.z - state.z;
-    if (dx * dx + dz * dz > 100) return;
-
-    state.x = event.x;
-    state.z = event.z;
+    const d = Math.hypot(dx, dz);
+    const k = d > budget ? budget / d : 1;
+    state.x = clampPos(state.x + dx * k);
+    state.z = clampPos(state.z + dz * k);
     state.lastMove = now;
     ws.serializeAttachment(state);
     this.broadcast({ type: "move", id: state.id, x: state.x, z: state.z }, ws);
@@ -164,40 +244,51 @@ export class VibeRoom extends DurableObject<Env> {
     if (this.game.phase === "playing") await this.tryCollect(ws, state);
   }
 
-  async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {
-    const state = ws.deserializeAttachment() as SocketState | null;
-    try {
-      ws.close(code, reason);
-    } catch {
-      /* already closed */
-    }
-    if (state?.id) this.broadcast({ type: "leave", id: state.id });
-    this.broadcast({ type: "presence", players: this.players() });
-    if (this.ctx.getWebSockets().length === 0) {
-      this.game = emptyGame();
-      await this.ctx.storage.delete("game");
-      await this.ctx.storage.deleteAlarm();
-    }
+  async webSocketClose(ws: WebSocket): Promise<void> {
+    await this.drop(ws);
   }
 
   async webSocketError(ws: WebSocket): Promise<void> {
-    try {
-      ws.close(1011, "error");
-    } catch {
-      /* already closed */
-    }
+    await this.drop(ws);
+  }
+
+  private silence(ws: WebSocket, _state: SocketState, reason: string): Promise<void> {
+    return this.drop(ws, 1008, reason);
+  }
+
+  private async drop(ws: WebSocket, code = 1000, reason = "bye"): Promise<void> {
+    if (this.dropped.has(ws)) return;
+    this.dropped.add(ws);
+    this.silenced.add(ws);
     const state = ws.deserializeAttachment() as SocketState | null;
-    if (state?.id) this.broadcast({ type: "leave", id: state.id });
-    this.broadcast({ type: "presence", players: this.players() });
+    const alreadyClosed = Boolean(state?.closed);
+    if (state && !state.closed) {
+      state.closed = true;
+      try {
+        ws.serializeAttachment(state);
+      } catch {
+        /* closing */
+      }
+    }
+    try {
+      ws.close(code, reason);
+    } catch {
+      /* echoing 1005/1006 throws */
+    }
+    if (!alreadyClosed && state?.id) {
+      this.broadcast({ type: "leave", id: state.id }, ws);
+      this.broadcast({ type: "presence", players: this.players() }, ws);
+    }
+    if (this.listedSockets().length === 0) {
+      this.game = emptyGame();
+      await this.ctx.storage.deleteAlarm();
+      await this.ctx.storage.deleteAll();
+    }
   }
 
   private async startRound(ws: WebSocket): Promise<void> {
     if (this.game.phase === "countdown" || this.game.phase === "playing") {
       ws.send(jsonEvent({ type: "error", message: "A round is already underway." }));
-      return;
-    }
-    if (this.ctx.getWebSockets().length < 1) {
-      ws.send(jsonEvent({ type: "error", message: "Need at least one player." }));
       return;
     }
     this.game.round += 1;
@@ -210,7 +301,7 @@ export class VibeRoom extends DurableObject<Env> {
     this.syncScoresOntoSockets();
     await this.persist();
     await this.ctx.storage.setAlarm(this.game.endsAt);
-    this.broadcast({ type: "round", round: this.roundState(), players: this.players() });
+    this.broadcast({ type: "round", round: this.roundState(), players: this.players(), serverNow: Date.now() });
   }
 
   private async beginPlay(): Promise<void> {
@@ -228,7 +319,7 @@ export class VibeRoom extends DurableObject<Env> {
     this.fillOrbs();
     await this.persist();
     await this.ctx.storage.setAlarm(this.game.endsAt);
-    this.broadcast({ type: "round", round: this.roundState(), players: this.players() });
+    this.broadcast({ type: "round", round: this.roundState(), players: this.players(), serverNow: Date.now() });
   }
 
   private async endRound(): Promise<void> {
@@ -240,7 +331,7 @@ export class VibeRoom extends DurableObject<Env> {
     this.game.winnerId = tied || !top || top.score <= 0 ? null : top.id;
     await this.persist();
     await this.ctx.storage.deleteAlarm();
-    this.broadcast({ type: "round", round: this.roundState(), players: this.players() });
+    this.broadcast({ type: "round", round: this.roundState(), players: this.players(), serverNow: Date.now() });
   }
 
   private async tryCollect(ws: WebSocket, state: SocketState): Promise<void> {
@@ -251,7 +342,7 @@ export class VibeRoom extends DurableObject<Env> {
     this.game.scores[state.id] = state.score;
     ws.serializeAttachment(state);
     this.game.orbs = this.game.orbs.filter((o) => o.id !== hit.id);
-    this.game.orbs.push(this.spawnOrb(hit.kind === "hot" || Math.random() < 0.18));
+    this.game.orbs.push(this.spawnOrb(hit.kind === "hot"));
     await this.persist();
     this.broadcast({
       type: "collect",
@@ -292,12 +383,13 @@ export class VibeRoom extends DurableObject<Env> {
     }
   }
 
-  private listedSockets(): { ws: WebSocket; state: SocketState }[] {
+  private listedSockets(exclude?: WebSocket): { ws: WebSocket; state: SocketState }[] {
     const out: { ws: WebSocket; state: SocketState }[] = [];
     const seen = new Set<string>();
     for (const ws of this.ctx.getWebSockets()) {
+      if (exclude && ws === exclude) continue;
       const state = ws.deserializeAttachment() as SocketState | null;
-      if (!state?.id || seen.has(state.id)) continue;
+      if (!state?.id || state.closed || seen.has(state.id)) continue;
       seen.add(state.id);
       out.push({ ws, state });
     }
@@ -315,12 +407,12 @@ export class VibeRoom extends DurableObject<Env> {
     };
   }
 
-  private players(): Player[] {
-    return this.listedSockets().map((row) => this.toPlayer(row.state));
+  private players(exclude?: WebSocket): Player[] {
+    return this.listedSockets(exclude).map((row) => this.toPlayer(row.state));
   }
 
-  private scoreboard(): ScoreRow[] {
-    return this.players()
+  private scoreboard(exclude?: WebSocket): ScoreRow[] {
+    return this.players(exclude)
       .map((p) => ({ id: p.id, name: p.name, color: p.color, score: p.score }))
       .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
   }
@@ -332,6 +424,7 @@ export class VibeRoom extends DurableObject<Env> {
       phase: this.game.phase,
       round: this.game.round,
       endsAt: this.game.endsAt,
+      serverNow: Date.now(),
       orbs: this.game.orbs,
       scores: board,
       winner,
@@ -342,11 +435,31 @@ export class VibeRoom extends DurableObject<Env> {
     await this.ctx.storage.put("game", this.game);
   }
 
+  private async armIdleAlarm(): Promise<void> {
+    if (this.game.phase === "countdown" || this.game.phase === "playing") return;
+    if (this.listedSockets().length === 0) return;
+    const existing = await this.ctx.storage.getAlarm();
+    const when = Date.now() + IDLE_CHECK_MS;
+    if (existing && existing <= when) return;
+    await this.ctx.storage.setAlarm(when);
+  }
+
+  private async kickIdle(now: number): Promise<void> {
+    if (this.game.phase !== "waiting" && this.game.phase !== "over") return;
+    for (const { ws, state } of this.listedSockets()) {
+      if (now - state.lastSeen <= IDLE_MS) continue;
+      await this.drop(ws, 1000, "idle");
+    }
+    await this.armIdleAlarm();
+  }
+
   private broadcast(event: ServerEvent, except?: WebSocket): void {
     const data = jsonEvent(event);
     for (const client of this.ctx.getWebSockets()) {
       if (client === except) continue;
       try {
+        const attached = client.deserializeAttachment() as SocketState | null;
+        if (attached?.closed) continue;
         client.send(data);
       } catch {
         /* dropped */

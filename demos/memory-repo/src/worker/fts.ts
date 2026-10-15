@@ -1,4 +1,5 @@
 import type { RecallHit } from "../shared/types";
+import { indexableBody } from "./memory-files";
 
 export type FtsDb = {
   exec(sql: string, ...params: (string | number)[]): void;
@@ -26,7 +27,7 @@ export function replaceIndexedFiles(db: FtsDb, files: Record<string, string>, no
   db.exec("DELETE FROM files");
   for (const [path, body] of Object.entries(files)) {
     db.exec("INSERT INTO files (path, body, updated_at) VALUES (?, ?, ?)", path, body, now);
-    db.exec("INSERT INTO memory_fts (path, body) VALUES (?, ?)", path, body);
+    db.exec("INSERT INTO memory_fts (path, body) VALUES (?, ?)", path, indexableBody(path, body));
   }
 }
 

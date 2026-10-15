@@ -9,7 +9,7 @@
     "deploy": "bun run build && wrangler d1 migrations apply DB --remote && wrangler deploy",
     "typecheck": "wrangler types --env-file /dev/null && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
     "cf-typegen": "wrangler types --env-file /dev/null",
-    "test": "bun test/memory.test.ts && bun test/dream.test.ts && bun test/fts.test.ts",
+    "test": "bun test/memory.test.ts && bun test/dream.test.ts && bun test/fts.test.ts && bun test/audit.test.ts",
     "smoke": "bun run scripts/smoke.ts"
   },
   "dependencies": {

@@ -8,7 +8,10 @@
     "deploy": "bun run build && wrangler d1 migrations apply DB --remote && wrangler deploy",
     "typecheck": "wrangler types && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
     "cf-typegen": "wrangler types",
-    "smoke": "bun run scripts/smoke.ts"
+    "test": "bun test test",
+    "preview": "bun run build && bun run scripts/local-preview.ts",
+    "smoke": "bun run scripts/smoke.ts",
+    "capture": "bun run scripts/capture.ts"
   },
   "dependencies": {
     "agents": "0.22.0",

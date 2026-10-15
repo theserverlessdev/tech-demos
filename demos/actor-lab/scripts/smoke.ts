@@ -72,7 +72,18 @@ const serialized = await race("serialized", 4);
 check("serialized mailbox reaches 4 with no overlap", Boolean(serialized && serialized.actual === 4 && serialized.lost === 0 && !serialized.overlapped), serialized);
 
 const page = await fetch(`${base}/`, { headers: cookie ? { cookie } : {} });
-check("page renders the race lab", page.ok && (await page.text()).includes("Actor lab"), { status: page.status });
+const pageHtml = await page.text();
+check("page renders the race lab", page.ok && pageHtml.includes("Actor lab"), { status: page.status });
+check("page uses turnstile-widget, not id=turnstile", pageHtml.includes('id="turnstile-widget"') && !pageHtml.includes('id="turnstile">'), pageHtml.includes("turnstile"));
+
+const deep = await fetch(`${base}/no/such/deep/path`);
+check("deep asset paths are 404", deep.status === 404, deep.status);
+
+const minted = await fetch(`${base}/api/race/result?runId=${crypto.randomUUID()}`);
+check("race result without a visitor cookie is 404", minted.status === 404, minted.status);
+
+const oversized = await call("/api/race/arm", { method: "POST", body: { n: 4, mode: "interleaved", token: TOKEN, pad: "x".repeat(33_000) } });
+check("oversize JSON is rejected before buffering a race arm", oversized.status === 413, oversized.status);
 
 const created = await call<RoomResponse>("/api/rooms", { method: "POST", body: {} });
 check("create room returns a code", created.status === 201 && /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{6}$/.test(created.data?.code ?? ""), created.data?.code);
@@ -85,6 +96,11 @@ const said = code
     })
   : { status: 0, data: null, text: "" };
 check("say stores a human message", said.status === 201 && said.data?.human.text === "Persist this line.", said.data?.human);
+
+const reserved = code
+  ? await call<SayResult>(`/api/rooms/${code}/say`, { method: "POST", body: { name: "Actor", text: "I am not the room.", ask: false } })
+  : { status: 0, data: null, text: "" };
+check("the name Actor is reserved", reserved.status === 201 && reserved.data?.human.name === "Guest", reserved.data?.human);
 
 const scratched = code
   ? await call<RoomResponse>(`/api/rooms/${code}/scratch`, { method: "POST", body: { text: "only in memory" } })
@@ -111,6 +127,51 @@ if (code) {
 }
 check("a second socket hears the say", fanout);
 
+let flooded = false;
+let junkClosed = false;
+let scratchFloodClosed = false;
+if (code) {
+  flooded = await closes1008(code, "Noisy", (ws) => {
+    for (let i = 0; i < 61; i++) ws.send(JSON.stringify({ type: "flood", n: i }));
+  });
+  junkClosed = await closes1008(code, "Junk", (ws) => {
+    for (let i = 0; i < 200; i++) ws.send("not-json");
+  });
+  scratchFloodClosed = await closes1008(code, "Burst", (ws) => {
+    for (let i = 0; i < 500; i++) ws.send(JSON.stringify({ type: "scratch", text: `flood ${i}` }));
+  });
+}
+check("more than 60 frames in 10s closes the socket with 1008", flooded);
+check("200 junk frames close the socket with 1008", junkClosed);
+check("500 scratch frames close the socket with 1008", scratchFloodClosed);
+
+let scratchOpen = false;
+let scratchSaid = false;
+if (code) {
+  const note = new WebSocket(`${base.replace(/^http/, "ws")}/api/rooms/${code}/socket?name=Note`);
+  await opened(note);
+  let closedCode = 0;
+  note.addEventListener("close", (ev) => {
+    closedCode = ev.code;
+  });
+  const heard = new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => resolve(false), 4_000);
+    note.addEventListener("message", (ev) => {
+      if (typeof ev.data !== "string" || !ev.data.includes("after-scratch")) return;
+      clearTimeout(timer);
+      resolve(true);
+    });
+  });
+  for (let i = 0; i < 45; i++) note.send(JSON.stringify({ type: "scratch", text: `note ${i}` }));
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  scratchOpen = note.readyState === WebSocket.OPEN && closedCode !== 1008;
+  if (scratchOpen) note.send(JSON.stringify({ type: "say", text: "after-scratch", ask: false }));
+  scratchSaid = scratchOpen && (await heard);
+  note.close();
+}
+check("45 rapid scratch frames do not close the socket with 1008", scratchOpen);
+check("a say still lands after rapid scratch", scratchSaid);
+
 const locked = code
   ? await call(`/api/rooms/${code}/say`, { method: "POST", body: { name: "Smoke", text: "Ask anyway.", ask: true } })
   : { status: 0, data: null, text: "" };
@@ -126,17 +187,19 @@ const asked = code
   : { status: 0, data: null, text: "" };
 check(
   "ask returns an actor line (Workers AI or fallback)",
-  asked.status === 201 && (asked.data?.actor?.text.length ?? 0) > 10,
-  { source: asked.data?.actor?.source, preview: asked.data?.actor?.text.slice(0, 80) },
+  asked.status === 201 && (asked.data?.actor?.text.length ?? 0) > 10 && asked.data?.actor?.name === "Actor",
+  { source: asked.data?.actor?.source, name: asked.data?.actor?.name, preview: asked.data?.actor?.text.slice(0, 80) },
 );
 
 const evicted = code ? await call<RoomResponse>(`/api/rooms/${code}/evict`, { method: "POST", body: {} }) : { status: 0, data: null, text: "" };
 const kept = evicted.data?.messages.some((message) => message.text === "Persist this line.") ?? false;
+const actorKept = evicted.data?.messages.some((message) => message.role === "actor" && message.name === "Actor") ?? false;
 check("simulate evict keeps SQLite messages and drops scratch", evicted.status === 200 && evicted.data?.scratch === "" && evicted.data?.memory === "reloaded" && kept, {
   memory: evicted.data?.memory,
   scratch: evicted.data?.scratch,
   messages: evicted.data?.messages.length,
 });
+check("evict keeps the actor name Actor", actorKept, evicted.data?.messages.filter((message) => message.role === "actor"));
 
 const missing = await call("/api/rooms/ZZZZZZ");
 check("unknown room is 404", missing.status === 404, missing.data);
@@ -157,4 +220,18 @@ function opened(ws: WebSocket): Promise<void> {
     ws.addEventListener("open", () => resolve());
     ws.addEventListener("error", () => reject(new Error("socket failed")));
   });
+}
+
+async function closes1008(room: string, name: string, send: (ws: WebSocket) => void): Promise<boolean> {
+  const ws = new WebSocket(`${base.replace(/^http/, "ws")}/api/rooms/${room}/socket?name=${name}`);
+  await opened(ws);
+  const closed = new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => resolve(false), 4_000);
+    ws.addEventListener("close", (ev) => {
+      clearTimeout(timer);
+      resolve(ev.code === 1008);
+    });
+  });
+  send(ws);
+  return closed;
 }

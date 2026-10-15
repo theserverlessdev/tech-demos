@@ -1,4 +1,5 @@
-import type { ChatMessage, Presence, RoomSummary, ServerEvent, Session } from "../shared/types";
+import type { ChatMessage, Presence, RoomSummary, ServerEvent, Session, SessionResponse } from "../shared/types";
+import { isInlineImageType, MAX_UPLOAD } from "../shared/types";
 
 const API_BASE = location.pathname.startsWith("/demos/edgechat") ? "/demos/edgechat" : "";
 
@@ -43,6 +44,14 @@ const state = {
   socket: null as WebSocket | null,
   pendingFile: null as File | null,
   seen: new Set<string>(),
+  writesOpen: false,
+  turnstileSiteKey: null as string | null,
+  turnstileId: null as string | null,
+  generation: 0,
+  backoff: 1000,
+  reconnectTimer: 0,
+  pingTimer: 0,
+  stickToBottom: true,
 };
 
 function fileUrl(id: string): string {
@@ -73,6 +82,23 @@ function setHint(message: string, tone: "" | "ok" | "error" = "") {
   else delete el.dataset.tone;
 }
 
+function setRoomUrl(id: string) {
+  const next = `?room=${encodeURIComponent(id)}`;
+  if (`${location.search}` !== next) history.replaceState(null, "", next);
+}
+
+function upsertRoom(room: RoomSummary) {
+  const idx = state.rooms.findIndex((r) => r.id === room.id);
+  if (idx >= 0) state.rooms[idx] = room;
+  else state.rooms.unshift(room);
+  state.rooms.sort((a, b) => {
+    if (a.id === "lobby") return -1;
+    if (b.id === "lobby") return 1;
+    return b.lastMessageAt - a.lastMessageAt;
+  });
+  renderRooms();
+}
+
 function renderRooms() {
   $("room-count").textContent = String(state.rooms.length);
   const list = $("room-list");
@@ -90,7 +116,7 @@ function renderRooms() {
       preview.className = "room-btn__preview";
       preview.textContent = room.lastPreview || `${room.messageCount} messages`;
       btn.append(name, preview);
-      btn.addEventListener("click", () => openRoom(room.id));
+      btn.addEventListener("click", () => void openRoom(room.id));
       li.append(btn);
       return li;
     }),
@@ -107,7 +133,7 @@ function messageEl(msg: ChatMessage): HTMLLIElement {
   const li = document.createElement("li");
   li.className = "msg";
   li.dataset.id = msg.id;
-  if (msg.sessionId && msg.sessionId === state.session?.id) li.classList.add("is-mine");
+  if (msg.authorKey && msg.authorKey === state.session?.publicId) li.classList.add("is-mine");
   const meta = document.createElement("div");
   meta.className = "msg__meta";
   const author = document.createElement("span");
@@ -123,7 +149,7 @@ function messageEl(msg: ChatMessage): HTMLLIElement {
   body.textContent = msg.body;
   li.append(meta, body);
   if (msg.attachment) {
-    if (msg.attachment.contentType.startsWith("image/")) {
+    if (isInlineImageType(msg.attachment.contentType)) {
       const img = document.createElement("img");
       img.className = "msg__img";
       img.alt = msg.attachment.filename;
@@ -141,12 +167,22 @@ function messageEl(msg: ChatMessage): HTMLLIElement {
   return li;
 }
 
+function listNearBottom(): boolean {
+  const list = $("messages");
+  return list.scrollHeight - list.scrollTop - list.clientHeight < 80;
+}
+
+function scrollMessages(force = false) {
+  const list = $("messages");
+  if (force || state.stickToBottom) list.scrollTop = list.scrollHeight;
+}
+
 function renderMessages() {
   const list = $("messages");
   const empty = $("empty");
   empty.hidden = state.messages.length > 0;
   list.replaceChildren(...state.messages.map(messageEl));
-  list.scrollTop = list.scrollHeight;
+  scrollMessages(true);
 }
 
 function addMessage(msg: ChatMessage) {
@@ -155,8 +191,7 @@ function addMessage(msg: ChatMessage) {
   state.messages.push(msg);
   $("messages").append(messageEl(msg));
   $("empty").hidden = true;
-  const list = $("messages");
-  list.scrollTop = list.scrollHeight;
+  scrollMessages();
 }
 
 async function loadRooms() {
@@ -165,15 +200,57 @@ async function loadRooms() {
   renderRooms();
 }
 
+function clearReconnect() {
+  if (state.reconnectTimer) {
+    clearTimeout(state.reconnectTimer);
+    state.reconnectTimer = 0;
+  }
+}
+
+function scheduleReconnect() {
+  clearReconnect();
+  if (document.visibilityState === "hidden") return;
+  if (!state.session?.persisted) return;
+  const wait = state.backoff;
+  state.backoff = Math.min(state.backoff * 2, 30_000);
+  state.reconnectTimer = window.setTimeout(() => connectSocket(), wait);
+}
+
 function connectSocket() {
-  state.socket?.close();
+  if (!state.session?.persisted) {
+    setStrip("Solve the check to join a live room.", "off");
+    return;
+  }
+  clearReconnect();
+  if (state.pingTimer) {
+    clearInterval(state.pingTimer);
+    state.pingTimer = 0;
+  }
+  const previous = state.socket;
+  state.socket = null;
+  previous?.close();
+  const gen = ++state.generation;
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   const socket = new WebSocket(`${proto}//${location.host}${API_BASE}/ws/${encodeURIComponent(state.roomId)}`);
   state.socket = socket;
   setStrip(`Opening Durable Object for #${state.roomId}…`);
-  socket.addEventListener("open", () => setStrip(`Live in #${state.roomId} — messages fan out from one Durable Object.`, "live"));
+  socket.addEventListener("open", () => {
+    if (state.generation !== gen) return;
+    state.backoff = 1000;
+    setStrip(`Live in #${state.roomId} — the room sleeps between messages while you stay connected.`, "live");
+    state.pingTimer = window.setInterval(() => {
+      if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "ping" }));
+    }, 30_000);
+  });
   socket.addEventListener("close", () => {
-    if (state.socket === socket) setStrip("Socket closed. Rejoin the room to connect again.", "off");
+    if (state.generation !== gen) return;
+    if (state.socket === socket) state.socket = null;
+    setStrip("Socket closed. Reconnecting…", "off");
+    scheduleReconnect();
+  });
+  socket.addEventListener("error", () => {
+    if (state.generation !== gen) return;
+    setStrip("Socket error. Reconnecting…", "off");
   });
   socket.addEventListener("message", (ev) => {
     if (typeof ev.data !== "string") return;
@@ -193,14 +270,15 @@ function connectSocket() {
       state.presence = event.presence;
       state.messages = event.messages;
       state.seen = new Set(event.messages.map((m) => m.id));
+      setRoomUrl(event.room.id);
+      upsertRoom(event.room);
       renderPresence();
       renderMessages();
-      void loadRooms();
       return;
     }
     if (event.type === "message") {
       addMessage(event.message);
-      void loadRooms();
+      upsertRoom(event.room);
       return;
     }
     if (event.type === "presence") {
@@ -212,24 +290,97 @@ function connectSocket() {
   });
 }
 
-async function openRoom(id: string) {
-  state.roomId = id;
-  field("room-name").value = id;
-  renderRooms();
-  connectSocket();
+async function openRoom(raw: string) {
+  const name = raw.trim() || "lobby";
+  field("room-name").value = name;
+  if (!state.session?.persisted) {
+    state.roomId = name;
+    setRoomUrl(name);
+    renderRooms();
+    setHint("Complete the check to create or join a live room.", "error");
+    return;
+  }
+  try {
+    const data = await api<{ room: RoomSummary }>("/rooms", { method: "POST", body: { name } });
+    state.roomId = data.room.id;
+    $("room-title").textContent = data.room.name;
+    setRoomUrl(data.room.id);
+    upsertRoom(data.room);
+    renderRooms();
+    connectSocket();
+  } catch (err) {
+    setHint(err instanceof Error ? err.message : "Could not open the room.", "error");
+  }
+}
+
+type TurnstileApi = {
+  render: (el: HTMLElement, opts: { sitekey: string; callback: (token: string) => void; "error-callback": () => void }) => string;
+  reset: (id?: string) => void;
+};
+
+function turnstileApi(): TurnstileApi | undefined {
+  const apiObj = (window as Window & { turnstile?: Partial<TurnstileApi> }).turnstile;
+  if (!apiObj?.render || !apiObj.reset) return undefined;
+  return apiObj as TurnstileApi;
+}
+
+async function mountTurnstile(siteKey: string): Promise<void> {
+  const ready = (window as Window & { __turnstileReady?: Promise<void> }).__turnstileReady;
+  if (ready) await Promise.race([ready, new Promise((resolve) => setTimeout(resolve, 8000))]);
+  const widget = turnstileApi();
+  const host = $("turnstile");
+  host.hidden = false;
+  if (!widget) {
+    setHint("The check could not load. Refresh and try again.", "error");
+    return;
+  }
+  if (state.turnstileId) widget.reset(state.turnstileId);
+  state.turnstileId = widget.render(host, {
+    sitekey: siteKey,
+    callback: (token) => void mintSession(token),
+    "error-callback": () => setHint("The check failed. Refresh and try again.", "error"),
+  });
+}
+
+async function mintSession(turnstileToken: string, displayName?: string): Promise<void> {
+  const data = await api<SessionResponse>("/session", {
+    method: "POST",
+    body: { displayName: displayName ?? field("display-name").value.trim(), turnstileToken },
+  });
+  applySession(data);
+  $("turnstile").hidden = true;
+  setHint("Session saved in KV. Joining the room.", "ok");
+  await openRoom(state.roomId || field("room-name").value || "lobby");
+}
+
+function applySession(data: SessionResponse) {
+  state.session = data.session;
+  state.writesOpen = data.writesOpen;
+  state.turnstileSiteKey = data.turnstileSiteKey;
+  field("display-name").value = data.session.displayName;
 }
 
 async function saveName() {
   const displayName = field("display-name").value.trim();
+  if (!state.session?.persisted) {
+    setHint("Complete the check first.", "error");
+    return;
+  }
   try {
-    const data = await api<{ session: Session }>("/session", { method: "POST", body: { displayName } });
-    state.session = data.session;
-    field("display-name").value = data.session.displayName;
+    const data = await api<SessionResponse>("/session", { method: "POST", body: { displayName } });
+    applySession(data);
     setHint("Name saved in KV. Rejoining so the room sees it.", "ok");
     connectSocket();
   } catch (err) {
     setHint(err instanceof Error ? err.message : "Could not save the name.", "error");
   }
+}
+
+function clearFile() {
+  state.pendingFile = null;
+  $("filechip").hidden = true;
+  $("filechip").textContent = "";
+  field("file").value = "";
 }
 
 async function send(event: Event) {
@@ -239,18 +390,21 @@ async function send(event: Event) {
   const file = state.pendingFile;
   try {
     if (file) {
+      if (file.size > MAX_UPLOAD) {
+        setHint("Files must be 1 MB or smaller.", "error");
+        return;
+      }
       const form = new FormData();
       form.set("file", file);
       if (text) form.set("caption", text);
-      const data = await api<{ message: ChatMessage }>("/rooms/" + encodeURIComponent(state.roomId) + "/upload", {
+      const data = await api<{ message: ChatMessage; room: RoomSummary }>("/rooms/" + encodeURIComponent(state.roomId) + "/upload", {
         method: "POST",
         form,
       });
       addMessage(data.message);
-      state.pendingFile = null;
-      $("filechip").hidden = true;
+      upsertRoom(data.room);
+      clearFile();
       draft.value = "";
-      field("file").value = "";
       setHint("Uploaded to R2 and posted in the room.", "ok");
       return;
     }
@@ -264,17 +418,22 @@ async function send(event: Event) {
       setHint("");
       return;
     }
-    const data = await api<{ message: ChatMessage }>("/rooms/" + encodeURIComponent(state.roomId) + "/messages", {
+    const data = await api<{ message: ChatMessage; room: RoomSummary }>("/rooms/" + encodeURIComponent(state.roomId) + "/messages", {
       method: "POST",
       body: { body: text },
     });
     addMessage(data.message);
+    upsertRoom(data.room);
     draft.value = "";
     setHint("Sent over HTTP (socket was down).", "ok");
   } catch (err) {
     setHint(err instanceof Error ? err.message : "Send failed.", "error");
   }
 }
+
+$("messages").addEventListener("scroll", () => {
+  state.stickToBottom = listNearBottom();
+});
 
 $("theme").addEventListener("click", () => {
   const next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
@@ -295,39 +454,76 @@ $("display-name").addEventListener("keydown", (ev) => {
 });
 $("join").addEventListener("submit", (ev) => {
   ev.preventDefault();
-  const name = field("room-name").value.trim() || "lobby";
-  void openRoom(name);
+  void openRoom(field("room-name").value.trim() || "lobby");
 });
 $("composer").addEventListener("submit", (ev) => void send(ev));
 $("file").addEventListener("change", () => {
   const picked = field("file").files?.[0] ?? null;
+  if (picked && picked.size > MAX_UPLOAD) {
+    setHint("Files must be 1 MB or smaller.", "error");
+    clearFile();
+    return;
+  }
   state.pendingFile = picked;
   const chip = $("filechip");
   if (picked) {
     chip.hidden = false;
-    chip.textContent = picked.name;
+    chip.textContent = `${picked.name} · clear`;
   } else {
     chip.hidden = true;
     chip.textContent = "";
   }
 });
+$("filechip").addEventListener("click", () => clearFile());
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") {
+    state.backoff = 1000;
+    if (!state.socket || state.socket.readyState !== WebSocket.OPEN) connectSocket();
+  }
+});
+window.addEventListener("online", () => {
+  state.backoff = 1000;
+  connectSocket();
+});
 
 const params = new URLSearchParams(location.search);
 const initialRoom = params.get("room") || "lobby";
 field("room-name").value = initialRoom;
+state.roomId = initialRoom;
 
 void (async () => {
   try {
-    const data = await api<{ session: Session }>("/session");
-    state.session = data.session;
-    field("display-name").value = data.session.displayName;
+    const data = await api<SessionResponse>("/session");
+    applySession(data);
+    if (!data.session.persisted) {
+      if (!data.writesOpen || !data.turnstileSiteKey) {
+        setHint("Writes are off until the owner sets a Turnstile widget. History is still readable.", "error");
+      } else {
+        setHint("Complete the check to send and join live rooms.");
+        await mountTurnstile(data.turnstileSiteKey);
+      }
+    }
   } catch {
-    setHint("Could not mint a KV session. You can still try joining.", "error");
+    setHint("Could not read the session. You can still read the lobby.", "error");
   }
   try {
     await loadRooms();
   } catch {
     /* first paint still works after socket hello */
   }
-  await openRoom(initialRoom);
+  if (state.session?.persisted) await openRoom(initialRoom);
+  else {
+    try {
+      const data = await api<{ room: RoomSummary; messages: ChatMessage[] }>(`/rooms/${encodeURIComponent(initialRoom)}`);
+      state.roomId = data.room.id;
+      $("room-title").textContent = data.room.name;
+      state.messages = data.messages;
+      state.seen = new Set(data.messages.map((m) => m.id));
+      upsertRoom(data.room);
+      renderMessages();
+    } catch {
+      /* lobby may be the only readable room */
+    }
+  }
 })();

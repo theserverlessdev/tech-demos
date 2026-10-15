@@ -34,6 +34,7 @@ let files: MemoryFile[] = [];
 let selectedPath = "MEMORY.md";
 let showSource = false;
 let selectedHash = "";
+let inFlight = false;
 
 function hint(el: HTMLElement, text: string, bad = false): void {
   el.textContent = text;
@@ -61,6 +62,21 @@ async function call<T>(path: string, init: { method?: string; body?: unknown } =
 function showApp(ready: boolean): void {
   gate.hidden = ready;
   app.hidden = !ready;
+  document.body.classList.toggle("is-open", ready);
+  if (ready) document.querySelector(".tabs")?.scrollIntoView({ block: "start" });
+}
+
+function setBusy(busy: boolean): void {
+  inFlight = busy;
+  sendButton.disabled = busy;
+  dreamButton.disabled = busy;
+  document.querySelectorAll<HTMLButtonElement>(".chip").forEach((chip) => {
+    chip.disabled = busy;
+  });
+}
+
+function phoneLayout(): boolean {
+  return window.matchMedia("(max-width: 900px)").matches;
 }
 
 function selectPane(name: string): void {
@@ -322,48 +338,86 @@ openButton.addEventListener("click", async () => {
 
 composer.addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (inFlight) return;
   const message = messageInput.value.trim();
   if (!message) return;
-  sendButton.disabled = true;
+  setBusy(true);
   hint(chatHint, "Writing…");
-  const result = await call<ChatResult>("/chat", { method: "POST", body: { message } });
-  sendButton.disabled = false;
-  if (result.status !== 200 || !result.data || result.data.error) {
-    hint(chatHint, result.data?.error?.message ?? "The message was not sent.", true);
-    return;
+  try {
+    const result = await call<ChatResult>("/chat", { method: "POST", body: { message } });
+    if (result.status !== 200 || !result.data || result.data.error) {
+      hint(chatHint, result.data?.error?.message ?? "The message was not sent.", true);
+      return;
+    }
+    messageInput.value = "";
+    const hash = result.data.commitHash;
+    const note = result.data.committed && hash
+      ? `Committed ${hash.slice(0, 7)}.`
+      : result.data.fallback
+        ? "Saved with the local fallback."
+        : "";
+    hint(chatHint, note);
+    if (result.data.committed && hash && phoneLayout()) {
+      const view = document.createElement("button");
+      view.type = "button";
+      view.className = "btn btn-ghost hint-action";
+      view.textContent = `View commit ${hash.slice(0, 7)}`;
+      view.addEventListener("click", () => {
+        selectPane("history");
+        void loadDiff(hash);
+      });
+      chatHint.append(view);
+    }
+    await refresh();
+    if (result.data.committed && !phoneLayout()) selectPane("history");
+  } finally {
+    setBusy(false);
   }
-  messageInput.value = "";
-  const note = result.data.committed && result.data.commitHash
-    ? `Committed ${result.data.commitHash.slice(0, 7)}.`
-    : result.data.fallback
-      ? "Saved with the local fallback."
-      : "";
-  hint(chatHint, note);
-  await refresh();
-  if (result.data.committed) selectPane("history");
 });
 
 document.querySelectorAll<HTMLButtonElement>(".chip").forEach((chip) => {
   chip.addEventListener("click", () => {
+    if (inFlight || sendButton.disabled) return;
     messageInput.value = chip.dataset.seed ?? "";
     composer.requestSubmit();
   });
 });
 
 dreamButton.addEventListener("click", async () => {
-  dreamButton.disabled = true;
+  if (inFlight) return;
+  setBusy(true);
   hint(dreamHint, "Dreaming…");
-  selectPane("history");
-  const result = await call<DreamView>("/dream", { method: "POST", body: {} });
-  dreamButton.disabled = false;
-  if (!result.data || result.data.error) {
-    hint(dreamHint, result.data?.error?.message ?? "The dream failed.", true);
-    return;
+  if (!phoneLayout()) selectPane("history");
+  try {
+    const result = await call<DreamView>("/dream", { method: "POST", body: {} });
+    if (!result.data || result.data.error) {
+      hint(dreamHint, result.data?.error?.message ?? "The dream failed.", true);
+      return;
+    }
+    renderDream(result.data);
+    hint(dreamHint, result.data.status === "committed" ? "Dream committed." : "");
+    await refresh({ keepDiff: true });
+    const commitHash = result.data.commitHash;
+    if (commitHash) {
+      if (phoneLayout()) {
+        const view = document.createElement("button");
+        view.type = "button";
+        view.className = "btn btn-ghost hint-action";
+        view.textContent = `View commit ${commitHash.slice(0, 7)}`;
+        view.addEventListener("click", () => {
+          selectPane("history");
+          void loadDiff(commitHash);
+        });
+        chatHint.replaceChildren();
+        hint(chatHint, `Dream committed ${commitHash.slice(0, 7)}.`);
+        chatHint.append(view);
+      } else {
+        await loadDiff(commitHash);
+      }
+    }
+  } finally {
+    setBusy(false);
   }
-  renderDream(result.data);
-  hint(dreamHint, result.data.status === "committed" ? "Dream committed." : result.data.reason);
-  await refresh({ keepDiff: true });
-  if (result.data.commitHash) await loadDiff(result.data.commitHash);
 });
 
 sourceToggle.addEventListener("click", () => {

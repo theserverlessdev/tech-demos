@@ -4,10 +4,11 @@
   "type": "module",
   "scripts": {
     "build": "bun build src/client/desk.ts --outdir public/assets --target browser --minify",
-    "dev": "bun run build && wrangler dev",
+    "dev": "bun run scripts/ensure-dev-vars.ts && bun run build && wrangler dev",
     "deploy": "bun run build && wrangler deploy",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
-    "cf-typegen": "wrangler types"
+    "typecheck": "wrangler types --env-file /dev/null && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
+    "cf-typegen": "wrangler types --env-file /dev/null",
+    "test": "bun test/gates.test.ts"
   },
   "dependencies": {
     "agents": "0.22.0",

@@ -39,7 +39,7 @@ export function newId(bytes = 10): string {
   return Array.from(crypto.getRandomValues(new Uint8Array(bytes)), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-export function hostedMode(env: Env): boolean {
+export function hostedMode(env: { HOSTED_MODE: string }): boolean {
   return env.HOSTED_MODE === "true";
 }
 

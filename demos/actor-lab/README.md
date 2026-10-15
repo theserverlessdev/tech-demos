@@ -15,10 +15,10 @@ Walkthrough stills and a short video: [artifacts/](./artifacts/).
 
 **What you can do**
 
-- Arm a race after Turnstile and fire Interleaved. The counter ends below the number of updates.
+- Arm a race after Turnstile and fire Interleaved. The counter usually ends below the number of updates.
 - Fire Serialized mailbox. The counter reaches the number of updates.
 - Chat in a room over a hibernating WebSocket.
-- Simulate evict. The scratch note disappears and the SQLite transcript remains. A refresh alone does not drop it.
+- Scratch is isolate memory. It also disappears by itself when the room hibernates after about 10 seconds with no messages. Simulate evict does the same on demand. The SQLite transcript remains. A refresh alone does not drop it.
 
 **What you could build**
 
@@ -38,12 +38,12 @@ Walkthrough stills and a short video: [artifacts/](./artifacts/).
 | --- | --- |
 | **Durable Objects (SQLite)** | One race actor per visitor cookie, one chat actor per room code. A `state` proxy writes fields to SQLite. Handlers on the mailbox run one at a time. |
 | **Workers AI** | Each race update awaits the model between the read and the write, which opens the input gate. The room actor can answer after a Turnstile unlock. |
-| **Hibernatable WebSockets** | The room stays connected across hibernation. A raw `ping` is answered without waking the actor. |
-| **Rate limiting** | Race uses `RACE_LIMIT` (7351) and chat uses `CHAT_LIMIT` (7352), 30 requests a minute per IP. `AI_LIMIT` (7353) stays on this worker. Actor-lab keeps 7351–7353. |
+| **Hibernatable WebSockets** | The room stays connected across hibernation. Send the text frame `ping` and the actor answers `pong` without waking. The page also sends that heartbeat. More than 60 frames in 10 seconds — scratch, junk, or say — closes the socket (1008). Scratch extras inside that cap are dropped at 12 per 10s. |
+| **Rate limiting** | `RACE_LIMIT` (7351) covers arm, step, and GET `/api/race/result`. `CHAT_LIMIT` (7352) covers room create/join/say/unlock and each WebSocket say. Scratch is not charged to `CHAT_LIMIT`. `AI_LIMIT` (7353) runs before every model call. Each binding is 30 requests a minute per IP. Rooms also keep a 30-says-per-minute window in SQLite. Actor-lab keeps 7351–7353; tanbase is moving off that range. |
 | **Turnstile** | Required to arm a race and to unlock chat AI. The live worker's health check reports AI ready. |
 | **Alarms** | Actor rows are deleted after 6 hours idle. |
 
-Fire **Interleaved** and the counter ends below the number of updates: several racers read the same value while the model is in flight. Fire **Serialized mailbox** and the counter reaches N. The chat scratch note is only in isolate memory. **Simulate evict** drops it and reloads the transcript from SQLite. Refresh alone does not.
+Fire **Interleaved** and the counter usually ends below the number of updates: several racers read the same value while the model is in flight. Fire **Serialized mailbox** and the counter reaches N. Scratch is isolate memory. It also disappears by itself when the room hibernates after about 10 seconds with no messages. Simulate evict does the same on demand and reloads the transcript from SQLite. Refresh alone does not.
 
 ## How it works
 
@@ -99,11 +99,11 @@ bunx wrangler whoami
 env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bunx wrangler deploy
 ```
 
-The worker is live. The `v1` migration created the SQLite Durable Object classes. Rate limit namespace ids stay `7351` (race), `7352` (chat), and `7353` (AI). Actor-lab keeps that range. Do not renumber them.
+The worker is live. The `v1` migration created the SQLite Durable Object classes. Rate limit namespace ids stay `7351` (race), `7352` (chat), and `7353` (AI). Actor-lab keeps that range; tanbase is moving off it. Do not renumber them.
 
 Routes:
 
-- `tech-demos.theserverless.dev/demos/actor-lab*`
+- `tech-demos.theserverless.dev/demos/actor-lab` and `tech-demos.theserverless.dev/demos/actor-lab/*`
 - `actor-lab.tech-demos.theserverless.dev/*`
 
 After the worker is on those routes, redeploy the hub so the gallery card is registered:

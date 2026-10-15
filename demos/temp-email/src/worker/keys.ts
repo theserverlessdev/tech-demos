@@ -1,5 +1,5 @@
 import type { KeyInfo } from "../shared/types";
-import { KEY_CREATE_LIMIT, KEY_INBOX_LIMIT, KEY_WINDOW_MS } from "./limits";
+import { KEY_CREATE_LIMIT, KEY_INBOX_LIMIT, KEY_WINDOW_MS, TOUCH_THROTTLE_MS } from "./limits";
 
 export type ApiKeyRow = {
   id: string;
@@ -39,7 +39,10 @@ export async function findKeyById(db: D1Database, id: string): Promise<ApiKeyRow
 }
 
 export async function touchKey(db: D1Database, id: string, now: number): Promise<void> {
-  await db.prepare("UPDATE api_keys SET last_used_at = ? WHERE id = ?").bind(now, id).run();
+  await db
+    .prepare("UPDATE api_keys SET last_used_at = ? WHERE id = ? AND (last_used_at IS NULL OR last_used_at < ?)")
+    .bind(now, id, now - TOUCH_THROTTLE_MS)
+    .run();
 }
 
 export async function revokeKey(db: D1Database, id: string): Promise<boolean> {
@@ -55,20 +58,17 @@ export async function countActiveInboxes(db: D1Database, keyId: string, now = Da
   return row?.n ?? 0;
 }
 
-/** Returns false when the rolling 24h create window is full. */
+export const CONSUME_CREATE_QUOTA_SQL = `UPDATE api_keys
+       SET window_creates = CASE WHEN ?1 - window_start >= ?2 THEN 1 ELSE window_creates + 1 END,
+           window_start = CASE WHEN ?1 - window_start >= ?2 THEN ?1 ELSE window_start END
+       WHERE id = ?3
+         AND revoked = 0
+         AND (?1 - window_start >= ?2 OR window_creates < create_limit)`;
+
+/** Atomic rolling 24h window. Returns false when the window is full. */
 export async function consumeCreateQuota(db: D1Database, key: ApiKeyRow, now = Date.now()): Promise<boolean> {
-  let windowStart = key.window_start;
-  let windowCreates = key.window_creates;
-  if (now - windowStart >= KEY_WINDOW_MS) {
-    windowStart = now;
-    windowCreates = 0;
-  }
-  if (windowCreates >= key.create_limit) return false;
-  await db
-    .prepare("UPDATE api_keys SET window_start = ?, window_creates = ? WHERE id = ?")
-    .bind(windowStart, windowCreates + 1, key.id)
-    .run();
-  return true;
+  const result = await db.prepare(CONSUME_CREATE_QUOTA_SQL).bind(now, KEY_WINDOW_MS, key.id).run();
+  return result.meta.changes === 1;
 }
 
 export async function toKeyInfo(db: D1Database, key: ApiKeyRow): Promise<KeyInfo> {

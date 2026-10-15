@@ -2,7 +2,7 @@
 
 ## Goal
 
-A visitor mints a disposable address on `email.lomvic.com` and reads the mail that arrives there. An agent does the same through an API with a shared key.
+A visitor mints a disposable address on `email.lomvic.com` and reads the mail that arrives there. An agent mints its own Turnstile-gated key. See **Productize** below for the current auth model.
 
 The demo is a small slice of [hirotomasato/tempik](https://github.com/hirotomasato/tempik). It is not a full agent inbox.
 
@@ -19,9 +19,9 @@ Inbound demo mail lives on the throwaway zone `lomvic.com` (subdomain `email.lom
 
 - In:
   - One Worker with three handlers: `email()` for inbound mail, `fetch()` for the UI and the API, and `scheduled()` for cleanup.
-  - D1 tables for inboxes and messages. Each inbox has an expiry time. A cron job deletes expired rows every 15 minutes.
+  - D1 tables for inboxes, messages, and api_keys. Each inbox has an expiry time. A cron job deletes expired rows every 15 minutes. HTML/text bodies and attachment bytes live in R2.
   - Mint a random address or a custom name. List messages. Show the HTML part and the text part. Delete a message or an inbox. Add time to an inbox.
-  - An inbox token (bearer) for the browser. A shared agent key (bearer) for agents.
+  - An inbox token (bearer) for the browser. A Turnstile-minted per-agent key for agents. `AGENT_API_KEY` is admin/fleet only.
   - Agent calls: create an inbox, list messages, read a message, wait for new mail (long poll), and deliver raw MIME for tests.
   - One-time codes and links in each message, for agents that must pass a sign-up check.
   - A "Send sample" button. It runs the same parser and storage as `email()`, so a visitor can see the flow before MX is live.
@@ -29,7 +29,6 @@ Inbound demo mail lives on the throwaway zone `lomvic.com` (subdomain `email.lom
   - Graphite & Ember UI that matches the hub.
 - Out:
   - Outbound mail and replies.
-  - Attachment storage. The demo keeps only the attachment name, type, and size.
   - User accounts. The browser keeps its inbox tokens in `localStorage`.
   - Forwarding to real mailboxes.
 
@@ -71,7 +70,6 @@ Inbound demo mail lives on the throwaway zone `lomvic.com` (subdomain `email.lom
 
 ## Deferred
 
-- Attachment download through R2.
 - Push updates through a Durable Object WebSocket in place of polling.
 - Reply and send through Email Sending.
 - An MCP server for agents.
@@ -89,7 +87,8 @@ A visitor still mints a short-TTL inbox in the browser. An agent mints its **own
 - D1 `api_keys` plus `inboxes.api_key_id`. Minted keys open only inboxes they created. Admin opens every inbox.
 - `POST /api/v1/keys` verifies Turnstile server-side, then returns the plaintext key once.
 - Hosted UI: demo/no-SLA banner, acceptable use, short privacy, abuse/Contact. Turnstile-gated mint. Deploy to Cloudflare button.
-- Self-host: README/SETUP split, Deploy Button, `wrangler.selfhost.jsonc`, zone MX docs. Operator sets their own admin secret and Turnstile keys.
+- Self-host: README/SETUP split, Deploy Button, `wrangler.jsonc` as the isolated self-host template, `wrangler.hosted.jsonc` for email.lomvic.com. Operator sets their own admin secret and Turnstile keys.
+- R2 stores HTML/text bodies and attachment bytes. D1 is metadata. Web inboxes last at most 3 hours from creation.
 - Mobile pass: 44px tap targets, usable mint + inbox list, remote-images control stays reachable.
 - `CHANGELOG.md` vs [Tempik](https://github.com/hirotomasato/tempik).
 

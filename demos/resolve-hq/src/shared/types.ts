@@ -2,6 +2,10 @@ export type TicketStatus = "open" | "pending" | "resolved";
 export type TicketPriority = "low" | "normal" | "high" | "urgent";
 export type AuthorKind = "customer" | "agent";
 export type MessageVia = "seed" | "queue" | "agent" | "web";
+export type DraftSource = "workers-ai" | "fallback";
+export type SessionGate = "turnstile" | "local" | "off";
+export type AiStatus = "ready" | "stub" | "off";
+export type TurnstileAction = "session" | "draft" | "write";
 
 export type TicketSummary = {
   id: string;
@@ -17,6 +21,7 @@ export type TicketSummary = {
   lastPreview: string;
   lastVia: MessageVia | null;
   messageCount: number;
+  sandbox: boolean;
 };
 
 export type Message = {
@@ -45,17 +50,20 @@ export type TicketDetail = TicketSummary & {
 };
 
 export type InboundMail = {
+  ticketId: string;
+  messageId: string;
+  visitorId: string;
   fromName: string;
   fromEmail: string;
   subject: string;
   body: string;
-  ticketId?: string;
 };
 
 export type DraftResult = {
   draft: string;
   model: string;
-  source: "workers-ai" | "fallback";
+  source: DraftSource;
+  finishReason: string | null;
 };
 
 export type Health = {
@@ -63,4 +71,9 @@ export type Health = {
   model: string;
   tickets: number;
   mailMode: string;
+  session: SessionGate;
+  siteKey: string | null;
+  testSiteKey: boolean;
+  ai: AiStatus;
+  budget: { dailyCap: number; used: number; remaining: number };
 };

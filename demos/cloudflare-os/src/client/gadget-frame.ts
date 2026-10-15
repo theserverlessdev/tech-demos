@@ -1,5 +1,6 @@
 import { RpcTarget, newMessagePortRpcSession } from "capnweb";
 // The build copies capnweb's ESM bundle here, so the shell can embed it in each sandboxed frame.
+import { gadgetIsolationScript } from "./gadget-isolation";
 import CAPNWEB_SOURCE from "./gen/capnweb.txt";
 
 /** Same base CSS the gadget contract documents (src/blueprints/CONTRACT.md). */
@@ -97,7 +98,7 @@ window.addEventListener("unhandledrejection", (e) => window.parent.postMessage({
 window.addEventListener("message", (e) => {
   if (e.source === window.parent && e.data && e.data.type === "theme") document.documentElement.setAttribute("data-theme", e.data.theme);
 });
-window.open = () => null;
+${gadgetIsolationScript()}
 `;
 }
 
@@ -135,6 +136,7 @@ export class FrameBridge {
     readonly gadgetId: string,
     private connect: () => Promise<GadgetStub>,
     private trace: CallTrace,
+    private onUserActivity?: () => void,
   ) {}
 
   async handshake(port: MessagePort) {
@@ -149,6 +151,7 @@ export class FrameBridge {
         return (...args: unknown[]) => {
           const current = this.#stub;
           if (!current) return Promise.reject(new Error("The gadget is disconnected."));
+          this.onUserActivity?.();
           const started = performance.now();
           const result = current[prop]!(...args);
           Promise.resolve(result).then(

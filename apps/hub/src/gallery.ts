@@ -107,7 +107,7 @@ function renderCard(demo: DemoEntry, index: number): string {
   const tags = (demo.tags || [])
     .map((t) => `<li class="chip">${escapeHtml(t)}</li>`)
     .join("");
-  const badge = demo.slug === "hello-dynamic" ? "Dynamic Worker" : "Worker";
+  const badge = demo.kind === "loader" ? "Dynamic Worker" : "Worker";
 
   return `<article class="demo-card" id="${escapeHtml(demo.slug)}">
         <div class="demo-card__head">

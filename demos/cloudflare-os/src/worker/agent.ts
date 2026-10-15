@@ -266,7 +266,7 @@ export async function runAgent(host: AgentHost): Promise<void> {
       throw err;
     }
 
-    const cost = usageCost(out.usage);
+    const cost = usageCost(out.usage, AGENT_STEP_RESERVE_USD);
     await meter(env).settle(AGENT_STEP_RESERVE_USD, cost.usd);
     host.addCost(cost);
 

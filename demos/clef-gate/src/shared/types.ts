@@ -8,6 +8,8 @@ export type Probabilities = Record<GateDecision, number>;
 
 export type GateSource = "clef" | "local-heuristic" | "unavailable";
 
+export type PlannerKind = "workers-ai" | "local";
+
 export type HumanOutcome = "approve" | "deny" | "expired";
 
 export const TURN_LIMIT = 16;
@@ -24,6 +26,7 @@ export type GateCard = {
   model: string;
   reason: string;
   humanOutcome: HumanOutcome | null;
+  planner: PlannerKind | null;
 };
 
 export type TranscriptMessage = {
@@ -43,7 +46,6 @@ export type PendingCall = {
 };
 
 export type SessionView = {
-  id: string;
   model: ClefModel;
   expiresAt: number;
   turns: number;

@@ -39,6 +39,8 @@ export type TaskDetail = {
   task: TaskSummary;
   commits: CommitSummary[];
   activity: ActivityRow[];
+  /** Commit count for this repo. The page does not show Durable Object phase. */
+  agent?: { runs: number };
 };
 
 export type CommitDetail = {

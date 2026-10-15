@@ -17,6 +17,7 @@ test("non-images are attachments with octet-stream and a sandbox CSP", () => {
   expect(headers.get("content-disposition")).toBe('attachment; filename="hi.html"');
   expect(headers.get("content-security-policy")).toBe("default-src 'none'; sandbox");
   expect(headers.get("x-content-type-options")).toBe("nosniff");
+  expect(headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
 });
 
 test("images stay inline with their real type", () => {

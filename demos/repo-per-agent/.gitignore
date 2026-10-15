@@ -3,3 +3,4 @@ worker-configuration.d.ts
 .dev.vars
 .wrangler/
 wrangler.local.jsonc
+artifacts/video-tmp/

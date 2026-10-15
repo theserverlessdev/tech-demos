@@ -13,7 +13,16 @@ import type {
   WorkspaceSnapshot,
 } from "../shared/types";
 import { clock, h, icon, logoMark, renderMarkdown, timeAgo } from "./dom";
+import { GADGET_IFRAME_SANDBOX } from "./gadget-isolation";
 import { FrameBridge, sandboxHtml } from "./gadget-frame";
+import { safeGadgetOpenUrl } from "./open-url";
+import {
+  ConnectGuard,
+  disposeRpcRoot,
+  errMsg,
+  isIdleError,
+  isUserInitiatedActivity,
+} from "./reconnect";
 
 // Cap'n Web stubs are dynamic. Typing them as `any` avoids deep type instantiation in the checker.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -68,7 +77,7 @@ type Drawer = "activity" | "system" | null;
 
 const state = {
   snap: null as WorkspaceSnapshot | null,
-  conn: "connecting" as "connecting" | "live" | "offline",
+  conn: "connecting" as "connecting" | "live" | "offline" | "paused",
   blueprints: [] as BlueprintInfo[],
   active: null as string | null,
   view: "app" as View,
@@ -104,11 +113,6 @@ function pendingActions(): ActionRecord[] {
   return (state.snap?.actions ?? []).filter((a) => a.status === "pending");
 }
 
-function errMsg(err: unknown): string {
-  const text = err instanceof Error ? err.message : String(err);
-  return text.replace(/^Error:\s*/, "");
-}
-
 const toasts = h("div", { class: "toasts", role: "status", "aria-live": "polite" });
 function toast(text: string, kind: "info" | "error" = "info") {
   const el = h("div", { class: `toast${kind === "error" ? " toast--error" : ""}` }, text);
@@ -138,7 +142,12 @@ const SUGGESTIONS = [
 const app = document.getElementById("app")!;
 
 const titleInput = h("input", { class: "ws-title", "aria-label": "Workspace title", maxlength: 80, spellcheck: "false" }) as HTMLInputElement;
-const connEl = h("span", { class: "conn", "data-state": "connecting" }, h("span", { class: "conn__dot" }), h("span", { class: "conn__label" }, "Connecting"));
+const connEl = h(
+  "button",
+  { class: "conn", type: "button", "data-state": "connecting", "aria-label": "Connection status" },
+  h("span", { class: "conn__dot" }),
+  h("span", { class: "conn__label" }, "Connecting"),
+);
 const presenceEl = h("div", { class: "presence" });
 const costEl = h("span", { class: "chip cost", "data-tip": "Workers AI spend in this workspace" }, "AI $0.0000");
 const activityBtn = h("button", { class: "icon-btn", "data-tip": "Activity and approvals", "aria-label": "Activity" }, icon("shield"));
@@ -244,9 +253,12 @@ class WorkspaceListener extends RpcTarget {
   }
 }
 
+const connectGuard = new ConnectGuard();
 let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
-let reconnectDelay = 800;
 let heartbeat: ReturnType<typeof setInterval> | undefined;
+let lastUserInputAt = 0;
+
+const reconnectBanner = h("button", { class: "reconnect-banner", type: "button", hidden: true }, "Paused · tap to reconnect") as HTMLButtonElement;
 
 function wsUrl() {
   return `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}${BASE}/api`;
@@ -255,26 +267,86 @@ function wsUrl() {
 function setConn(next: typeof state.conn) {
   state.conn = next;
   connEl.setAttribute("data-state", next);
-  connEl.querySelector(".conn__label")!.textContent = next === "live" ? "Live" : next === "connecting" ? "Connecting" : "Offline";
+  const paused = next === "paused";
+  connEl.querySelector(".conn__label")!.textContent = paused
+    ? "Paused · tap to reconnect"
+    : next === "live"
+      ? "Live"
+      : next === "connecting"
+        ? "Connecting"
+        : "Offline";
+  connEl.setAttribute("aria-label", paused ? "Paused, tap to reconnect" : `Connection: ${next}`);
+  reconnectBanner.hidden = !paused;
+}
+
+function markUserInput() {
+  lastUserInputAt = Date.now();
+}
+
+function noteUserGadgetActivity() {
+  if (!session || !isUserInitiatedActivity(Date.now(), lastUserInputAt)) return;
+  void session.noteActivity();
+}
+
+function dropSession() {
+  session = null;
+  disposeRpcRoot(rootStub);
+  rootStub = null;
+}
+
+function pauseForReconnect(message: string) {
+  connectGuard.allowReconnect = false;
+  clearInterval(heartbeat);
+  heartbeat = undefined;
+  clearTimeout(reconnectTimer);
+  dropSession();
+  setConn("paused");
+  toast(message, "error");
+}
+
+function resumeFromPause() {
+  connectGuard.resume();
+  clearTimeout(reconnectTimer);
+  void connect();
+}
+
+function applyConnectFailure(err: unknown, source: "catch" | "rpc-broken") {
+  const action = connectGuard.fail(err, source);
+  if (!action) return;
+  dropSession();
+  if (action === "pause-idle" || action === "give-up") {
+    pauseForReconnect(
+      action === "pause-idle"
+        ? errMsg(err)
+        : "Could not reconnect. Paused — tap to try again.",
+    );
+    return;
+  }
+  setConn("offline");
+  scheduleReconnect();
 }
 
 async function connect() {
+  if (!connectGuard.allowReconnect) return;
   clearTimeout(reconnectTimer);
+  connectGuard.beginAttempt();
   setConn("connecting");
+  const previous = rootStub;
+  rootStub = null;
+  session = null;
+  disposeRpcRoot(previous);
   const root: Stub = newWebSocketRpcSession(wsUrl());
   rootStub = root;
   root.onRpcBroken(() => {
     if (rootStub !== root) return;
-    session = null;
-    setConn("offline");
-    scheduleReconnect();
+    applyConnectFailure(new Error("socket closed"), "rpc-broken");
   });
   try {
     const ws: Stub = root.openWorkspace(WS_ID, viewer);
     state.blueprints = await ws.listBlueprints();
     session = ws;
     await ws.subscribe(new WorkspaceListener());
-    reconnectDelay = 800;
+    connectGuard.markLive();
     setConn("live");
     // Frame sessions belonged to the old socket. Mount them again.
     for (const id of [...frames.keys()]) {
@@ -283,22 +355,24 @@ async function connect() {
     }
     clearInterval(heartbeat);
     heartbeat = setInterval(() => {
-      if (session === ws) ws.ping().catch(() => {});
+      if (session === ws) {
+        ws.ping().catch((err: unknown) => {
+          if (isIdleError(err)) pauseForReconnect(errMsg(err));
+        });
+      }
     }, 20_000);
     render();
   } catch (err) {
     console.error("connect failed", err);
-    if (rootStub === root) {
-      setConn("offline");
-      scheduleReconnect();
-    }
+    applyConnectFailure(err, "catch");
   }
 }
 
 function scheduleReconnect() {
+  if (!connectGuard.allowReconnect) return;
   clearTimeout(reconnectTimer);
-  reconnectTimer = setTimeout(() => void connect(), reconnectDelay);
-  reconnectDelay = Math.min(reconnectDelay * 1.8, 10_000);
+  const wait = connectGuard.consumeDelay();
+  reconnectTimer = setTimeout(() => void connect(), wait);
 }
 
 // ===================================================================== events
@@ -340,6 +414,9 @@ function onEvent(e: WorkspaceEvent) {
     case "log":
       pushLog(e.gadget, e.level, e.message);
       break;
+    case "session-idle":
+      pauseForReconnect("This workspace paused after 20 minutes idle to limit Durable Object billing. Tap to reconnect.");
+      break;
   }
 }
 
@@ -374,7 +451,7 @@ async function mountFrame(g: Pick<GadgetInfo, "id" | "title" | "version">, messa
   if (!session) return;
   const previous = frames.get(g.id);
   const iframe = h("iframe", {
-    sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox",
+    sandbox: GADGET_IFRAME_SANDBOX,
     title: `${g.title} (sandboxed gadget UI)`,
     referrerpolicy: "no-referrer",
   }) as HTMLIFrameElement;
@@ -382,7 +459,7 @@ async function mountFrame(g: Pick<GadgetInfo, "id" | "title" | "version">, messa
   const overlay = h("div", { class: "frame-overlay" }, h("div", { class: "spinner" }), message);
   overlay.hidden = g.id !== state.active;
   const ws = session;
-  const bridge = new FrameBridge(g.id, () => ws.connectToGadget(g.id), traceLocal);
+  const bridge = new FrameBridge(g.id, () => ws.connectToGadget(g.id), traceLocal, noteUserGadgetActivity);
   const entry: FrameEntry = { iframe, bridge, version: g.version, overlay };
   frames.set(g.id, entry);
   frameHost.append(iframe, overlay);
@@ -439,6 +516,11 @@ window.addEventListener("message", (e: MessageEvent) => {
         });
     } else if (e.data && typeof e.data === "object" && e.data.type === "console") {
       pushLog(id, String(e.data.level), String(e.data.message).slice(0, 600));
+    } else if (e.data && typeof e.data === "object" && e.data.type === "user-activity") {
+      markUserInput();
+    } else if (e.data && typeof e.data === "object" && e.data.type === "open-url") {
+      const url = safeGadgetOpenUrl(e.data.url);
+      if (url) window.open(url, "_blank", "noopener,noreferrer");
     }
     return;
   }
@@ -1391,7 +1473,7 @@ function openAbout() {
   const rows: [string, string, string][] = [
     ["Workspace", "OverseerDurableObject, typed KV storage, git objects", "Workspace DO with SQLite tables"],
     ["Gadget server", "server.js Durable Object, LOADER.get(), ctx.facets.get()", "Same"],
-    ["Gadget UI", "client.js in a sandboxed srcdoc frame, Cap'n Web over MessagePort", "Same"],
+    ["Gadget UI", "client.js in a sandboxed srcdoc frame, Cap'n Web over MessagePort", 'Same. iframe sandbox="allow-scripts" only; http(s) links open via the parent shell'],
     ["Shell ⇄ backend", "One Cap'n Web WebSocket, callback subscriptions", "Same"],
     ["Gatekeepers", "One Worker for each service, OAuth, action journal", "WEB and AI loopback entrypoints with an approval queue"],
     ["Agent", "pi-agent-core, many providers, file tools, Code Mode", "Workers AI glm-5.3-flash with tools"],
@@ -1468,10 +1550,24 @@ function wire() {
     themeBtn.append(icon(next === "dark" ? "sun" : "moon"));
     for (const entry of frames.values()) entry.iframe.contentWindow?.postMessage({ type: "theme", theme: next }, "*");
   });
+  document.addEventListener("pointerdown", markUserInput, true);
   document.addEventListener("keydown", (e) => {
+    markUserInput();
     if (e.key === "Escape") {
       if (scrim) closeModal();
       else if (state.drawer) toggleDrawer(null);
+    }
+  });
+  connEl.addEventListener("click", () => {
+    if (state.conn === "paused") resumeFromPause();
+  });
+  reconnectBanner.addEventListener("click", () => resumeFromPause());
+  window.addEventListener("online", () => {
+    if (state.conn === "paused" || state.conn === "offline") resumeFromPause();
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && (state.conn === "paused" || state.conn === "offline")) {
+      resumeFromPause();
     }
   });
 
@@ -1507,7 +1603,7 @@ function wire() {
 function boot() {
   app.textContent = "";
   app.append(topbar, main, mobileNav);
-  document.body.append(toasts);
+  document.body.append(toasts, reconnectBanner);
   wire();
   void connect();
 }

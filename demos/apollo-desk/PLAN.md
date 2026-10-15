@@ -28,7 +28,7 @@ The left column uses the chapter names from the upstream `documentation/` handbo
 | `capabilities/weather.md` | `weather_now`, `set_weather_location`, and a dashboard refresh | The same two tools on Open-Meteo, which needs no key. A tap gesture opens the clock and weather dashboard |
 | `capabilities/timers.md`, `reminders.md` | `this.schedule(delay, "deliverReminder")`, `listSchedules`, `cancelSchedule`, and a `timer` arc frame | The same Agents SDK calls. The face draws the countdown arc. The desk plays a chime when the schedule fires |
 | `capabilities/lists.md` | `add_to_list`, `read_list`, `remove_from_list` on a SQL table | The same three tools |
-| `capabilities/mcp.md` | The brain sends JSON-RPC `tools/call` in `mcp` frames to the firmware MCP server (`self.audio_speaker.set_volume`) | The browser desk runs a small MCP server. It answers `tools/call` for `self.audio_speaker.set_volume`, `self.screen.set_brightness`, and `self.get_device_status` |
+| `capabilities/mcp.md` | The brain sends JSON-RPC `tools/call` in `mcp` frames to the firmware MCP server (`self.audio_speaker.set_volume`) | The browser desk answers MCP-style JSON-RPC `tools/call` for `self.audio_speaker.set_volume`, `self.screen.set_brightness`, and `self.get_device_status`. There is no `initialize` handshake |
 | `capabilities/sandbox.md`, `coding.md` | `@cloudflare/sandbox` in a Container, opencode, and GitHub PRs | Not in this slice. Containers need owner approval for cost |
 | `capabilities/research.md`, `email.md`, `broadcast.md`, `rates.md` | Tavily, Queues, Workflows, Resend, and an exchange-rate API | Not in this slice |
 | `operations/auth.md` | A shared device secret and a dashboard secret | The random desk ID in the link is the capability. The Worker checks the `Origin` header |
@@ -45,16 +45,17 @@ The left column uses the chapter names from the upstream `documentation/` handbo
 ## Architecture
 
 ```
-browser desk (face, mic, MCP server) ──AgentClient WebSocket──▶ Worker
-      ▲  JSON control frames + PCM binary frames                 │ routeAgentRequest
-      │                                                          ▼
-      │                                  Apollo Agent (Durable Object, SQLite)
-      │                                   ├─ turn loop: whisper → glm-5.3-flash tools → melotts
-      │  ui_state · tts · timer · mcp     ├─ tables: messages, memories (+vector BLOB), list_items,
-      └───────────────────────────────────┤          pending_confirmations
-                                          ├─ this.schedule(): reminders, timers, confirm expiry
-console panel ──@callable RPC──────────────┤  state sync: persona, location, counters
-                                          └─ Meter DO: global daily AI budget
+browser desk (face, mic, MCP-style tools/call) ──AgentClient WebSocket──▶ Worker
+      ▲  JSON control frames + PCM binary frames                         │ routeAgentRequest
+      │                                                                  ▼
+      │                                          Apollo Agent (Durable Object, SQLite)
+      │                                           ├─ hello: Turnstile, then a verified session
+      │                                           ├─ turn loop: whisper → glm-5.3-flash tools → melotts
+      │  ui_state · tts · timer · mcp             ├─ tables: messages, memories (+vector BLOB), list_items,
+      └───────────────────────────────────────────┤          pending_confirmations, pending_device_messages
+                                                  ├─ this.schedule(): reminders, timers, confirm expiry
+console panel ──@callable RPC──────────────────────┤  state sync: persona, location, counters
+                                                  └─ Meter DO: global daily AI budget, 15% per IP
 ```
 
 - The desk and the console share one WebSocket. Device frames go through `onMessage`. Console calls use `@callable()` methods.
@@ -83,8 +84,9 @@ console panel ──@callable RPC──────────────┤  
 ## Cost guards
 
 - Prices: `glm-5.3-flash` costs $0.15 per M input tokens and $0.50 per M output tokens. Whisper costs $0.0005 per audio minute. MeloTTS costs $0.0002 per audio minute. `bge-small` costs $0.02 per M tokens.
-- One text turn costs about $0.001. The `Meter` DO holds a global daily budget (`AI_DAILY_BUDGET_USD`, default `0.10`). The worst case is $3 each month.
-- The rate limit is 10 turns per minute per IP. A voice turn has a limit of 15 s of audio.
+- One text turn costs about $0.0006. The `Meter` DO holds a global daily budget (`AI_DAILY_BUDGET_USD`, default `0.10`). The worst case is $3 each month.
+- Hello requires Turnstile. Each network (IPv4 or IPv6 /64) can spend 15% of the daily budget. Each desk is capped at 60 turns per UTC day.
+- The rate limit is 10 turns per minute per network and 8 per desk (`DESK_LIMIT` 7465). A voice turn has a limit of 15 s of audio.
 - Each desk keeps 200 facts or fewer and 100 list items or fewer. A timer or reminder has a limit of 24 hours.
 - The demo uses no Vectorize index, no Containers, no Browser Rendering, and no Workers for Platforms.
 

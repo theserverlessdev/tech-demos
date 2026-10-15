@@ -3,6 +3,7 @@ import type { ChatMessage, ChatResult, MemoryWrite, RecallHit } from "../shared/
 import { completeChat } from "./ai";
 import type { DemoEnv } from "./env";
 import { extractFacts, mergeWrites } from "./extract";
+import { purgeChatAgent } from "./lifecycle";
 import type { CommitWriteResult } from "./memory-agent";
 
 export type ChatState = { turns: number };
@@ -13,6 +14,7 @@ type MemoryStub = {
   commitWrites(input: { writes: MemoryWrite[]; summary: string }): Promise<CommitWriteResult>;
   noteSummary(summary: string): Promise<void>;
   touchActivity(): Promise<void>;
+  consumeAiTurn(): Promise<{ ok: true } | { ok: false; code: string; message: string }>;
 };
 
 type MessageRow = {
@@ -82,8 +84,7 @@ export class ChatAgent extends Agent<DemoEnv, ChatState> {
 
   @callable()
   async purge(): Promise<void> {
-    this.ctx.storage.sql.exec("DELETE FROM messages");
-    this.setState({ turns: 0 });
+    await purgeChatAgent(this);
   }
 
   @callable()
@@ -93,6 +94,8 @@ export class ChatAgent extends Agent<DemoEnv, ChatState> {
     if (!text || text.length > 800) throw new Error("Messages are limited to 800 characters.");
 
     const memory = await this.memory(input.visitorId);
+    const budget = await memory.consumeAiTurn();
+    if (!budget.ok) throw new Error(budget.message);
     const recalled = await memory.recall(text);
     const memoryIndex = await memory.memoryIndex();
     const extracted = extractFacts(text);
@@ -105,7 +108,7 @@ export class ChatAgent extends Agent<DemoEnv, ChatState> {
       console.warn(JSON.stringify({ event: "chat_model_failed", error: err instanceof Error ? err.name : "error" }));
     }
 
-    const writes = mergeWrites(model?.remember ?? [], extracted);
+    const writes = model === null ? mergeWrites(extracted) : mergeWrites(model.remember);
     let committed = false;
     let commitHash: string | null = null;
     let commitMessage: string | null = null;
@@ -134,7 +137,7 @@ export class ChatAgent extends Agent<DemoEnv, ChatState> {
     this.insert("user", text, [], null, null);
     this.insert("assistant", reply, recalled, commitHash, commitMessage);
     this.setState({ turns: this.state.turns + 1 });
-    await memory.touchActivity();
+    if (!committed) await memory.touchActivity();
     return { reply, recalled, committed, commitHash, commitMessage, paths, fallback };
   }
 

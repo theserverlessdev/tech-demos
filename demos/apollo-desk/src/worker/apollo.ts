@@ -14,9 +14,24 @@ import {
   type UiStateName,
   type WeatherReport,
 } from "../shared/protocol";
+import {
+  clampDeviceLevel,
+  INSPECT_MIN_INTERVAL_MS,
+  isScopedGuardCode,
+  MAX_DESK_TURNS_PER_DAY,
+  MAX_HELLO_FAILS,
+  MAX_PENDING_DEVICE_MESSAGES,
+  MAX_REMINDER_SCHEDULES,
+  MAX_TOOL_CALLS_PER_ROUND,
+  METER_CACHE_MS,
+  networkKey,
+  nextHelloFails,
+  utcDayKey,
+} from "./gates";
 import { cosine, embed, fromBlob, keywords, toBlob } from "./memory";
-import { BudgetError, llmCost, LLM_ROUND_RESERVE_USD, meter, metered } from "./meter";
+import { BudgetError, llmCost, llmRoundReserveUsd, meter, metered } from "./meter";
 import { getTool, MODEL_TOOLS, type DeskHost } from "./tools";
+import { verifyTurnstile } from "./turnstile";
 import { MAX_AUDIO_BYTES, MIN_AUDIO_BYTES, pcmToWav, synthesize, transcribe, TTS_FRAME_BYTES } from "./voice";
 import { currentWeather } from "./weather";
 
@@ -32,7 +47,13 @@ const MCP_TIMEOUT_MS = 5000;
 
 const ts = z.number();
 const DeskMessageSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("hello"), deviceId: z.string().max(64), firmwareVersion: z.string().max(32).optional(), ts }),
+  z.object({
+    type: z.literal("hello"),
+    deviceId: z.string().max(64),
+    firmwareVersion: z.string().max(32).optional(),
+    turnstileToken: z.string().max(2048).optional(),
+    ts,
+  }),
   z.object({ type: z.literal("hold_start"), ts }),
   z.object({ type: z.literal("hold_end"), ts }),
   z.object({ type: z.literal("listen_cancel"), ts }),
@@ -47,7 +68,7 @@ const DeskMessageSchema = z.discriminatedUnion("type", [
   }),
 ]);
 
-type ConnState = { ip: string };
+type ConnState = { ip: string; host: string; verified: boolean; inspectAt?: number; helloFails?: number };
 type ReminderPayload = { kind: "timer" | "reminder"; label: string; durationSeconds: number };
 type ToolCall = { id: string; type: "function"; function: { name: string; arguments: string | Record<string, unknown> } };
 type ChatOutput = {
@@ -114,7 +135,7 @@ export class Apollo extends Agent<Env, DeskState> implements DeskHost {
   };
 
   // Memory that lives only while the Durable Object is awake. A turn or a hold keeps it awake.
-  #audio: { connectionId: string; chunks: Uint8Array[]; bytes: number } | null = null;
+  #audio: { connectionId: string; chunks: Uint8Array[]; bytes: number; warned?: boolean } | null = null;
   #busy = false;
   #aborted = false;
   #ui: UiStateName = "idle";
@@ -126,6 +147,7 @@ export class Apollo extends Agent<Env, DeskState> implements DeskHost {
   #idleWaiters: (() => void)[] = [];
   /** True when the desk pressed Yes or No while the brain still worked on the turn that asked. */
   #confirmQueued = false;
+  #meterCache: { at: number; spent: number; budget: number } | null = null;
 
   #release() {
     this.#busy = false;
@@ -156,7 +178,16 @@ export class Apollo extends Agent<Env, DeskState> implements DeskHost {
   }
 
   onConnect(connection: Connection<ConnState>, ctx: ConnectionContext) {
-    connection.setState({ ip: ctx.request.headers.get("cf-connecting-ip") ?? "local" });
+    connection.setState({
+      ip: ctx.request.headers.get("cf-connecting-ip") ?? "local",
+      host: new URL(ctx.request.url).hostname,
+      verified: false,
+    });
+  }
+
+  /** Facet routing is unused. Close the path that would create unlimited child agents. */
+  async onBeforeSubAgent() {
+    return new Response("Not found", { status: 404 });
   }
 
   onClose(connection: Connection) {
@@ -186,7 +217,13 @@ export class Apollo extends Agent<Env, DeskState> implements DeskHost {
       const audio = this.#audio;
       if (!audio || audio.connectionId !== connection.id) return;
       const bytes = message instanceof ArrayBuffer ? new Uint8Array(message) : new Uint8Array(message.buffer, message.byteOffset, message.byteLength);
-      if (audio.bytes + bytes.byteLength > MAX_AUDIO_BYTES) return;
+      if (audio.bytes + bytes.byteLength > MAX_AUDIO_BYTES) {
+        if (!audio.warned) {
+          audio.warned = true;
+          this.#send({ type: "error", code: "too_long", message: "That hold was longer than 15 seconds. Extra audio was dropped." }, connection);
+        }
+        return;
+      }
       audio.chunks.push(bytes.slice());
       audio.bytes += bytes.byteLength;
       return;
@@ -204,10 +241,13 @@ export class Apollo extends Agent<Env, DeskState> implements DeskHost {
 
     switch (parsed.type) {
       case "hello":
-        return this.#hello(connection, parsed.firmwareVersion);
+        return this.#hello(connection, parsed);
       case "hold_start":
+        if (!connection.state?.verified) {
+          return this.#send({ type: "error", code: "turnstile_required", message: "Complete the Turnstile check first." }, connection);
+        }
         if (this.#busy) return this.#send({ type: "error", code: "busy", message: "The desk is still on the last turn." }, connection);
-        this.#audio = { connectionId: connection.id, chunks: [], bytes: 0 };
+        this.#audio = { connectionId: connection.id, chunks: [], bytes: 0, warned: false };
         return this.#setUi("listening", "Listening…");
       case "listen_cancel":
         this.#audio = null;
@@ -221,7 +261,7 @@ export class Apollo extends Agent<Env, DeskState> implements DeskHost {
       case "confirm":
         return this.#confirm(connection, parsed.ok);
       case "abort":
-        this.#aborted = true;
+        if (this.#busy) this.#aborted = true;
         this.#send({ type: "tts_aborted" });
         return this.#setUi("idle");
       case "mcp": {
@@ -236,7 +276,49 @@ export class Apollo extends Agent<Env, DeskState> implements DeskHost {
     }
   }
 
-  async #hello(connection: Connection, firmwareVersion?: string) {
+  #connPatch(connection: Connection<ConnState>, patch: Partial<ConnState>): ConnState {
+    const prev = connection.state;
+    return {
+      ip: prev?.ip ?? "local",
+      host: prev?.host ?? "",
+      verified: prev?.verified ?? false,
+      inspectAt: prev?.inspectAt,
+      helloFails: prev?.helloFails,
+      ...patch,
+    };
+  }
+
+  #helloFailed(connection: Connection<ConnState>): boolean {
+    const { fails, close } = nextHelloFails(connection.state?.helloFails ?? 0);
+    connection.setState(this.#connPatch(connection, { verified: false, helloFails: fails }));
+    return close;
+  }
+
+  async #hello(connection: Connection<ConnState>, parsed: { firmwareVersion?: string; turnstileToken?: string }) {
+    if (!connection.state?.verified) {
+      if ((connection.state?.helloFails ?? 0) >= MAX_HELLO_FAILS) {
+        this.#send({ type: "error", code: "rate_limited", message: "Too many failed checks. Refresh and try again." }, connection);
+        connection.close(4008, "too many failed hellos");
+        return;
+      }
+      const ip = connection.state?.ip ?? "local";
+      const { success } = await this.env.TURN_LIMIT.limit({ key: networkKey(ip) });
+      if (!success) {
+        const close = this.#helloFailed(connection);
+        this.#send({ type: "error", code: "rate_limited", message: "Slow down a little. The demo allows 10 turns each minute per network and 8 per desk." }, connection);
+        if (close) connection.close(4008, "too many failed hellos");
+        return;
+      }
+      const result = await verifyTurnstile(this.env, parsed.turnstileToken ?? "", ip, connection.state?.host ?? "");
+      if (!result.ok) {
+        const close = this.#helloFailed(connection);
+        this.#send({ type: "error", code: result.code, message: result.message }, connection);
+        if (close) connection.close(4008, "too many failed hellos");
+        return;
+      }
+      connection.setState(this.#connPatch(connection, { verified: true, helloFails: 0 }));
+    }
+    const firmwareVersion = parsed.firmwareVersion;
     if (firmwareVersion && firmwareVersion !== this.state.device.firmwareVersion) {
       this.setState({ ...this.state, device: { ...this.state.device, firmwareVersion } });
     }
@@ -262,10 +344,24 @@ export class Apollo extends Agent<Env, DeskState> implements DeskHost {
 
   // ------------------------------------------------------------------ turns
 
-  async #guard(connection: Connection<ConnState>) {
-    const ip = connection.state?.ip ?? "local";
-    const { success } = await this.env.TURN_LIMIT.limit({ key: ip });
-    if (!success) throw new DeskError("rate_limited", "Slow down a little. The demo allows 10 turns each minute.");
+  async #guard(connection: Connection<ConnState>, opts: { countTurn?: boolean } = {}): Promise<string> {
+    if (!connection.state?.verified) throw new DeskError("turnstile_required", "Complete the Turnstile check first.");
+    const ip = connection.state.ip ?? "local";
+    const [ipLimit, deskLimit] = await Promise.all([
+      this.env.TURN_LIMIT.limit({ key: networkKey(ip) }),
+      this.env.DESK_LIMIT.limit({ key: this.name }),
+    ]);
+    if (!ipLimit.success || !deskLimit.success) {
+      throw new DeskError("rate_limited", "Slow down a little. The demo allows 10 turns each minute per network and 8 per desk.");
+    }
+    if (opts.countTurn === false) return ip;
+    const day = utcDayKey();
+    const dayTurns = this.state.dayKey === day ? (this.state.dayTurns ?? 0) : 0;
+    if (dayTurns >= MAX_DESK_TURNS_PER_DAY) {
+      throw new DeskError("desk_limited", `This desk has used its ${MAX_DESK_TURNS_PER_DAY} turns for today.`);
+    }
+    this.setState({ ...this.state, dayKey: day, dayTurns: dayTurns + 1 });
+    return ip;
   }
 
   async #voiceTurn(connection: Connection<ConnState>) {
@@ -276,128 +372,176 @@ export class Apollo extends Agent<Env, DeskState> implements DeskHost {
       this.#send({ type: "error", code: "too_short", message: "Hold the button while you speak." }, connection);
       return this.#setUi("idle");
     }
-    if (this.#busy) return;
-    this.#busy = true;
-    let text = "";
-    try {
-      await this.#guard(connection);
-      this.#setUi("thinking", "Transcribing…");
-      const heard = await transcribe(this.env, pcmToWav(audio.chunks));
-      text = heard.text;
-      this.#trace({ kind: "heard", text, seconds: Math.round(heard.seconds * 10) / 10 });
-      if (!text) {
-        await this.#speak("I did not catch that. Try again?");
-        this.#send({ type: "turn_end", expectsReply: true });
-      }
-    } catch (err) {
-      this.#fail(err);
-    } finally {
-      this.#release();
+    if (this.#busy) {
+      this.#send({ type: "error", code: "busy", message: "The desk is still on the last turn." }, connection);
+      return this.#setUi("idle");
     }
-    // The rate limit already counted this hold, so the text turn skips it.
-    if (text) await this.#turn(connection, text, { skipGuard: true });
-  }
-
-  async #turn(connection: Connection<ConnState>, text: string, opts: { skipGuard?: boolean } = {}) {
-    if (this.#busy) return this.#send({ type: "error", code: "busy", message: "The desk is still on the last turn." }, connection);
     this.#busy = true;
     this.#aborted = false;
     this.#turnConnectionId = connection.id;
     try {
-      if (!opts.skipGuard) await this.#guard(connection);
-      const now = Date.now();
-      if (this.state.lastTurnAt && now - this.state.lastTurnAt > THREAD_IDLE_MS) {
-        this.setState({ ...this.state, thread: this.state.thread + 1 });
-        this.#trace({ kind: "thread", thread: this.state.thread, reason: "30 minutes of silence" });
-      }
-      this.sql`INSERT INTO messages (thread, role, content, created_at) VALUES (${this.state.thread}, 'user', ${text}, ${now})`;
-      this.#setUi("thinking", "Thinking…");
-
-      const hits = await this.recall(text, 4);
-      this.#trace({ kind: "recall", facts: hits });
-
-      const history = this.sql<{ role: string; content: string }>`
-        SELECT role, content FROM (SELECT id, role, content FROM messages WHERE thread = ${this.state.thread} ORDER BY id DESC LIMIT ${HISTORY_MESSAGES})
-        ORDER BY id`;
-      const messages: Record<string, unknown>[] = [{ role: "system", content: this.#systemPrompt(hits) }, ...history];
-
-      let reply = "";
-      for (let round = 1; round <= MAX_TOOL_ROUNDS + 1; round++) {
-        const withTools = round <= MAX_TOOL_ROUNDS;
-        const started = Date.now();
-        const out = await metered(
-          this.env,
-          LLM_ROUND_RESERVE_USD,
-          () =>
-            this.env.AI.run(this.env.AI_MODEL, {
-              messages,
-              ...(withTools ? { tools: MODEL_TOOLS } : {}),
-              max_tokens: 700,
-              temperature: 0.4,
-              chat_template_kwargs: { enable_thinking: false },
-            } as never) as Promise<ChatOutput>,
-          (o) => llmCost(o.usage).usd,
-        );
-        const cost = llmCost(out.usage);
-        this.#trace({ kind: "model", model: this.env.AI_MODEL, tokensIn: cost.tokensIn, tokensOut: cost.tokensOut, usd: cost.usd, ms: Date.now() - started, round });
-
-        const { content, calls } = normalizeOutput(out);
-        if (!calls.length || !withTools) {
-          reply = content;
-          break;
-        }
-        const parsedCalls = calls.map((call) => {
-          const raw = call.function.arguments;
-          try {
-            return { call, args: (typeof raw === "string" ? (raw.trim() ? JSON.parse(raw) : {}) : raw) as Record<string, unknown> };
-          } catch {
-            return { call, args: null };
-          }
-        });
-        // Invalid JSON in the history makes the next model call fail, so the history keeps only valid arguments.
-        messages.push({
-          role: "assistant",
-          content: content || "",
-          tool_calls: parsedCalls.map(({ call, args }) => ({ ...call, function: { name: call.function.name, arguments: JSON.stringify(args ?? {}) } })),
-        });
-        for (const { call, args } of parsedCalls) {
-          const result = args ? await this.#runTool(call.function.name, args) : { error: "The tool arguments were not valid JSON." };
-          messages.push({ role: "tool", tool_call_id: call.id, name: call.function.name, content: clip(JSON.stringify(result ?? null), 4000) });
-        }
-        if (this.#aborted) break;
-      }
-
-      if (this.#aborted) {
-        this.#send({ type: "turn_end", expectsReply: false });
+      const ip = await this.#guard(connection);
+      this.#setUi("thinking", "Transcribing…");
+      const heard = await transcribe(this.env, pcmToWav(audio.chunks), ip);
+      const text = heard.text;
+      this.#trace({ kind: "heard", text, seconds: Math.round(heard.seconds * 10) / 10 });
+      if (!text) {
+        await this.#speak("I did not catch that. Try again?", "speaking", ip);
+        this.#send({ type: "turn_end", expectsReply: true });
         return;
       }
-      reply = reply.trim() || "Done.";
-      this.sql`INSERT INTO messages (thread, role, content, created_at) VALUES (${this.state.thread}, 'assistant', ${reply}, ${Date.now()})`;
-      this.setState({ ...this.state, turns: this.state.turns + 1, lastTurnAt: Date.now() });
-      // The desk already answered the confirmation, so the request to press Yes is out of date. Skip its audio.
-      if (this.#confirmQueued) this.#setUi("speaking", reply);
-      else await this.#speak(reply);
-      this.#send({ type: "turn_end", expectsReply: /\?\s*$/.test(reply) });
+      // Stay busy between STT and the text turn so a queued reminder cannot steal the slot.
+      await this.#runTurn(connection, text, ip);
     } catch (err) {
-      this.#fail(err);
+      this.#fail(err, connection);
     } finally {
       this.#release();
       this.#turnConnectionId = null;
     }
   }
 
-  #fail(err: unknown) {
+  async #turn(connection: Connection<ConnState>, text: string) {
+    if (this.#busy) return this.#send({ type: "error", code: "busy", message: "The desk is still on the last turn." }, connection);
+    this.#busy = true;
+    this.#aborted = false;
+    this.#turnConnectionId = connection.id;
+    try {
+      const ip = await this.#guard(connection);
+      await this.#runTurn(connection, text, ip);
+    } catch (err) {
+      this.#fail(err, connection);
+    } finally {
+      this.#release();
+      this.#turnConnectionId = null;
+    }
+  }
+
+  async #runTurn(_connection: Connection<ConnState>, text: string, ip: string) {
+    const now = Date.now();
+    if (this.state.lastTurnAt && now - this.state.lastTurnAt > THREAD_IDLE_MS) {
+      this.setState({ ...this.state, thread: this.state.thread + 1 });
+      this.#trace({ kind: "thread", thread: this.state.thread, reason: "30 minutes of silence" });
+    }
+    this.sql`INSERT INTO messages (thread, role, content, created_at) VALUES (${this.state.thread}, 'user', ${text}, ${now})`;
+    this.#setUi("thinking", "Thinking…");
+
+    const hits = await this.recall(text, 4, undefined, ip);
+    this.#trace({ kind: "recall", facts: hits });
+
+    const history = this.sql<{ role: string; content: string }>`
+      SELECT role, content FROM (SELECT id, role, content FROM messages WHERE thread = ${this.state.thread} ORDER BY id DESC LIMIT ${HISTORY_MESSAGES})
+      ORDER BY id`;
+    const messages: Record<string, unknown>[] = [{ role: "system", content: this.#systemPrompt(hits) }, ...history];
+
+    let reply = "";
+    for (let round = 1; round <= MAX_TOOL_ROUNDS + 1; round++) {
+      const withTools = round <= MAX_TOOL_ROUNDS;
+      const started = Date.now();
+      const out = await metered(
+        this.env,
+        llmRoundReserveUsd(messages),
+        () =>
+          this.env.AI.run(this.env.AI_MODEL, {
+            messages,
+            ...(withTools ? { tools: MODEL_TOOLS } : {}),
+            max_tokens: 700,
+            temperature: 0.4,
+            chat_template_kwargs: { enable_thinking: false },
+          } as never) as Promise<ChatOutput>,
+        (o) => llmCost(o.usage).usd,
+        ip,
+      );
+      const cost = llmCost(out.usage);
+      this.#trace({ kind: "model", model: this.env.AI_MODEL, tokensIn: cost.tokensIn, tokensOut: cost.tokensOut, usd: cost.usd, ms: Date.now() - started, round });
+
+      const { content, calls } = normalizeOutput(out);
+      if (!calls.length || !withTools) {
+        reply = content;
+        break;
+      }
+      const parsedCalls = calls.map((call) => {
+        const raw = call.function.arguments;
+        try {
+          return { call, args: (typeof raw === "string" ? (raw.trim() ? JSON.parse(raw) : {}) : raw) as Record<string, unknown> };
+        } catch {
+          return { call, args: null };
+        }
+      });
+      // Invalid JSON in the history makes the next model call fail, so the history keeps only valid arguments.
+      messages.push({
+        role: "assistant",
+        content: content || "",
+        tool_calls: parsedCalls.map(({ call, args }) => ({ ...call, function: { name: call.function.name, arguments: JSON.stringify(args ?? {}) } })),
+      });
+      const kept = parsedCalls.slice(0, MAX_TOOL_CALLS_PER_ROUND);
+      const extra = parsedCalls.slice(MAX_TOOL_CALLS_PER_ROUND);
+      for (const { call, args } of kept) {
+        const result = args ? await this.#runTool(call.function.name, args, ip) : { error: "The tool arguments were not valid JSON." };
+        messages.push({ role: "tool", tool_call_id: call.id, name: call.function.name, content: clip(JSON.stringify(result ?? null), 4000) });
+      }
+      for (const { call } of extra) {
+        messages.push({ role: "tool", tool_call_id: call.id, name: call.function.name, content: JSON.stringify({ error: "Too many tool calls" }) });
+      }
+      if (this.#aborted) break;
+    }
+
+    if (this.#aborted) {
+      this.#send({ type: "turn_end", expectsReply: false });
+      return;
+    }
+    reply = reply.trim() || "Done.";
+    this.sql`INSERT INTO messages (thread, role, content, created_at) VALUES (${this.state.thread}, 'assistant', ${reply}, ${Date.now()})`;
+    this.setState({ ...this.state, turns: this.state.turns + 1, lastTurnAt: Date.now() });
+    // The desk already answered the confirmation, so the request to press Yes is out of date. Skip its audio.
+    if (this.#confirmQueued) this.#setUi("speaking", reply);
+    else await this.#speak(reply, "speaking", ip);
+    this.#send({ type: "turn_end", expectsReply: /\?\s*$/.test(reply) });
+  }
+
+  #fail(err: unknown, connection?: Connection) {
     const code = err instanceof DeskError ? err.code : err instanceof BudgetError ? "budget" : "turn_failed";
     const message = err instanceof Error ? err.message : String(err);
     console.error("turn failed", code, message);
-    this.#send({ type: "play_effect", name: "error" });
-    this.#send({ type: "error", code, message });
+    const target = isScopedGuardCode(code) ? connection : undefined;
+    this.#send({ type: "play_effect", name: "error" }, target);
+    this.#send({ type: "error", code, message }, target);
+    if (isScopedGuardCode(code)) {
+      this.#ui = "idle";
+      if (connection) {
+        const mode = speechMode(this.state.speechMode);
+        this.#send({ type: "ui_state", state: "idle", speechMode: mode.id, emotion: STATE_EMOTION.idle, accentColor: mode.accentColor }, connection);
+        this.#send({ type: "turn_end", expectsReply: false }, connection);
+      }
+      return;
+    }
     this.#setUi("idle");
     this.#send({ type: "turn_end", expectsReply: false });
   }
 
+  /** Bind this turn's spend key so a concurrent probe or reminder cannot steal it. */
+  #deskHost(ip: string): DeskHost {
+    const desk = this;
+    return {
+      get state() {
+        return desk.state;
+      },
+      patchState: (patch) => desk.patchState(patch),
+      rememberFact: (fact) => desk.rememberFact(fact, ip),
+      recall: (query, limit, minScore) => desk.recall(query, limit, minScore, ip),
+      forgetEverything: () => desk.forgetEverything(),
+      addListItem: (list, item) => desk.addListItem(list, item),
+      readList: (list) => desk.readList(list),
+      removeListItem: (list, item) => desk.removeListItem(list, item),
+      scheduleReminder: (kind, label, delaySeconds) => desk.scheduleReminder(kind, label, delaySeconds),
+      listReminders: () => desk.listReminders(),
+      cancelReminder: (id) => desk.cancelReminder(id),
+      deviceTool: (name, args) => desk.deviceTool(name, args),
+      setWeather: (report) => desk.setWeather(report),
+    };
+  }
+
   /** Upstream `tools/router.ts`: check arguments, run safe tools, and hold unsafe tools for a Yes on the desk. */
-  async #runTool(name: string, args: Record<string, unknown>): Promise<unknown> {
+  async #runTool(name: string, args: Record<string, unknown>, ip: string): Promise<unknown> {
     const def = getTool(name);
     const started = Date.now();
     if (!def) {
@@ -431,7 +575,7 @@ export class Apollo extends Agent<Env, DeskState> implements DeskHost {
     }
 
     try {
-      const result = await def.handler(parsed.data, this);
+      const result = await def.handler(parsed.data, this.#deskHost(ip));
       this.#trace({ kind: "tool", name, safety: "safe", args: clip(JSON.stringify(parsed.data), 200), ok: true, result: clip(JSON.stringify(result ?? null), 240), ms: Date.now() - started });
       return result;
     } catch (err) {
@@ -478,7 +622,7 @@ ${remembered}`;
    * Upstream splits a reply into short segments and sends each one as its own tts_start → audio → tts_end run.
    * Short segments also help here: MeloTTS fails more often on long text, and each segment retries alone.
    */
-  async #speak(text: string, state: UiStateName = "speaking") {
+  async #speak(text: string, state: UiStateName = "speaking", ip = "local") {
     this.#setUi(state, text);
     if (this.state.device.volume <= 0) return;
     const started = Date.now();
@@ -488,7 +632,7 @@ ${remembered}`;
     for (const segment of segments) {
       if (this.#aborted) return;
       try {
-        const wav = await this.retry(() => synthesize(this.env, segment), { maxAttempts: 3, baseDelayMs: 150 });
+        const wav = await this.retry(() => synthesize(this.env, segment, ip), { maxAttempts: 3, baseDelayMs: 150 });
         if (!wav || this.#aborted) continue;
         const sequence = ++this.#ttsSequence;
         this.#send({ type: "tts_start", format: "wav", bytes: wav.byteLength, sequence });
@@ -515,7 +659,7 @@ ${remembered}`;
       return this.#setUi("idle", `Mode: ${next.name}`);
     }
     if (gesture === "double_tap") {
-      this.#aborted = true;
+      if (this.#busy) this.#aborted = true;
       this.#send({ type: "tts_aborted" });
       return this.#setUi("idle");
     }
@@ -540,11 +684,15 @@ ${remembered}`;
   }
 
   async #confirm(connection: Connection<ConnState>, ok: boolean) {
+    if (!connection.state?.verified) {
+      return this.#send({ type: "error", code: "turnstile_required", message: "Complete the Turnstile check first." }, connection);
+    }
     this.#confirmQueued = this.#busy;
-    await this.#whenIdle();
+    while (this.#busy) await this.#whenIdle();
     this.#confirmQueued = false;
+    this.#aborted = false;
     const pending = this.#pendingConfirm();
-    if (!pending || this.#busy) return;
+    if (!pending || pending.expiresAt < Date.now() || this.#busy) return;
     this.#busy = true;
     try {
       this.sql`DELETE FROM pending_confirmations WHERE id = ${pending.id}`;
@@ -559,10 +707,10 @@ ${remembered}`;
         line = "Done. I forgot everything. It is a fresh start.";
       }
       this.sql`INSERT INTO messages (thread, role, content, created_at) VALUES (${this.state.thread}, 'assistant', ${line}, ${Date.now()})`;
-      await this.#speak(line);
+      await this.#speak(line, "speaking", connection.state?.ip ?? "local");
       this.#send({ type: "turn_end", expectsReply: false });
     } catch (err) {
-      this.#fail(err);
+      this.#fail(err, connection);
     } finally {
       this.#release();
     }
@@ -582,17 +730,22 @@ ${remembered}`;
       payload.kind === "timer" ? (payload.label && payload.label !== "Timer" ? `Your ${payload.label} timer is done.` : "Your timer is done.") : payload.label;
     if (payload.kind === "timer") this.#send({ type: "timer_clear", id: schedule.id });
     if ([...this.getConnections()].length === 0) {
+      const count = this.sql<{ n: number }>`SELECT COUNT(*) AS n FROM pending_device_messages`[0]?.n ?? 0;
+      if (count >= MAX_PENDING_DEVICE_MESSAGES) {
+        this.sql`DELETE FROM pending_device_messages WHERE id = (SELECT MIN(id) FROM pending_device_messages)`;
+      }
       this.sql`INSERT INTO pending_device_messages (message, created_at) VALUES (${message}, ${Date.now()})`;
       return;
     }
     this.#send({ type: "play_effect", name: "chime" });
     this.#send({ type: "reminder", message });
     // The schedule fires once. If a turn is running, speak the reminder when that turn ends.
-    await this.#whenIdle();
+    while (this.#busy) await this.#whenIdle();
+    this.#aborted = false;
     if (this.#busy) return;
     this.#busy = true;
     try {
-      await this.#speak(message);
+      await this.#speak(message, "speaking", `desk:${this.name}`);
       this.#send({ type: "turn_end", expectsReply: false });
     } catch (err) {
       console.error("reminder speech failed", err);
@@ -611,23 +764,25 @@ ${remembered}`;
     this.#weather = report;
   }
 
-  async rememberFact(fact: string) {
+  async rememberFact(fact: string, ip = "local") {
     const existing = this.sql<{ id: number; dims: number }>`SELECT id, dims FROM memories WHERE lower(fact) = lower(${fact})`[0];
     if (existing) return { id: existing.id, dims: existing.dims, duplicate: true };
-    const count = this.sql<{ n: number }>`SELECT COUNT(*) AS n FROM memories`[0]?.n ?? 0;
-    if (count >= MAX_FACTS) this.sql`DELETE FROM memories WHERE id = (SELECT MIN(id) FROM memories)`;
-    const [vector] = await embed(this.env, [fact]);
+    const [vector] = await embed(this.env, [fact], ip);
     if (!vector) throw new Error("The embedding model returned no vector.");
-    const row = this.ctx.storage.sql
-      .exec<{ id: number }>("INSERT INTO memories (fact, embedding, dims, created_at) VALUES (?, ?, ?, ?) RETURNING id", fact, toBlob(vector), vector.length, Date.now())
-      .one();
+    const row = this.ctx.storage.transactionSync(() => {
+      const count = this.sql<{ n: number }>`SELECT COUNT(*) AS n FROM memories`[0]?.n ?? 0;
+      if (count >= MAX_FACTS) this.sql`DELETE FROM memories WHERE id = (SELECT MIN(id) FROM memories)`;
+      return this.ctx.storage.sql
+        .exec<{ id: number }>("INSERT INTO memories (fact, embedding, dims, created_at) VALUES (?, ?, ?, ?) RETURNING id", fact, toBlob(vector), vector.length, Date.now())
+        .one();
+    });
     return { id: row.id, dims: vector.length, duplicate: false };
   }
 
-  async recall(query: string, limit: number, minScore = RECALL_MIN_SCORE): Promise<RecallHit[]> {
+  async recall(query: string, limit: number, minScore = RECALL_MIN_SCORE, ip = "local"): Promise<RecallHit[]> {
     const rows = this.ctx.storage.sql.exec<{ fact: string; embedding: ArrayBuffer }>("SELECT fact, embedding FROM memories").toArray();
     if (!rows.length) return [];
-    const [q] = await embed(this.env, [query]);
+    const [q] = await embed(this.env, [query], ip);
     const vector = q
       ? rows
           .map((r) => ({ fact: r.fact, score: cosine(q, fromBlob(r.embedding)), via: "vector" as const }))
@@ -644,13 +799,22 @@ ${remembered}`;
     return [...vector.slice(0, limit), ...keyword].slice(0, limit);
   }
 
-  forgetEverything() {
+  async forgetEverything() {
     const count = (table: string) => this.ctx.storage.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}`).one().n;
     const result = { facts: count("memories"), items: count("list_items"), messages: count("messages") };
+    for (const s of await this.listSchedules()) {
+      if (s.callback === "deliverReminder" || s.callback === "expireConfirm") {
+        await this.cancelSchedule(s.id);
+        if (s.callback === "deliverReminder") this.#send({ type: "timer_clear", id: s.id });
+      }
+    }
     this.sql`DELETE FROM memories`;
     this.sql`DELETE FROM list_items`;
     this.sql`DELETE FROM messages`;
-    this.setState({ ...this.state, thread: this.state.thread + 1, lastTurnAt: 0 });
+    this.sql`DELETE FROM pending_device_messages`;
+    this.sql`DELETE FROM pending_confirmations`;
+    this.#weather = null;
+    this.setState({ ...this.state, thread: this.state.thread + 1, lastTurnAt: 0, location: null, speechMode: "default" });
     return result;
   }
 
@@ -673,6 +837,8 @@ ${remembered}`;
   }
 
   async scheduleReminder(kind: "timer" | "reminder", label: string, delaySeconds: number) {
+    const pending = (await this.listSchedules()).filter((s) => s.callback === "deliverReminder");
+    if (pending.length >= MAX_REMINDER_SCHEDULES) throw new Error(`This desk holds ${MAX_REMINDER_SCHEDULES} timers and reminders at most.`);
     const schedule = await this.schedule<ReminderPayload>(delaySeconds, "deliverReminder", { kind, label, durationSeconds: delaySeconds });
     if (kind === "timer") this.#send({ type: "timer", id: schedule.id, label, endsAt: schedule.time * 1000, durationSeconds: delaySeconds });
     return { id: schedule.id, firesAt: new Date(schedule.time * 1000).toISOString() };
@@ -720,10 +886,16 @@ ${remembered}`;
     }
     if (response.result?.isError) throw new Error(typeof data === "string" ? data : JSON.stringify(data));
     const d = data as { volume?: number; brightness?: number };
-    if (typeof d?.volume === "number" || typeof d?.brightness === "number") {
+    const volume = clampDeviceLevel(d?.volume);
+    const brightness = clampDeviceLevel(d?.brightness);
+    if (volume !== undefined || brightness !== undefined) {
       this.setState({
         ...this.state,
-        device: { ...this.state.device, volume: d.volume ?? this.state.device.volume, brightness: d.brightness ?? this.state.device.brightness },
+        device: {
+          ...this.state.device,
+          volume: volume ?? this.state.device.volume,
+          brightness: brightness ?? this.state.device.brightness,
+        },
       });
     }
     return data;
@@ -731,25 +903,47 @@ ${remembered}`;
 
   // ------------------------------------------------------------------ console RPC
 
+  async #meterStatus() {
+    if (this.#meterCache && Date.now() - this.#meterCache.at < METER_CACHE_MS) {
+      return { spent: this.#meterCache.spent, budget: this.#meterCache.budget };
+    }
+    const { spent, budget } = await meter(this.env).status();
+    this.#meterCache = { at: Date.now(), spent, budget };
+    return { spent, budget };
+  }
+
   /** The console panel reads the desk's SQLite through this callable. */
   @callable()
   async inspect(): Promise<Inspection> {
+    const { connection } = getCurrentAgent();
+    if (connection) {
+      const state = (connection.state ?? { ip: "local" }) as ConnState;
+      const now = Date.now();
+      if (state.inspectAt && now - state.inspectAt < INSPECT_MIN_INTERVAL_MS) {
+        throw new DeskError("rate_limited", "Slow down a little.");
+      }
+      connection.setState({ ...state, inspectAt: now });
+      const { success } = await this.env.READ_LIMIT.limit({ key: networkKey(state.ip ?? "local") });
+      if (!success) throw new DeskError("rate_limited", "Slow down a little.");
+    }
     const facts = this.sql<{ id: number; fact: string; dims: number; created_at: number }>`
       SELECT id, fact, dims, created_at FROM memories ORDER BY id DESC LIMIT 50`;
     const list = this.sql<{ id: number; list: string; item: string; created_at: number }>`
       SELECT id, list, item, created_at FROM list_items ORDER BY list, id LIMIT 100`;
     const messages = this.sql<{ id: number; thread: number; role: "user" | "assistant"; content: string; created_at: number }>`
       SELECT * FROM (SELECT id, thread, role, content, created_at FROM messages ORDER BY id DESC LIMIT 40) ORDER BY id`;
-    const schedules = (await this.listSchedules()).map((s) => {
-      const p = s.payload as Partial<ReminderPayload> & { id?: string };
-      return { id: s.id, kind: s.callback === "deliverReminder" ? (p.kind ?? "reminder") : s.callback, label: p.label ?? p.id ?? "", time: s.time * 1000 };
-    });
+    const schedules = (await this.listSchedules())
+      .filter((s) => s.callback === "deliverReminder")
+      .map((s) => {
+        const p = s.payload as Partial<ReminderPayload> & { id?: string };
+        return { id: s.id, kind: p.kind ?? "reminder", label: p.label ?? p.id ?? "", time: s.time * 1000 };
+      });
     const pending = this.#pendingConfirm();
     const tables = this.ctx.storage.sql
       .exec<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' AND name NOT LIKE '\\_%' ESCAPE '\\' ORDER BY name")
       .toArray()
       .map(({ name }) => ({ name, rows: this.ctx.storage.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM "${name.replace(/"/g, '""')}"`).one().n }));
-    const { spent, budget } = await meter(this.env).status();
+    const { spent, budget } = await this.#meterStatus();
     return {
       desk: this.name,
       facts,
@@ -768,7 +962,7 @@ ${remembered}`;
     const q = String(query ?? "").trim().slice(0, 200);
     if (q.length < 2) return [];
     const { connection } = getCurrentAgent();
-    if (connection) await this.#guard(connection as Connection<ConnState>);
-    return this.recall(q, 8, -1);
+    const ip = connection ? await this.#guard(connection as Connection<ConnState>, { countTurn: false }) : "local";
+    return this.recall(q, 8, -1, ip);
   }
 }

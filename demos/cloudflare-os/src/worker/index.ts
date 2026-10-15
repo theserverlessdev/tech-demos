@@ -1,6 +1,7 @@
 import { RpcTarget, newWorkersRpcResponse } from "capnweb";
 import type { Viewer } from "../shared/types";
 import { BLUEPRINT_INFOS } from "./blueprints";
+import { isAllowedOrigin } from "./origin";
 import type { Workspace } from "./workspace";
 
 export { Workspace } from "./workspace";
@@ -11,12 +12,6 @@ export { WebGatekeeper, AiGatekeeper } from "./gatekeepers";
 const BASE_PATH = "/demos/cloudflare-os";
 
 const WORKSPACE_ID = /^[a-z0-9]{8,24}$/;
-
-const ALLOWED_ORIGINS = [
-  "https://tech-demos.theserverless.dev",
-  "https://cloudflare-os.tech-demos.theserverless.dev",
-  "https://tech-demos-cloudflare-os.theserverlessdev.workers.dev",
-];
 
 function cleanViewer(v: Viewer): Viewer {
   const text = (s: unknown, max: number) => String(s ?? "").slice(0, max);
@@ -45,13 +40,6 @@ class PublicApi extends RpcTarget {
   listBlueprints() {
     return BLUEPRINT_INFOS;
   }
-}
-
-function isAllowedOrigin(origin: string | null, url: URL): boolean {
-  if (!origin) return true;
-  if (origin === url.origin) return true;
-  if (ALLOWED_ORIGINS.includes(origin)) return true;
-  return /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
 }
 
 export default {

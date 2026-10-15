@@ -1,4 +1,5 @@
 import { LIMITS, PRICES } from "./limits";
+import { PRESETS } from "./questions";
 import type { ChoiceQuestion, CostNote, JudgmentAnswer, Modality } from "./types";
 
 export const OMNI_STATE =
@@ -168,10 +169,19 @@ export function hashSeed(text: string): number {
   return hash >>> 0;
 }
 
+function stubTopIndex(question: ChoiceQuestion, seed: string, index: number, sampleId?: string | null): number {
+  const preset = sampleId ? PRESETS.find((item) => item.sample === sampleId) : undefined;
+  if (preset) {
+    const expected = question.options.findIndex((option) => option.label === preset.expected);
+    if (expected >= 0) return expected;
+  }
+  return hashSeed(`${seed}:${question.id}:${index}`) % question.options.length;
+}
+
 /** Deterministic stand-in. The page labels it as a local stub. */
-export function stubAnswers(questions: ChoiceQuestion[], seed: string): JudgmentAnswer[] {
+export function stubAnswers(questions: ChoiceQuestion[], seed: string, sampleId?: string | null): JudgmentAnswer[] {
   return questions.map((question, index) => {
-    const top = hashSeed(`${seed}:${question.id}:${index}`) % question.options.length;
+    const top = stubTopIndex(question, seed, index, sampleId);
     const rest = question.options.length - 1;
     const topP = rest === 0 ? 1 : 0.72;
     const share = rest === 0 ? 0 : (1 - topP) / rest;

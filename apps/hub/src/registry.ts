@@ -21,8 +21,8 @@ function standalone(slug: string, origin = standaloneOrigin(slug)): string {
 // if that route is missing, and it sends the visitor to the demo subdomain.
 const cloudflareOsFallbackSource = standalone("cloudflare-os");
 
-// apollo-desk is a standalone Worker (ASSETS, AI, Apollo, METER, TURN_LIMIT). Same pattern as
-// cloudflare-os: the zone route wins, and this source only redirects if that route is missing.
+// apollo-desk is a standalone Worker (ASSETS, AI, Apollo, METER, TURN_LIMIT, DESK_LIMIT, READ_LIMIT, Turnstile).
+// Same pattern as cloudflare-os: the zone route wins, and this source only redirects if that route is missing.
 const apolloDeskFallbackSource = standalone("apollo-desk");
 
 // temp-email is a standalone Worker (ASSETS, DB, ATTACHMENTS, CREATE_LIMIT, READ_LIMIT, Email, cron, Turnstile).
@@ -30,8 +30,9 @@ const apolloDeskFallbackSource = standalone("apollo-desk");
 // route sends /demos/temp-email* to the Worker, which redirects there. This source only runs if that route is missing.
 const tempEmailFallbackSource = standalone("temp-email", "https://email.lomvic.com");
 
-// resolve-hq is a standalone Worker (ASSETS, AI, DB, ATTACHMENTS, INBOUND queue, WRITE_LIMIT). Same pattern
-// as apollo-desk: the zone route wins, and this source only redirects if that route is missing.
+// resolve-hq is a standalone Worker (ASSETS, AI, DB, ATTACHMENTS, INBOUND queue, WRITE/SESSION/AI/UPLOAD
+// limits, cron, Turnstile). Same pattern as apollo-desk: the zone route wins, and this source only
+// redirects if that route is missing.
 const resolveHqFallbackSource = standalone("resolve-hq");
 
 // personal-agent is a standalone Worker (ASSETS, AI, NOTES, ASSISTANT, CHAT_LIMIT, RESEARCH_LIMIT, READ_LIMIT, Turnstile).
@@ -42,7 +43,7 @@ const personalAgentFallbackSource = standalone("personal-agent");
 // pattern as resolve-hq: the zone route wins, and this source only redirects if that route is missing.
 const partyserverFallbackSource = standalone("partyserver");
 
-// feedlog is a standalone Worker (ASSETS, AI, DB, IMAGES, VECTORS, POST_LIMIT, VOTE_LIMIT, AI_LIMIT, Turnstile).
+// feedlog is a standalone Worker (ASSETS, AI, DB, IMAGES, VECTORS, POST_LIMIT, VOTE_LIMIT, AI_LIMIT, ADMIN_LIMIT, IMAGE_LIMIT, READ_LIMIT, cron, Turnstile).
 // Same pattern as resolve-hq: the zone route wins, and this source only redirects if that route is missing.
 const feedlogFallbackSource = standalone("feedlog");
 
@@ -78,8 +79,8 @@ const memoryRepoFallbackSource = standalone("memory-repo");
 // resolve-hq: the zone route wins, and this source only redirects if that route is missing.
 const edgechatFallbackSource = standalone("edgechat");
 
-// goodvibes is a standalone Worker (ASSETS, ROOM, CREATE_LIMIT). Same pattern as resolve-hq: the zone
-// route wins, and this source only redirects if that route is missing.
+// goodvibes is a standalone Worker (ASSETS, ROOM, CONNECT_LIMIT, Turnstile). Same pattern as resolve-hq:
+// the zone route wins, and this source only redirects if that route is missing.
 const goodvibesFallbackSource = standalone("goodvibes");
 
 // byok-playground is a standalone Worker (D1 budget, Workers AI, Turnstile). Same pattern as resolve-hq:
@@ -110,21 +111,21 @@ export const demos: DemoEntry[] = [
   },
   {
     slug: "goodvibes",
-    title: "GoodVibes",
+    title: "Ember Rush",
     description: "A 75-second multiplayer orb hunt. Highest score in the room wins.",
     demonstrates:
-      "One Durable Object per room is the coordinator: hibernating WebSockets carry poses and scores, and an alarm runs the 75-second round. The room owns the orbs and the clock, so a second tab is another player, not another copy of the game.",
+      "One Durable Object per room is the coordinator: hibernating WebSockets carry poses and scores, and an alarm runs the 75-second round. The room owns pickups, scores and the clock, and validates movement speed. A second tab is another player, not another copy of the game.",
     capabilities: [
-      "Join or create a named room and open it in a second tab",
+      "Join a named room and open the link in a new tab or another browser",
       "Start a 75-second round and move with the keyboard, a click, or the pad",
       "Collect ember orbs (+1) and gold orbs (+3); the highest score wins",
       "Play again without leaving the room",
       "Play the same round on a 2D floor when WebGL cannot start",
     ],
     useCases: [
-      "A realtime game where the server owns positions, pickups, and the round clock",
+      "A realtime game where the server owns pickups, scores and the round clock, and validates movement speed",
       "A classroom activity with a shared timer and a scoreboard",
-      "Any room that should hibernate when the last player leaves",
+      "A room that hibernates while players idle and wipes itself when the last one leaves",
     ],
     tags: ["durable-objects", "websockets", "threejs", "game"],
     kind: "standalone",
@@ -135,17 +136,17 @@ export const demos: DemoEntry[] = [
     title: "EdgeChat",
     description: "A mini team chat. A message in one tab shows up in the other tabs in that room.",
     demonstrates:
-      "One ChatRoom Durable Object per room name fans out hibernating WebSockets. D1 keeps the transcript across refresh, KV stores the display name, and R2 holds an attachment the message can link to.",
+      "One ChatRoom Durable Object per room name fans out hibernating WebSockets. The object sleeps between messages while visitors stay connected. D1 keeps the last 80 messages across refresh, KV stores the display name, and R2 holds an attachment the message can link to.",
     capabilities: [
       "Join the same room in two tabs and watch a message arrive in both",
       "Refresh and still see the last 80 messages stored in D1",
       "Set a display name that is kept in KV",
-      "Attach a file; the message links to the R2 object, and images preview",
+      "Attach a file; the message links to the R2 object, and PNG/JPEG/GIF/WebP images preview",
     ],
     useCases: [
       "An incident channel where the transcript survives a refresh",
       "In-product comments with file drops",
-      "A support room that hibernates when nobody is connected",
+      "A support room that sleeps between messages while visitors stay connected",
     ],
     tags: ["durable-objects", "d1", "kv", "r2", "websockets"],
     kind: "standalone",
@@ -154,21 +155,21 @@ export const demos: DemoEntry[] = [
   {
     slug: "resolve-hq",
     title: "ResolveHQ",
-    description: "A shared support inbox: tickets, files, simulated mail, and a draft reply.",
+    description: "A support inbox: public seeds, a per-visitor sandbox, and a labelled AI-or-stub draft.",
     demonstrates:
-      "A Worker coordinates D1 tickets, R2 attachments, and a Queue consumer that turns a simulated inbound email into a ticket or a thread reply. Workers AI fills a draft and falls back to a stub if the model fails. There is no live mail exchanger.",
+      "A Worker coordinates D1 tickets, R2 attachments, and a Queue consumer that turns a simulated inbound email into a ticket. Draft reply is same-origin, Turnstile-gated, session-bound, rate-limited, and budgeted; the composer labels Workers AI vs stub. Local bun run dev uses the stub (no AI binding). Live Workers AI needs the owner-deployed binding. Seed tickets are public (original thread). Your replies, inbound, and uploads stay in this browser and reset hourly. Seed status is locked.",
     capabilities: [
-      "Open a seeded ticket and read the thread",
-      "Attach a file and download it",
-      "Simulate inbound mail and watch the consumer create or append a ticket",
-      "Ask for a draft reply, including the stub used when Workers AI fails",
+      "Open a seeded ticket and read the original thread",
+      "Attach a PNG, JPEG, PDF, or text file; it downloads as an attachment and expires",
+      "Simulate inbound mail; only this browser sees the new ticket",
+      "Ask for a draft reply and see Path: Workers AI or Path: stub fallback (local is stub)",
     ],
     useCases: [
-      "A small shared inbox without a live mail route yet",
-      "Queue-backed intake that becomes tickets",
-      "A reply desk that still fills a draft when the model is down",
+      "A small inbox without a live mail route yet",
+      "Queue-backed intake that becomes tickets in a visitor sandbox",
+      "A reply desk that still fills a draft when the model is down, without an anonymous AI path",
     ],
-    tags: ["d1", "r2", "queues", "workers-ai"],
+    tags: ["d1", "r2", "queues", "workers-ai", "turnstile", "cron"],
     kind: "standalone",
     source: resolveHqFallbackSource,
   },
@@ -177,7 +178,7 @@ export const demos: DemoEntry[] = [
     title: "Temp email",
     description: "Disposable inboxes on email.lomvic.com, plus a key you mint for an agent.",
     demonstrates:
-      "An Email Worker receives catch-all mail, parses the MIME message, and stores metadata in D1 and attachment bytes in R2. A cron deletes expired inboxes. An agent mints its own Turnstile-gated key and can long-poll for the next message.",
+      "An Email Worker receives catch-all mail, parses the MIME message, and stores metadata in D1 and message bodies plus attachments in R2. A cron deletes expired inboxes. An agent mints its own Turnstile-gated key and can long-poll for the next message.",
     capabilities: [
       "Mint a short-lived address and copy it",
       "Send the sample message and read the extracted code or link",
@@ -204,7 +205,7 @@ export const demos: DemoEntry[] = [
       "Hold to talk, type, or tap a suggested turn",
       "Save a fact, a list item, or a timer, then refresh and see them return",
       "Ask it to change the volume; the brain calls an MCP-style JSON-RPC tool server in the desk",
-      "Ask it to forget everything and confirm or cancel within 30 seconds",
+      "Ask it to forget everything — facts, lists, conversation, location, timers, and reminders — and confirm or cancel within 30 seconds",
       "Open the console for the SQLite transcript, vector scores, and the turn trace",
     ],
     useCases: [
@@ -243,14 +244,14 @@ export const demos: DemoEntry[] = [
     title: "Hello Dynamic Worker",
     description: "A one-file HTML page the hub loads as a Dynamic Worker.",
     demonstrates:
-      "The hub Worker Loader compiles this module at request time and serves it as an isolated Dynamic Worker. The page has no Durable Object, no bindings, and no stored state.",
+      "The hub bundles worker.js as text. On the first request, the Worker Loader starts an isolate with id hello-dynamic:<sha256 of compat date + source> and reuses it while it stays warm. A source change gives a new id. The demo stores nothing; the hub's Workers Logs keep the request URL for up to 7 days.",
     capabilities: [
       "Open the page served by the loaded worker",
-      "Change ?name= and see the greeting update",
-      "Confirm the HTML comes from the Dynamic Worker, not a static file on the hub",
+      "Type a name in the form (or follow ?name=Ankur) and see the greeting update",
+      "Refresh and watch the isolate request counter climb — that number is from the loaded module, not a static file on the hub",
     ],
     useCases: [
-      "A gallery that loads a snippet without a separate Worker deploy",
+      "A gallery that loads a snippet without a separate Worker deploy (load the source from KV or R2 instead of bundling it)",
       "A preview of generated worker code",
       "A check that the loader path works before you add bindings",
     ],
@@ -310,8 +311,8 @@ export const demos: DemoEntry[] = [
     capabilities: [
       "Read the seeded ideas, vote once from this browser, and open the roadmap and changelog",
       "Write a post and watch similar posts appear as you type",
-      "Attach a JPEG, PNG, GIF, or WebP under 1.5 MB",
-      "See the 'matched on words' note when Vectorize is unavailable",
+      "Attach a JPEG, PNG, GIF, or WebP under 1.5 MB (it stays hidden until an admin approves it)",
+      "Type a near-copy of a seeded title (try 'Dark mode for the roadmap') and see it flagged as a possible duplicate",
     ],
     useCases: [
       "A public roadmap with one vote per browser",
@@ -353,7 +354,7 @@ export const demos: DemoEntry[] = [
       "Ask the desk to use one of the five sandboxed tools",
       "Read the verdict and the probabilities",
       "Approve or deny a paused call; it resumes in the same Durable Object, or ten minutes pass",
-      "Open the audit list for the tool, the decision, and the model",
+      "Open the audit list for the tool, the arguments, the decision, and your answer",
       "See that send, delete, and SQL tools only describe what they would have done",
     ],
     useCases: [
@@ -391,7 +392,7 @@ export const demos: DemoEntry[] = [
     title: "Actor lab",
     description: "A counter race and a chat that show how one Durable Object lines up work.",
     demonstrates:
-      "A SQLite-backed actor persists fields through a state proxy, and mailbox handlers run one at a time. An await on Workers AI opens the input gate, so interleaved updates lose increments. The chat actor hibernates; a simulated eviction drops isolate memory and reloads the transcript from SQLite.",
+      "A SQLite-backed actor persists fields through a state proxy, and mailbox handlers run one at a time. An await on Workers AI opens the input gate, so interleaved updates lose increments. The chat actor hibernates; a simulated eviction clears the in-memory scratch note and reloads the transcript from SQLite.",
     capabilities: [
       "Arm a race after Turnstile and fire Interleaved: the counter usually ends below the number of updates",
       "Fire Serialized mailbox: the counter reaches the number of updates",
@@ -416,7 +417,7 @@ export const demos: DemoEntry[] = [
     capabilities: [
       "Create a task after Turnstile and get a fresh Artifacts repo",
       "Run the agent and, when the model changes a file, see the commit",
-      "Read the commit log and the unified diff",
+      "Read the commit log and the line diff",
       "Mint a ten-minute read-only git clone token",
       "An unchanged model response is reported as an error and commits nothing",
     ],
@@ -434,7 +435,7 @@ export const demos: DemoEntry[] = [
     title: "Memory repo",
     description: "An agent's memory is markdown in a git repo. Facts and dreams are commits you can diff.",
     demonstrates:
-      "One ChatAgent Durable Object per visitor recalls an FTS5 index, then Workers AI replies. One MemoryAgent per visitor owns an Artifacts git repo of markdown. Every memory write is a commit, and a dream alarm consolidates the files into another commit. If the model output is unusable, nothing is committed. The repo and rows are deleted 24 h after the last activity.",
+      "One ChatAgent Durable Object per visitor recalls an FTS5 index, then Workers AI replies. One MemoryAgent per visitor owns an Artifacts git repo of markdown. Every memory write is a commit, and a dream alarm consolidates the files into another commit. If the dream's output is unusable, nothing is committed. The repo, chat, and rows are deleted 24 h after the last activity.",
     capabilities: [
       "Pass Turnstile and open a memory repo for this browser",
       "State a name, preference, or project and see the commit",
@@ -454,22 +455,21 @@ export const demos: DemoEntry[] = [
   {
     slug: "omni-judge",
     title: "Omni Judge",
-    description: "One Clef-omni call scores a photo, a voice note, or a short video.",
+    description: "Clef-omni scores a receipt, a cracked screen, a parcel, a support note, or a fall in one call.",
     demonstrates:
-      "A single Workers AI call to Clef-omni reads the media and returns a probability for every allowed answer. Upload bytes are sniffed for type, size, and duration, stored in R2 under an unguessable id, and deleted after 24 hours. Judgments live in D1. A comparison can time Whisper or a vision model plus Clef on the same image or audio.",
+      "One Workers AI call to Clef-omni reads the photo, voice note, or clip and returns a probability for every allowed answer. The bundled presets are real intake tasks with a labelled expected answer. Upload bytes are sniffed, stored in R2 under an unguessable id, and deleted after 24 hours. Judgments live in D1.",
     capabilities: [
-      "Snap a photo, record a voice note, or film up to 10 seconds",
-      "Start from a bundled sample",
-      "Pick a preset checklist or write up to five questions",
-      "Read the probability for every option, the top answer, and the latency",
-      "Compare with the classic chain on an image or a voice note",
-      "Review recent judgments from this browser",
+      "Run a preset: expense receipt, product QA, delivery parcel, support voice, or a safety clip",
+      "Read the top answer, the bar for every option, and whether it matched the expected label",
+      "Snap a photo, record a voice note, or film up to 10 seconds and write a checklist",
+      "Compare an image or a voice note with Whisper or a vision model, then Clef",
     ],
     useCases: [
-      "Voicemail triage",
-      "Upload moderation",
-      "Field-inspection checklists",
-      "Support-call routing",
+      "Expense intake that rejects a blurry receipt",
+      "Product QA that flags a cracked mug or phone screen",
+      "A delivery photo check for a damaged parcel",
+      "Support voice-note triage, urgent versus routine",
+      "A short safety clip that spots a fall",
     ],
     tags: ["workers-ai", "d1", "r2", "turnstile", "cron"],
     kind: "standalone",

@@ -1,4 +1,6 @@
 // Smoke: bun run scripts/smoke.ts [baseUrl]
+// Against the local preview this is free. Against wrangler with remote:true it creates
+// one real Artifacts repo and one Workers AI call, then POST /api/dev/purge deletes them.
 import { makeBlob } from "../src/worker/git";
 import type { CloneToken, CommitDetail, RunResult, SessionPayload, TaskDetail } from "../src/shared/types";
 
@@ -44,9 +46,8 @@ async function call<T>(path: string, init: { method?: string; body?: unknown; co
 
 console.log(`Target: ${base}`);
 
-const health = await call<{ ok: boolean; artifacts: string; turnstile: boolean }>("/health");
-check("health reaches D1 and Artifacts", health.status === 200 && health.data?.ok === true && health.data.artifacts === "ok", health.data);
-check("turnstile secret is configured for this process", health.data?.turnstile === true, health.data);
+const health = await call<{ ok: boolean; artifacts?: string; turnstile?: boolean }>("/health");
+check("health reaches D1 only", health.status === 200 && health.data?.ok === true && health.data.artifacts === undefined && health.data.turnstile === undefined, health.data);
 
 const session = await call<SessionPayload>("/session");
 check("session sets a visitor cookie and a site key", session.status === 200 && Boolean(jar.cookie) && Boolean(session.data?.siteKey), {
@@ -61,12 +62,17 @@ const created = await call<{ id: string; remote: string; seed: string }>("/tasks
   method: "POST",
   body: { title: "Smoke greeting", turnstileToken: DUMMY },
 });
-check("create seeds an Artifacts repo", created.status === 201 && created.data?.id.startsWith("task-") && created.data.remote.includes("artifacts.cloudflare.net"), {
+const remote = created.data?.remote ?? "";
+const localRemote = remote.includes("127.0.0.1") || remote.includes("localhost");
+const cloudRemote = remote.includes("artifacts.cloudflare.net");
+check("create seeds a git repo", created.status === 201 && Boolean(created.data?.id.startsWith("task-")) && (localRemote || cloudRemote), {
   status: created.status,
   id: created.data?.id,
-  remote: created.data?.remote,
+  remote,
   error: created.data?.error,
 });
+if (localRemote) console.log("Note: this run used the local fake Artifacts. No tech-demos repo was created.");
+if (cloudRemote) console.log("Note: this run created a real Artifacts repo and the run step is one Workers AI call.");
 
 const taskId = created.data?.id;
 if (!taskId) {
@@ -75,7 +81,7 @@ if (!taskId) {
 }
 
 const detail = await call<TaskDetail>(`/tasks/${taskId}`);
-check("commit log contains the seed", detail.status === 200 && (detail.data?.commits.length ?? 0) >= 1 && detail.data?.commits.some((commit) => commit.message.includes("Seed")), {
+check("commit list contains the seed", detail.status === 200 && (detail.data?.commits.length ?? 0) >= 1 && detail.data?.commits.some((commit) => commit.message.includes("Seed")), {
   status: detail.status,
   commits: detail.data?.commits.map((commit) => commit.message),
 });
@@ -84,7 +90,7 @@ const seed = detail.data?.commits.find((commit) => commit.message.includes("Seed
 if (seed) {
   const diff = await call<CommitDetail>(`/tasks/${taskId}/commits/${seed.hash}`);
   const readme = diff.data?.files.find((file) => file.path === "README.md");
-  check("seed diff shows README.md added", diff.status === 200 && readme?.status === "added" && readme.patch.includes("Smoke greeting"), {
+  check("seed line diff shows README.md added", diff.status === 200 && readme?.status === "added" && readme.patch.includes("Smoke greeting"), {
     status: diff.status,
     paths: diff.data?.files.map((file) => file.path),
   });
@@ -113,11 +119,22 @@ if (run.data?.hash) {
 }
 
 const token = await call<CloneToken>(`/tasks/${taskId}/token`, { method: "POST", body: {} });
-check("read token is art_ scoped and the remote matches", token.status === 200 && token.data?.token.startsWith("art_") && token.data.remote === created.data?.remote && token.data.ttlSeconds === 600, {
-  status: token.status,
-  prefix: token.data?.token.slice(0, 6),
-  ttl: token.data?.ttlSeconds,
-});
+const expiresMs = token.data ? Date.parse(token.data.expiresAt) : NaN;
+const ttlFromClock = Number.isFinite(expiresMs) ? Math.round((expiresMs - Date.now()) / 1000) : -1;
+const expiresQuery = token.data?.token.includes("expires=") ? Number(new URLSearchParams(token.data.token.split("?")[1]).get("expires")) : 0;
+check(
+  "read token is art_ scoped and about 600s out",
+  token.status === 200 &&
+    Boolean(token.data?.token.startsWith("art_")) &&
+    token.data?.remote === created.data?.remote &&
+    ttlFromClock > 500 &&
+    ttlFromClock <= 600 &&
+    (expiresQuery === 0 || expiresQuery > Math.floor(Date.now() / 1000) + 500),
+  { status: token.status, prefix: token.data?.token.slice(0, 6), ttlFromClock, expiresQuery },
+);
+
+const purged = await call<{ deleted: number }>("/dev/purge", { method: "POST", body: {} });
+check("local purge deletes the smoke repo", purged.status === 200 && (purged.data?.deleted ?? 0) >= 1, purged.data);
 
 if (failures) {
   console.error(`\n${failures} check(s) failed.`);
