@@ -30,8 +30,9 @@ const apolloDeskFallbackSource = standalone("apollo-desk");
 // route sends /demos/temp-email* to the Worker, which redirects there. This source only runs if that route is missing.
 const tempEmailFallbackSource = standalone("temp-email", "https://email.lomvic.com");
 
-// resolve-hq is a standalone Worker (ASSETS, AI, DB, ATTACHMENTS, INBOUND queue, WRITE_LIMIT). Same pattern
-// as apollo-desk: the zone route wins, and this source only redirects if that route is missing.
+// resolve-hq is a standalone Worker (ASSETS, AI, DB, ATTACHMENTS, INBOUND queue, WRITE/SESSION/AI/UPLOAD
+// limits, cron, Turnstile). Same pattern as apollo-desk: the zone route wins, and this source only
+// redirects if that route is missing.
 const resolveHqFallbackSource = standalone("resolve-hq");
 
 // personal-agent is a standalone Worker (ASSETS, AI, NOTES, ASSISTANT, CHAT_LIMIT, RESEARCH_LIMIT, READ_LIMIT, Turnstile).
@@ -154,21 +155,21 @@ export const demos: DemoEntry[] = [
   {
     slug: "resolve-hq",
     title: "ResolveHQ",
-    description: "A shared support inbox: tickets, files, simulated mail, and a draft reply.",
+    description: "A support inbox: public seeds, a per-visitor sandbox, and a labelled AI draft.",
     demonstrates:
-      "A Worker coordinates D1 tickets, R2 attachments, and a Queue consumer that turns a simulated inbound email into a ticket or a thread reply. Workers AI fills a draft and falls back to a stub if the model fails. There is no live mail exchanger.",
+      "A Worker coordinates D1 tickets, R2 attachments, and a Queue consumer that turns a simulated inbound email into a ticket. Draft reply is same-origin, Turnstile-gated, session-bound, rate-limited, and budgeted; the page shows whether Workers AI or the stub path ran. Seed tickets are public. Simulate inbound, replies, and uploads stay in this browser and reset on an hourly cron. There is no live mail exchanger.",
     capabilities: [
       "Open a seeded ticket and read the thread",
-      "Attach a file and download it",
-      "Simulate inbound mail and watch the consumer create or append a ticket",
-      "Ask for a draft reply, including the stub used when Workers AI fails",
+      "Attach a PNG, JPEG, PDF, or text file; it downloads as an attachment and expires",
+      "Simulate inbound mail; only this browser sees the new ticket",
+      "Ask for a draft reply and see Path: Workers AI or Path: stub fallback",
     ],
     useCases: [
-      "A small shared inbox without a live mail route yet",
-      "Queue-backed intake that becomes tickets",
-      "A reply desk that still fills a draft when the model is down",
+      "A small inbox without a live mail route yet",
+      "Queue-backed intake that becomes tickets in a visitor sandbox",
+      "A reply desk that still fills a draft when the model is down, without an anonymous AI path",
     ],
-    tags: ["d1", "r2", "queues", "workers-ai"],
+    tags: ["d1", "r2", "queues", "workers-ai", "turnstile", "cron"],
     kind: "standalone",
     source: resolveHqFallbackSource,
   },

@@ -6,9 +6,9 @@
   <meta name="color-scheme" content="dark light" />
   <meta name="theme-color" content="#0e0e11" />
   <title>ResolveHQ · Tech Demos · theserverless.dev</title>
-  <meta name="description" content="A shared support inbox on Cloudflare Workers: D1 tickets, R2 attachments, a Queue-simulated inbound mail, and a Workers AI draft reply." />
+  <meta name="description" content="A support inbox slice on Cloudflare Workers: D1 tickets, R2 attachments with a 24h TTL, a Queue-simulated inbound, and a Turnstile-gated Workers AI draft." />
   <meta property="og:title" content="ResolveHQ slice" />
-  <meta property="og:description" content="Shared inbox on Workers with D1, R2, Queues, and Workers AI — a small slice of ResolveHQ." />
+  <meta property="og:description" content="Per-visitor inbox sandbox on Workers with D1, R2, Queues, Turnstile, and Workers AI." />
   <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -28,7 +28,7 @@
     </a>
     <div class="topbar__title">
       <h1>ResolveHQ</h1>
-      <p>Shared inbox on D1, R2, Queues, and Workers AI</p>
+      <p>Inbox sandbox on D1, R2, Queues, and Workers AI</p>
     </div>
     <div class="topbar__actions">
       <button class="btn" id="simulate" type="button">Simulate inbound</button>
@@ -39,11 +39,11 @@
     </div>
   </header>
 
-  <p class="shows shows--bar"><span class="shows__k">What this shows</span> D1 tickets, R2 files, and a Queue consumer for simulated mail. The draft falls back to a stub if Workers AI fails. No live mail route.</p>
+  <p class="shows shows--bar"><span class="shows__k">What this shows</span> Seed tickets are public. Simulate inbound, replies, and uploads stay in this browser’s sandbox and reset on an hourly cron. Draft reply is Turnstile-gated and labelled Workers AI or stub.</p>
 
   <div class="strip" id="strip" role="status">
     <span class="strip__dot"></span>
-    <span id="strip-text">Queue is idle. Simulate inbound mail to create a ticket through the consumer.</span>
+    <span id="strip-text">Queue is idle. Simulate inbound mail to create a ticket that only this browser can see.</span>
   </div>
 
   <main class="layout" id="layout" data-view="list">
@@ -65,7 +65,7 @@
     <section class="thread" id="thread" aria-label="Conversation">
       <div class="thread__empty" id="thread-empty">
         <p class="thread__empty-title">Pick a ticket</p>
-        <p>The middle pane is the thread. Customer mail from the Queue lands here.</p>
+        <p>The middle pane is the thread. Customer mail from the Queue lands here, in this browser only.</p>
       </div>
       <article class="conv" id="conv" hidden>
         <header class="conv__head">
@@ -97,10 +97,13 @@
 
     <aside class="composer" aria-label="Reply">
       <p class="eyebrow">Reply</p>
-      <p class="composer__lede" id="composer-lede">Select a ticket to write back. Draft reply asks Workers AI; it fails soft if the model is down.</p>
+      <p class="composer__lede" id="composer-lede">Select a ticket to write back. Draft reply asks Workers AI after Turnstile; the page shows which path ran.</p>
+      <p class="path" id="draft-path" hidden></p>
       <label class="sr-only" for="reply">Reply body</label>
       <textarea id="reply" rows="10" placeholder="Write the customer-facing reply…" disabled></textarea>
       <p class="hint" id="hint" role="status"></p>
+      <p class="hint" id="budget-note">Checking the daily draft budget…</p>
+      <div id="turnstile" class="turnstile"></div>
       <div class="composer__row">
         <button class="btn" id="draft" type="button" disabled>Draft reply</button>
         <button class="btn btn-primary" id="send" type="button" disabled>Send reply</button>
@@ -110,8 +113,8 @@
       </div>
       <form class="upload" id="upload">
         <label class="upload__label">
-          <span>Attach a file to this ticket (R2)</span>
-          <input id="file" type="file" disabled />
+          <span>Attach PNG, JPEG, PDF, or plain text (≤ 1 MB, 24 h TTL)</span>
+          <input id="file" type="file" accept="text/plain,image/png,image/jpeg,application/pdf" disabled />
         </label>
         <button class="btn" type="submit" id="upload-btn" disabled>Upload</button>
       </form>
@@ -121,11 +124,13 @@
   <footer class="foot">
     <p>
       A slice of <a href="https://github.com/mirza-rizvi/ResolveHQ" rel="noopener" target="_blank">mirza-rizvi/ResolveHQ</a>
-      on Workers, D1, R2, Queues, and Workers AI.
+      on Workers, D1, R2, Queues, Turnstile, and Workers AI.
+      Seed tickets are public; your writes stay in this browser and are cleaned up hourly.
       <a href="https://github.com/theserverlessdev/tech-demos/tree/main/demos/resolve-hq" rel="noopener" target="_blank">Source</a>
     </p>
   </footer>
 
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" defer></script>
   <script type="module" src="./assets/app.js"></script>
 </body>
 </html>
