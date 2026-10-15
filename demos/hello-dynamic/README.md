@@ -25,5 +25,6 @@ A one-file HTML page the hub loads as a Dynamic Worker.
 
 - This demo cannot persist anything, call Workers AI, or open a WebSocket.
 - It cannot make outbound requests. The hub passes `globalOutbound: null`, so `fetch()` throws.
-- The module is plain JavaScript imported by the hub as a Text module. `?name=` is HTML-escaped and capped at 64 Unicode code points.
+- Loader demos are GET/HEAD only. The hub returns `405` for other methods before `LOADER.get`.
+- The module is plain JavaScript imported by the hub as a Text module. `?name=` is HTML-escaped and capped at 64 Unicode code points on the server (not HTML `maxlength`).
 - The demo stores nothing; the hub's Workers Logs keep the request URL for up to 7 days.

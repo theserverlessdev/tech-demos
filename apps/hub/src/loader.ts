@@ -18,7 +18,7 @@ export async function demoLoaderId(
   return `${slug}:${hash}`;
 }
 
-/** Loader demos are GET/HEAD pages. Rejecting other methods avoids a billed isolate and a body stream. */
+/** Hub-served Dynamic Workers (loader demos and standalone fallbacks) are GET/HEAD only. */
 export function isLoaderMethodAllowed(method: string): boolean {
   return method === "GET" || method === "HEAD";
 }

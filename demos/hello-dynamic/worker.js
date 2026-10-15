@@ -52,13 +52,14 @@ export default {
       <p>The hub bundles <code>worker.js</code> as text. On the first request, the Worker Loader starts an isolate with id <code>hello-dynamic:&lt;sha256 of compat date + source&gt;</code> and reuses it while it stays warm. A source change gives a new id.</p>
       <p>The demo stores nothing; the hub's Workers Logs keep the request URL for up to 7 days.</p>
       <form method="get">
-        <input name="name" maxlength="64" aria-label="Name" placeholder="world" value="${inputValue}" autocomplete="nickname" />
+        <input name="name" aria-label="Name" placeholder="world" value="${inputValue}" autocomplete="nickname" />
         <button type="submit">Greet</button>
       </form>
-      <p>Try <a href="?name=Ankur"><code>?name=Ankur</code></a>. This isolate has served <strong>request #${hits}</strong> — refresh to see it climb while the isolate stays warm. That counter lives in this module, so the HTML is not a static file on the hub.</p>
+      <p>Try <a href="?name=Ankur"><code>?name=Ankur</code></a>.</p>
+      <p>This isolate has served <strong>request #${hits}</strong> — refresh to see it climb while the isolate stays warm. That counter lives in this module, so the HTML is not a static file on the hub.</p>
       <p>Loader id: <code>${loaderId}</code> — <code>slug:sha256(compatDate + "\\n" + source)</code>.</p>
-      <p>It cannot make outbound requests. The hub passes <code>globalOutbound: null</code>, so <code>fetch()</code> throws.</p>
-      <p class="nav"><a href="https://tech-demos.theserverless.dev/">← All demos</a><a href="https://theserverless.dev/contact">Contact</a></p>
+      <p>It cannot make outbound requests. The hub passes <code>globalOutbound: null</code>, so <code>fetch()</code> throws. The hub serves this demo on GET and HEAD only.</p>
+      <p class="nav"><a href="https://tech-demos.theserverless.dev/">← All demos</a> <a href="https://theserverless.dev/contact">Contact</a></p>
     </main>
   </body>
 </html>`;

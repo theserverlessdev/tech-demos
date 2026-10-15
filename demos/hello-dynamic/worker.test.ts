@@ -46,9 +46,10 @@ test("serves a GET name form, wrap styles, 44px targets, and a meta CSP", async 
   const html = await (await worker.fetch(new Request("https://hub.test/"))).text();
   expect(html).toContain('<form method="get">');
   expect(html).toContain('name="name"');
-  expect(html).toContain('maxlength="64"');
+  expect(html).not.toContain("maxlength=");
   expect(html).toContain('aria-label="Name"');
   expect(html).toContain('<a href="?name=Ankur">');
+  expect(html).toContain("GET and HEAD only");
   expect(html).toContain("h1 {");
   expect(html).toContain("overflow-wrap: anywhere");
   expect(html).toContain("min-height: 44px");

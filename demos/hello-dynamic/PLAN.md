@@ -13,8 +13,8 @@ Close the Opus audit of `demos/hello-dynamic` (origin/main @ 279668d): 390px lay
 
 1. Cap `?name=` on Unicode code points, default empty/whitespace to `world`, wrap `h1`, 44px tap targets, `100dvh`, meta CSP, GET form + `?name=Ankur` link.
 2. Module-scope isolate hit counter so the page proves it came from the loaded worker.
-3. Hub: reject non-GET/HEAD loader requests before `LOADER.get`; `forwardToLoader` does not attach a body.
-4. Registry / README / gallery badge / `modules.d.ts` wildcard / root test glob — honest copy and copy-as-template nits.
+3. Hub: reject non-GET/HEAD on loader demos and standalone fallbacks before `LOADER.get`; `forwardToLoader` does not attach a body.
+4. Registry / README / gallery badge / `modules.d.ts` wildcard — honest copy, GET/HEAD-only docs, and copy-as-template nits. Root `bun test` keeps hello-dynamic as a second process.
 5. Tests for escaping, astral cap, empty name, form, 405, body-less forward. 390px screenshot + video.
 
 ## Stack

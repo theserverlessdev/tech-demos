@@ -14,9 +14,9 @@ There are two kinds of demo. The registry marks each as `kind: "loader"` or `kin
 
 ### Loader demo (plain JS)
 
-A single `worker.js` with no bindings. The hub imports that file as a **Text** module and `LOADER.get()`s it. `hello-dynamic` is the example.
+A single `worker.js` with no bindings. The hub imports that file as a **Text** module and `LOADER.get()`s it. `hello-dynamic` is the example. Loader demos are **GET/HEAD only**: any other method returns `405` before `LOADER.get`.
 
-The loader id is a hash of the source plus the compatibility date, so a source change is a new Dynamic Worker. Cookie and Authorization headers are stripped before the request is forwarded. Every Dynamic Worker response is wrapped with `Content-Security-Policy: sandbox …` and `X-Content-Type-Options: nosniff`.
+The loader id is a hash of the source plus the compatibility date, so a source change is a new Dynamic Worker. Cookie and Authorization headers are stripped before the request is forwarded. The inbound body is not forwarded. Every Dynamic Worker response is wrapped with `Content-Security-Policy: sandbox …` and `X-Content-Type-Options: nosniff`.
 
 ### Standalone demo (own Worker)
 
@@ -25,7 +25,7 @@ A demo with Durable Objects, D1, R2, or any other binding ships as its **own** W
 - `tech-demos.theserverless.dev/demos/<slug>*`
 - `<slug>.tech-demos.theserverless.dev/*`
 
-and register a **fallback** in `apps/hub/src/registry.ts` via `redirectSource(slug, origin)`. The fallback only runs if the zone route is missing. If the hub instead receives the request on the demo subdomain, it returns `503 demo Worker not deployed` rather than redirecting to itself.
+and register a **fallback** in `apps/hub/src/registry.ts` via `redirectSource(slug, origin)`. The fallback only runs if the zone route is missing. Non-GET/HEAD on a fallback path returns `405` before `LOADER.get`, same as a loader demo. If the hub instead receives the request on the demo subdomain, it returns `503 demo Worker not deployed` rather than redirecting to itself.
 
 **Zone routes win over the custom domain.** The hub's `tech-demos.theserverless.dev` custom domain never sees `/demos/<slug>*` while the standalone Worker's zone route is in place.
 
@@ -34,7 +34,7 @@ and register a **fallback** in `apps/hub/src/registry.ts` via `redirectSource(sl
 ```bash
 bun install
 bun run dev      # hub at http://127.0.0.1:8787
-bun test         # hub + shared + demo helpers (loader demos via demos/*/worker.test.ts)
+bun test         # hub + shared + demo helpers (hello-dynamic is a second bun test run)
 bun run deploy   # wrangler deploy hub (owner only)
 ```
 
@@ -45,7 +45,7 @@ bun run deploy   # wrangler deploy hub (owner only)
 1. Copy `demos/hello-dynamic` → `demos/<kebab-slug>`
 2. Implement a single `worker.js` (no TypeScript, no bindings)
 3. Register it in `apps/hub/src/registry.ts` with `kind: "loader"` and `import source from "…/worker.js" with { type: "text" }`. Hub `tsc` already accepts `*/worker.js` as a Text module.
-4. Add `demos/<kebab-slug>/worker.test.ts` if the demo has tests (`bun test` picks up `demos/*/worker.test.ts`)
+4. Add `demos/<kebab-slug>/worker.test.ts` and a second `bun test demos/<kebab-slug>` run in the root `test` script (hello-dynamic stays a separate bun test process)
 5. Open a PR (screenshot + video of the running demo)
 
 ### Path B — standalone demo (own Worker)

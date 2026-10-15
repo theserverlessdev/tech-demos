@@ -76,7 +76,7 @@ async function runDemo(request: Request, env: Env, slug: string): Promise<Respon
     return new Response("demo Worker not deployed", { status: 503, headers: TEXT_HEADERS });
   }
 
-  if (demo.kind === "loader" && !isLoaderMethodAllowed(request.method)) {
+  if (!isLoaderMethodAllowed(request.method)) {
     return new Response("Method not allowed", {
       status: 405,
       headers: { ...TEXT_HEADERS, allow: "GET, HEAD" },

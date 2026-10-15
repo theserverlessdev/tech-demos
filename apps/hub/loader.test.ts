@@ -46,7 +46,7 @@ test("forwardToLoader does not attach the inbound body", async () => {
   expect(await forwarded.text()).toBe("");
 });
 
-test("loader demos only allow GET and HEAD", () => {
+test("hub-served Dynamic Workers only allow GET and HEAD", () => {
   expect(isLoaderMethodAllowed("GET")).toBe(true);
   expect(isLoaderMethodAllowed("HEAD")).toBe(true);
   expect(isLoaderMethodAllowed("POST")).toBe(false);
