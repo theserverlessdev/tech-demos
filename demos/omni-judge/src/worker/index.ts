@@ -1,3 +1,4 @@
+import { applyByteRange } from "../shared/range";
 import { cleanupExpired } from "./db";
 import { errorResponse, handleApi } from "./api";
 import { isLocalHost } from "./turnstile";
@@ -19,11 +20,18 @@ const PAGE_CSP = [
   "frame-ancestors 'none'",
 ].join("; ");
 
+function isMp4Asset(path: string, type: string): boolean {
+  return path.endsWith(".mp4") || type.includes("video/mp4");
+}
+
 async function serveAsset(request: Request, env: Env, path: string): Promise<Response> {
   if (request.method !== "GET" && request.method !== "HEAD") return new Response("Method not allowed", { status: 405 });
   const assetUrl = new URL(request.url);
   assetUrl.pathname = path === "/" ? "/index.html" : path;
-  let res = await env.ASSETS.fetch(new Request(assetUrl, { method: request.method, headers: request.headers }));
+  const assetHeaders = new Headers(request.headers);
+  if (isMp4Asset(path, "")) assetHeaders.delete("range");
+  const fetchMethod = isMp4Asset(path, "") ? "GET" : request.method;
+  let res = await env.ASSETS.fetch(new Request(assetUrl, { method: fetchMethod, headers: assetHeaders }));
   if (res.status === 404 && !path.startsWith("/assets/") && !path.startsWith("/samples/")) {
     assetUrl.pathname = "/index.html";
     res = await env.ASSETS.fetch(new Request(assetUrl, { method: request.method, headers: request.headers }));
@@ -37,6 +45,16 @@ async function serveAsset(request: Request, env: Env, path: string): Promise<Res
     headers.set("cross-origin-resource-policy", "same-origin");
     headers.set("x-robots-tag", "noindex");
     headers.set("cache-control", "public, max-age=3600");
+  }
+  if (res.ok && isMp4Asset(path, type)) {
+    headers.set("accept-ranges", "bytes");
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    const ranged = applyByteRange(bytes, request.headers.get("range"));
+    if (ranged.contentRange) headers.set("content-range", ranged.contentRange);
+    headers.set("content-length", String(ranged.body.length));
+    headers.set("content-type", type || "video/mp4");
+    if (request.method === "HEAD") return new Response(null, { status: ranged.status, headers });
+    return new Response(ranged.body, { status: ranged.status, headers });
   }
   return new Response(res.body, { status: res.status, headers });
 }
