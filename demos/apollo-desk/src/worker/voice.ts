@@ -48,13 +48,14 @@ function fromBase64(b64: string): Uint8Array {
   return out;
 }
 
-export async function transcribe(env: Env, wav: Uint8Array): Promise<{ text: string; seconds: number }> {
+export async function transcribe(env: Env, wav: Uint8Array, ip?: string): Promise<{ text: string; seconds: number }> {
   const seconds = (wav.byteLength - 44) / (MIC_SAMPLE_RATE * 2);
   const out = await metered(
     env,
     (seconds / 60) * PRICES.sttMinute,
     () => env.AI.run(env.STT_MODEL, { audio: toBase64(wav), language: "en", vad_filter: true }),
     () => (seconds / 60) * PRICES.sttMinute,
+    ip,
   );
   return { text: String((out as { text?: string }).text ?? "").trim(), seconds };
 }
@@ -70,7 +71,7 @@ export function speakable(text: string): string {
     .slice(0, 400);
 }
 
-export async function synthesize(env: Env, text: string): Promise<Uint8Array | null> {
+export async function synthesize(env: Env, text: string, ip?: string): Promise<Uint8Array | null> {
   const prompt = speakable(text);
   if (!prompt) return null;
   // MeloTTS speaks about 15 characters each second.
@@ -80,6 +81,7 @@ export async function synthesize(env: Env, text: string): Promise<Uint8Array | n
     estimate,
     () => env.AI.run(env.TTS_MODEL, { prompt, lang: "en" }),
     () => estimate,
+    ip,
   );
   const audio = (out as { audio?: string }).audio;
   return audio ? fromBase64(audio) : null;

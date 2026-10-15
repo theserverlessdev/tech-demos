@@ -1,5 +1,7 @@
 import { routeAgentRequest } from "agents";
+import { DESK_PATH, isStaticAssetPath, PAGE_CSP } from "./gates";
 import { TOOLS } from "./tools";
+import { isTestSiteKey } from "./turnstile";
 
 export { Apollo } from "./apollo";
 export { Meter } from "./meter";
@@ -19,8 +21,14 @@ function isAllowedOrigin(origin: string | null, url: URL): boolean {
   return /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
 }
 
-/** A desk ID is the capability for one Agent instance, so it must be long and random. */
-const DESK_PATH = /^\/agents\/apollo\/[a-z0-9]{12,32}(\/|$)/;
+function withPageHeaders(res: Response, html: boolean): Response {
+  const headers = new Headers(res.headers);
+  headers.set("x-content-type-options", "nosniff");
+  headers.set("referrer-policy", "strict-origin-when-cross-origin");
+  headers.set("x-frame-options", "DENY");
+  if (html) headers.set("content-security-policy", PAGE_CSP);
+  return new Response(res.body, { status: res.status, headers });
+}
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -43,19 +51,23 @@ export default {
     }
 
     if (path === "/api/health") {
-      return Response.json({ ok: true, model: env.AI_MODEL, tools: TOOLS.map((t) => ({ name: t.name, safety: t.safety })) });
+      return Response.json({
+        ok: true,
+        model: env.AI_MODEL,
+        tools: TOOLS.map((t) => ({ name: t.name, safety: t.safety })),
+        turnstileSiteKey: env.TURNSTILE_SITE_KEY?.trim() ?? "",
+        testSiteKey: isTestSiteKey(env.TURNSTILE_SITE_KEY),
+      });
     }
 
     if (request.method !== "GET" && request.method !== "HEAD") {
       return new Response("Method not allowed", { status: 405 });
     }
+    if (!isStaticAssetPath(path)) return new Response("Not found", { status: 404, headers: { "x-content-type-options": "nosniff" } });
     const assetUrl = new URL(request.url);
     assetUrl.pathname = path === "/" ? "/index.html" : path;
     const res = await env.ASSETS.fetch(new Request(assetUrl, { method: request.method, headers: request.headers }));
-    if (res.status === 404 && !path.startsWith("/assets/")) {
-      assetUrl.pathname = "/index.html";
-      return env.ASSETS.fetch(new Request(assetUrl, { method: request.method, headers: request.headers }));
-    }
-    return res;
+    const html = (res.headers.get("content-type") ?? "").startsWith("text/html");
+    return withPageHeaders(res, html);
   },
 } satisfies ExportedHandler<Env>;
