@@ -6,9 +6,10 @@
  * it. The agent calls it before every tool. It does not execute the tool.
  *
  * Clef is asked one System One choice question: allow, deny, or ask-human.
- * A top probability below the confidence floor becomes ask-human. A response
- * that cannot be parsed is a closed deny. On localhost only, a labeled
- * heuristic can stand in when Workers AI cannot be reached.
+ * A top probability below the confidence floor becomes ask-human, except a
+ * leading deny, which stays deny. A response that cannot be parsed is a
+ * closed deny. On LOCAL_DEV only, a labeled heuristic can stand in when
+ * Workers AI cannot be reached.
  */
 import {
   type ClefModel,
@@ -115,7 +116,8 @@ export function decideFromProbabilities(
     }
   }
   const confidence = reportedConfidence ?? distributionConfidence(probabilities);
-  if (confidence < floor) return { decision: "ask-human", confidence, escalated: decision !== "ask-human" };
+  // A weak deny stays deny. Only a weak allow (or a weak ask-human) waits for a person.
+  if (confidence < floor && decision !== "deny") return { decision: "ask-human", confidence, escalated: decision !== "ask-human" };
   return { decision, confidence, escalated: false };
 }
 
