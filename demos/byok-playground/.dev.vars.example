@@ -1,0 +1,8 @@
+# Local only. These are Cloudflare's published always-pass Turnstile test keys.
+# Production reads TURNSTILE_SITE_KEY from wrangler.jsonc and secrets from `wrangler secret put`.
+# wrangler dev rewrites Host to the first production route, so ENVIRONMENT=local is what lets the test secret pass.
+ENVIRONMENT=local
+TURNSTILE_SITE_KEY=1x00000000000000000000AA
+TURNSTILE_SECRET=1x0000000000000000000000000000000AA
+IP_HASH_SECRET=local-byok-ip-hash-not-for-production
+SESSION_SECRET=local-byok-session-hmac-not-for-production

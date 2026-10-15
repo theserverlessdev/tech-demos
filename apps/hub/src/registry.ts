@@ -82,7 +82,32 @@ const edgechatFallbackSource = standalone("edgechat");
 // route wins, and this source only redirects if that route is missing.
 const goodvibesFallbackSource = standalone("goodvibes");
 
+// byok-playground is a standalone Worker (D1 budget, Workers AI, Turnstile). Same pattern as resolve-hq:
+// the zone route wins, and this source only redirects if that route is missing.
+const byokPlaygroundFallbackSource = standalone("byok-playground");
+
 export const demos: DemoEntry[] = [
+  {
+    slug: "byok-playground",
+    title: "BYOK playground",
+    description: "Paste an OpenAI-compatible key and talk to your model. The Worker does not store it.",
+    demonstrates:
+      "Not a general-purpose proxy: only /models and /chat/completions, https:443, no redirects, rate-limited. The key stays in the browser, SSRF is blocked, DNS is best-effort, and Workers AI comparison is Turnstile-gated with a daily budget.",
+    capabilities: [
+      "Paste a key, an https base URL, and a model id, then stream a chat",
+      "List models from GET /models on that endpoint",
+      "Send the same prompt to your model and to Workers AI; read latency, time to first token, and tokens",
+      "Probe streaming, tools, JSON schema, and vision — pass only with evidence, otherwise fail, unsupported, or inconclusive",
+    ],
+    useCases: [
+      "A product that accepts a customer’s OpenAI-compatible key without writing it to disk",
+      "A migration bench that compares a provider against Workers AI on the same prompt",
+      "An eval harness that records which capabilities an endpoint actually implements",
+    ],
+    tags: ["ssrf", "turnstile", "d1", "workers-ai", "byok"],
+    kind: "standalone",
+    source: byokPlaygroundFallbackSource,
+  },
   {
     slug: "goodvibes",
     title: "GoodVibes",
