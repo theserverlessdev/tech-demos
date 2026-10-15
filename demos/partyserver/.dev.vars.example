@@ -1,7 +1,10 @@
 # Cloudflare's published always-pass Turnstile test credentials.
-# They only open room creation on localhost. Production must use a real widget key
+# They only open room creation when TURNSTILE_LOCAL=1. Production must use a real widget key
 # (wrangler var TURNSTILE_SITE_KEY) and `wrangler secret put TURNSTILE_SECRET`.
+# ROOM_SECRET HMAC-tags room ids. If it is unset, the key is derived from TURNSTILE_SECRET
+# and rotating Turnstile then invalidates live room links.
 TURNSTILE_SECRET=1x0000000000000000000000000000000AA
 TURNSTILE_SITE_KEY=1x00000000000000000000AA
+ROOM_SECRET=partyserver-local-room-secret
 # Local wrangler rewrites Host to the production route, so this flag (not the hostname) allows the test pair. Leave it "0" in production.
 TURNSTILE_LOCAL=1

@@ -1,6 +1,7 @@
 import type { Connection, ConnectionContext } from "partyserver";
 import { YServer } from "y-partyserver";
 import * as Y from "yjs";
+import type { Transaction } from "yjs";
 import {
   CLOSE_EXPIRED,
   CLOSE_FRAME,
@@ -14,8 +15,10 @@ import {
   MAX_FRAMES_PER_SEC,
   MAX_STROKES,
   ROOM_TTL_MS,
+  parseStroke,
   type RoomStatus,
 } from "../shared/protocol";
+import { dropPendingUpdates, encodeSyncStep1, inspectSyncFrame } from "../shared/yjs-guard";
 
 type RoomMeta = {
   id: string;
@@ -24,6 +27,7 @@ type RoomMeta = {
 };
 
 const INTERNAL = "x-party-internal";
+const GUARD = "partyserver-guard";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -54,17 +58,22 @@ export class BoardRoom extends YServer<Env> {
 
   override async onStart(): Promise<void> {
     await super.onStart();
-    this.#noteCap(false);
-    this.document.on("update", () => {
-      this.#noteCap(true);
+    this.document.getMap("strokes");
+    this.document.on("afterTransaction", (tr) => {
+      if (tr.origin === GUARD) return;
+      this.#enforce(tr);
     });
+    this.#enforce(null);
     await this.#ensureAlarm();
   }
 
   override async onLoad(): Promise<void> {
-    if (await this.ctx.storage.get("dead")) return;
     const meta = await this.ctx.storage.get<RoomMeta>("meta");
-    if (!meta || meta.expiresAt <= Date.now()) return;
+    if (!meta) {
+      await this.ctx.storage.deleteAll();
+      return;
+    }
+    if (meta.expiresAt <= Date.now()) return;
     const stored = await this.ctx.storage.get<Uint8Array>("yjs");
     if (stored && stored.byteLength > 0) Y.applyUpdate(this.document, stored);
   }
@@ -74,24 +83,17 @@ export class BoardRoom extends YServer<Env> {
   }
 
   override isReadOnly(_connection: Connection): boolean {
-    return this.#overCap;
+    return false;
   }
 
   override async onConnect(connection: Connection, ctx: ConnectionContext): Promise<void> {
-    const gate = await this.#gate();
-    if (gate !== "open") {
-      connection.close(gate === "expired" ? CLOSE_EXPIRED : CLOSE_UNKNOWN, gate === "expired" ? "room expired" : "unknown room");
-      return;
-    }
-    // accept() already registered this socket, so the new peer is included.
-    if (connectionCount(this) > MAX_CONNECTIONS) {
-      connection.close(CLOSE_FULL, "room full");
-      return;
-    }
+    if (!(await this.#admitSocket(connection))) return;
     await super.onConnect(connection, ctx);
+    this.sendCustomMessage(connection, JSON.stringify({ type: this.#overCap ? "cap" : "open" }));
   }
 
   override async onMessage(connection: Connection, message: string | ArrayBuffer | ArrayBufferView): Promise<void> {
+    if (!isRecord(connection.state) || connection.state.ok !== true) return;
     const size = byteLength(message);
     if (size > MAX_FRAME_BYTES) {
       connection.close(CLOSE_FRAME, "frame too large");
@@ -101,7 +103,22 @@ export class BoardRoom extends YServer<Env> {
       connection.close(CLOSE_RATE, "slow down");
       return;
     }
+    const verdict = inspectSyncFrame(this.document, message);
+    if (verdict === "junk") {
+      connection.close(CLOSE_FRAME, "bad update");
+      return;
+    }
+    if (verdict === "ahead") {
+      try {
+        connection.send(encodeSyncStep1(this.document));
+      } catch {
+        /* attachment may already be closing */
+      }
+      return;
+    }
     await super.onMessage(connection, message);
+    dropPendingUpdates(this.document);
+    this.#syncCap(Y.encodeStateAsUpdate(this.document).byteLength);
   }
 
   override async onClose(connection: Connection, code: number, reason: string, wasClean: boolean): Promise<void> {
@@ -110,11 +127,7 @@ export class BoardRoom extends YServer<Env> {
   }
 
   override async onAlarm(): Promise<void> {
-    await this.ctx.storage.transaction(async (txn) => {
-      const existing = await txn.list();
-      for (const key of existing.keys()) await txn.delete(key);
-      await txn.put("dead", true);
-    });
+    await this.ctx.storage.deleteAll();
     for (const connection of this.getConnections()) {
       try {
         connection.close(CLOSE_EXPIRED, "room expired");
@@ -133,14 +146,12 @@ export class BoardRoom extends YServer<Env> {
   }
 
   async #init(): Promise<Response> {
-    if (await this.ctx.storage.get("dead")) {
-      return Response.json({ error: { code: "expired", message: "That room has expired." } }, { status: 410 });
-    }
     const existing = await this.ctx.storage.get<RoomMeta>("meta");
     if (existing && existing.expiresAt > Date.now()) {
       const alarmAt = await this.ctx.storage.getAlarm();
       return Response.json({ id: existing.id, expiresAt: existing.expiresAt, alarmAt });
     }
+    if (existing) await this.ctx.storage.deleteAll();
     const now = Date.now();
     const ttl = positiveInt(this.env.ROOM_TTL_MS, ROOM_TTL_MS);
     const meta: RoomMeta = { id: this.name, createdAt: now, expiresAt: now + ttl };
@@ -151,15 +162,28 @@ export class BoardRoom extends YServer<Env> {
   }
 
   async #status(): Promise<RoomStatus> {
-    const dead = Boolean(await this.ctx.storage.get("dead"));
     const meta = await this.ctx.storage.get<RoomMeta>("meta");
-    const expired = dead || !meta || meta.expiresAt <= Date.now();
+    if (!meta) {
+      await this.ctx.storage.deleteAll();
+      return {
+        id: this.name,
+        createdAt: 0,
+        expiresAt: 0,
+        alarmAt: null,
+        connections: connectionCount(this),
+        strokes: 0,
+        docBytes: 0,
+        full: false,
+        expired: true,
+      };
+    }
+    const expired = meta.expiresAt <= Date.now();
     const stored = await this.ctx.storage.get<Uint8Array>("yjs");
     const alarmAt = await this.ctx.storage.getAlarm();
     return {
-      id: meta?.id ?? this.name,
-      createdAt: meta?.createdAt ?? 0,
-      expiresAt: meta?.expiresAt ?? 0,
+      id: meta.id,
+      createdAt: meta.createdAt,
+      expiresAt: meta.expiresAt,
       alarmAt,
       connections: connectionCount(this),
       strokes: expired ? 0 : this.document.getMap("strokes").size,
@@ -170,9 +194,11 @@ export class BoardRoom extends YServer<Env> {
   }
 
   async #gate(): Promise<"open" | "expired" | "unknown"> {
-    if (await this.ctx.storage.get("dead")) return "expired";
     const meta = await this.ctx.storage.get<RoomMeta>("meta");
-    if (!meta) return "unknown";
+    if (!meta) {
+      await this.ctx.storage.deleteAll();
+      return "unknown";
+    }
     if (meta.expiresAt <= Date.now()) return "expired";
     return "open";
   }
@@ -188,25 +214,106 @@ export class BoardRoom extends YServer<Env> {
     const bytes = Y.encodeStateAsUpdate(this.document);
     const tooBig = bytes.byteLength > MAX_DOC_BYTES;
     await this.ctx.storage.transaction(async (txn) => {
-      if (await txn.get("dead")) return;
       const meta = await txn.get<RoomMeta>("meta");
       if (!meta || meta.expiresAt <= Date.now()) return;
       if (tooBig) return;
       await txn.put("yjs", bytes);
     });
-    if (tooBig) this.#raiseCap();
+    if (tooBig) this.#syncCap(bytes.byteLength);
   }
 
-  #noteCap(announce: boolean): void {
+  /**
+   * Drop invalid / over-budget ink inside a GUARD transaction so y-partyserver
+   * still broadcasts the deletes. Caps stay hard, and erasing reopens the board.
+   * Byte and count trims only delete incoming keys while a client transaction is
+   * in flight, so tombstone bloat cannot wipe strokes that were already on the board.
+   */
+  #enforce(tr: Transaction | null): void {
+    const doc = this.document;
+    let trimmed = false;
+    let bytes = 0;
+    doc.transact((guardTr) => {
+      for (const name of [...doc.share.keys()]) {
+        if (name === "strokes") continue;
+        purgeForeign(doc, name);
+      }
+      const strokes = doc.getMap<string>("strokes");
+      dropListItems(strokes, guardTr);
+      const added: string[] = [];
+      if (tr) {
+        for (const keys of tr.changed.values()) {
+          for (const key of keys) {
+            if (typeof key === "string" && strokes.has(key)) added.push(key);
+          }
+        }
+        for (const key of added) {
+          const parsed = parseStroke(strokes.get(key));
+          if (!parsed || parsed.id !== key) {
+            strokes.delete(key);
+            trimmed = true;
+          }
+        }
+      } else {
+        for (const key of [...strokes.keys()]) {
+          const parsed = parseStroke(strokes.get(key));
+          if (!parsed || parsed.id !== key) strokes.delete(key);
+        }
+      }
+      while (strokes.size > MAX_STROKES) {
+        const victim = added.pop() ?? (tr ? undefined : [...strokes.keys()].pop());
+        if (!victim) break;
+        strokes.delete(victim);
+        trimmed = true;
+      }
+      bytes = Y.encodeStateAsUpdate(doc).byteLength;
+      if (bytes > MAX_DOC_BYTES) {
+        const byteVictims = [...added];
+        while (bytes > MAX_DOC_BYTES) {
+          const victim = byteVictims.pop();
+          if (!victim) break;
+          strokes.delete(victim);
+          trimmed = true;
+          bytes = Y.encodeStateAsUpdate(doc).byteLength;
+        }
+      }
+    }, GUARD);
+    this.#syncCap(bytes);
+    if (trimmed && tr && isConnection(tr.origin)) {
+      this.sendCustomMessage(tr.origin, JSON.stringify({ type: "cap" }));
+    }
+  }
+
+  #syncCap(docBytes: number): void {
     const strokes = this.document.getMap("strokes").size;
-    if (strokes >= MAX_STROKES) this.#raiseCap();
-    else if (announce && strokes > 0 && strokes % 20 === 0 && Y.encodeStateAsUpdate(this.document).byteLength > MAX_DOC_BYTES) this.#raiseCap();
+    const next = strokes >= MAX_STROKES || docBytes > MAX_DOC_BYTES;
+    if (next === this.#overCap) return;
+    this.#overCap = next;
+    this.broadcastCustomMessage(JSON.stringify({ type: next ? "cap" : "open" }));
   }
 
-  #raiseCap(): void {
-    if (this.#overCap) return;
-    this.#overCap = true;
-    this.broadcastCustomMessage(JSON.stringify({ type: "cap" }));
+  async #admitSocket(connection: Connection): Promise<boolean> {
+    const prior = connection.state;
+    if (isRecord(prior) && prior.ok === true) return true;
+    const reject = (code: number, reason: string): false => {
+      try {
+        connection.setState((prev: unknown) => ({ ...(isRecord(prev) ? prev : {}), ok: false }));
+      } catch {
+        /* attachment may already be closing */
+      }
+      connection.close(code, reason);
+      return false;
+    };
+    const gate = await this.#gate();
+    if (gate !== "open") {
+      return reject(gate === "expired" ? CLOSE_EXPIRED : CLOSE_UNKNOWN, gate === "expired" ? "room expired" : "unknown room");
+    }
+    if (connectionCount(this) > MAX_CONNECTIONS) return reject(CLOSE_FULL, "room full");
+    try {
+      connection.setState((prev: unknown) => ({ ...(isRecord(prev) ? prev : {}), ok: true }));
+    } catch {
+      return false;
+    }
+    return true;
   }
 
   /** Sliding one-second meter on the hibernation attachment, merged with Yjs awareness ids. */
@@ -234,6 +341,57 @@ export class BoardRoom extends YServer<Env> {
     }
     return allowed;
   }
+}
+
+/**
+ * Updates restore unknown roots as AbstractType. `getText` / `getMap` on this
+ * document upgrades them to the constructor that belongs to the same yjs copy
+ * as the Durable Object (instanceof across copies is unreliable).
+ */
+function typeName(doc: Y.Doc, name: string): string {
+  const raw = doc.share.get(name) as { constructor?: { name?: string } } | undefined;
+  return raw?.constructor?.name ?? "";
+}
+
+type StartItem = {
+  deleted: boolean;
+  right: StartItem | null;
+  delete: (transaction: Transaction) => void;
+};
+
+/** List items under a Y.Map live on `_start`. Delete them; do not treat the map as a list. */
+function dropListItems(map: Y.Map<string>, transaction: Transaction): void {
+  let item = (map as unknown as { _start: StartItem | null })._start;
+  while (item) {
+    if (!item.deleted) item.delete(transaction);
+    item = item.right;
+  }
+}
+
+function purgeForeign(doc: Y.Doc, name: string): void {
+  const ctor = typeName(doc, name);
+  if (ctor === "YMap") {
+    const map = doc.getMap(name);
+    for (const key of [...map.keys()]) map.delete(key);
+    return;
+  }
+  try {
+    const arr = doc.getArray(name);
+    if (arr.length > 0) arr.delete(0, arr.length);
+    return;
+  } catch {
+    /* defined as text */
+  }
+  try {
+    const text = doc.getText(name);
+    if (text.length > 0) text.delete(0, text.length);
+  } catch {
+    /* defined as a different constructor */
+  }
+}
+
+function isConnection(value: unknown): value is Connection {
+  return typeof value === "object" && value !== null && typeof (value as { send?: unknown }).send === "function";
 }
 
 function positiveInt(value: string | undefined, fallback: number): number {

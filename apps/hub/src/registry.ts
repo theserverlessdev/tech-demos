@@ -39,7 +39,7 @@ const resolveHqFallbackSource = standalone("resolve-hq");
 // The zone route wins, and this source only redirects if that route is missing.
 const personalAgentFallbackSource = standalone("personal-agent");
 
-// partyserver is a standalone Worker (ASSETS, BoardRoom, CREATE_LIMIT, CONNECT_LIMIT, Turnstile). Same
+// partyserver is a standalone Worker (ASSETS, BoardRoom, CREATE_LIMIT, CONNECT_LIMIT, READ_LIMIT, Turnstile). Same
 // pattern as resolve-hq: the zone route wins, and this source only redirects if that route is missing.
 const partyserverFallbackSource = standalone("partyserver");
 
@@ -286,7 +286,7 @@ export const demos: DemoEntry[] = [
     title: "Partyboard",
     description: "A shared ink board. A stroke in one tab shows up in the others.",
     demonstrates:
-      "PartyServer routes each ink room to one hibernating Durable Object. Yjs strokes persist in Durable Object storage; cursors stay on the awareness channel and are not stored. An alarm wipes the room two hours after it is created.",
+      "PartyServer routes each ink room to one hibernating Durable Object. Yjs strokes persist in Durable Object storage; cursors stay on the awareness channel and are not stored. An alarm wipes the room two hours after it is created. Caps are enforced in the Durable Object so erasing reopens a full board.",
     capabilities: [
       "Open a room after the Turnstile check and send the link",
       "Draw and watch the stroke sync to another tab",

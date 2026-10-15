@@ -63,10 +63,41 @@ await pageB.screenshot({ path: `${out.pathname}/board-peer.png` });
 const mobile = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme: "dark" });
 await mobile.addInitScript(dark);
 const phone = await mobile.newPage();
+await phone.goto(`${base}/`, { waitUntil: "domcontentloaded" });
+await phone.locator("#open-room:enabled").waitFor({ timeout: 20_000 });
+await phone.screenshot({ path: `${out.pathname}/gate-390.png` });
 await phone.goto(roomUrl, { waitUntil: "domcontentloaded" });
 await phone.locator("#canvas").waitFor();
+await phone.waitForTimeout(400);
 await phone.screenshot({ path: `${out.pathname}/board-mobile.png` });
 await mobile.close();
+
+const landscape = await browser.newContext({ viewport: { width: 844, height: 390 }, colorScheme: "dark" });
+await landscape.addInitScript(dark);
+const land = await landscape.newPage();
+await land.goto(roomUrl, { waitUntil: "domcontentloaded" });
+await land.locator("#canvas").waitFor();
+await land.waitForTimeout(400);
+await land.screenshot({ path: `${out.pathname}/board-844x390.png` });
+await landscape.close();
+
+const widePhone = await browser.newContext({ viewport: { width: 932, height: 430 }, colorScheme: "dark" });
+await widePhone.addInitScript(dark);
+const wide = await widePhone.newPage();
+await wide.goto(roomUrl, { waitUntil: "domcontentloaded" });
+await wide.locator("#canvas").waitFor();
+await wide.waitForTimeout(400);
+await wide.screenshot({ path: `${out.pathname}/board-932x430.png` });
+await widePhone.close();
+
+const narrowPhone = await browser.newContext({ viewport: { width: 667, height: 375 }, colorScheme: "dark" });
+await narrowPhone.addInitScript(dark);
+const narrow = await narrowPhone.newPage();
+await narrow.goto(roomUrl, { waitUntil: "domcontentloaded" });
+await narrow.locator("#canvas").waitFor();
+await narrow.waitForTimeout(400);
+await narrow.screenshot({ path: `${out.pathname}/board-667x375.png` });
+await narrowPhone.close();
 
 const video = pageA.video();
 await contextA.close();

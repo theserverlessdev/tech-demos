@@ -9,9 +9,19 @@ export const MAX_STROKES = 240;
 export const MAX_DOC_BYTES = 256 * 1024;
 export const MAX_FRAME_BYTES = MAX_DOC_BYTES + 4096;
 export const MAX_FRAMES_PER_SEC = 120;
-export const MAX_BYTES_PER_SEC = MAX_DOC_BYTES;
+/** At least one full resync frame must fit in the sliding second, or reconnects close as "slow down". */
+export const MAX_BYTES_PER_SEC = MAX_FRAME_BYTES;
 export const ROOM_TTL_MS = 2 * 60 * 60 * 1000;
-export const ROOM_ID = /^[abcdefghjkmnpqrstuvwxyz23456789]{10}$/;
+
+/** Crockford-ish alphabet used for room ids and client ids. */
+export const ROOM_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
+export const ROOM_ID_RAND_LEN = 10;
+export const ROOM_ID_TAG_LEN = 7;
+export const ROOM_ID = new RegExp(`^[${ROOM_ALPHABET}]{${ROOM_ID_RAND_LEN + ROOM_ID_TAG_LEN}}$`);
+
+/** Logical board in ink units. Displayed at 4:3 with a uniform scale so circles stay circles. */
+export const BOARD_WIDTH = 10_000;
+export const BOARD_HEIGHT = 7_500;
 
 export const CLOSE_EXPIRED = 4001;
 export const CLOSE_FULL = 4002;
@@ -63,7 +73,7 @@ export type CreatedRoom = {
 
 export type ApiError = { error: { code: string; message: string } };
 
-const STROKE_ID = /^[a-z0-9]{6,16}$/;
+export const STROKE_ID = /^[a-z0-9]{6,16}$/;
 const CLIENT_ID = /^[a-z0-9]{8}$/;
 const COLOR = /^#[0-9a-fA-F]{6}$/;
 
@@ -83,8 +93,10 @@ export function parseStroke(value: unknown): Stroke | null {
   if (typeof rec.client !== "string" || !CLIENT_ID.test(rec.client)) return null;
   if (!Array.isArray(rec.points) || rec.points.length < 2 || rec.points.length > 600 || rec.points.length % 2 !== 0) return null;
   const points: number[] = [];
-  for (const point of rec.points) {
-    if (typeof point !== "number" || !Number.isInteger(point) || point < 0 || point > 10_000) return null;
+  for (let i = 0; i < rec.points.length; i++) {
+    const point = rec.points[i];
+    const max = i % 2 === 0 ? BOARD_WIDTH : BOARD_HEIGHT;
+    if (typeof point !== "number" || !Number.isInteger(point) || point < 0 || point > max) return null;
     points.push(point);
   }
   return { id: rec.id, color: rec.color, size: rec.size, points, client: rec.client };
@@ -92,4 +104,9 @@ export function parseStroke(value: unknown): Stroke | null {
 
 export function isInk(value: string): value is Ink {
   return (INK as readonly string[]).includes(value);
+}
+
+export function cleanName(value: string): string {
+  const cleaned = value.replace(/[\u0000-\u001f]/g, "").replace(/\s+/g, " ").trim().slice(0, 24);
+  return cleaned || "Guest";
 }

@@ -30,7 +30,27 @@ export function assessTurnstile(opts: { secret: string; siteKey: string; allowTe
   return "open";
 }
 
-export async function verifyTurnstile(secret: string, token: string, ip: string, requestHost: string): Promise<boolean> {
+/** Hostname/action binding. The example.com / localhost carve-out is local-only. */
+export function siteverifyHostOk(opts: {
+  resultHost: string;
+  requestHost: string;
+  action?: string;
+  allowTestCredentials: boolean;
+}): boolean {
+  const host = opts.resultHost;
+  const testHost = opts.allowTestCredentials && (host === "example.com" || isLocalHost(host));
+  if (!testHost && opts.action && opts.action !== "create-room") return false;
+  if (!testHost && host !== opts.requestHost) return false;
+  return true;
+}
+
+export async function verifyTurnstile(
+  secret: string,
+  token: string,
+  ip: string,
+  requestHost: string,
+  allowTestCredentials: boolean,
+): Promise<boolean> {
   if (!secret.trim() || !token || token.length > 2048) return false;
   let result: Siteverify;
   try {
@@ -49,9 +69,10 @@ export async function verifyTurnstile(secret: string, token: string, ip: string,
     console.warn(JSON.stringify({ event: "turnstile_failed", errors: result["error-codes"] ?? [] }));
     return false;
   }
-  const host = result.hostname ?? "";
-  const testHost = host === "example.com" || isLocalHost(host);
-  if (!testHost && result.action && result.action !== "create-room") return false;
-  if (!testHost && host !== requestHost) return false;
-  return true;
+  return siteverifyHostOk({
+    resultHost: result.hostname ?? "",
+    requestHost,
+    action: result.action,
+    allowTestCredentials,
+  });
 }

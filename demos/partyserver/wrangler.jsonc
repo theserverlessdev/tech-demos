@@ -15,8 +15,9 @@
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["BoardRoom"] }],
   "ratelimits": [
-    { "name": "CREATE_LIMIT", "namespace_id": "7411", "simple": { "limit": 8, "period": 60 } },
-    { "name": "CONNECT_LIMIT", "namespace_id": "7412", "simple": { "limit": 40, "period": 60 } }
+    { "name": "CREATE_LIMIT", "namespace_id": "7500", "simple": { "limit": 8, "period": 60 } },
+    { "name": "CONNECT_LIMIT", "namespace_id": "7501", "simple": { "limit": 40, "period": 60 } },
+    { "name": "READ_LIMIT", "namespace_id": "7502", "simple": { "limit": 40, "period": 60 } }
   ],
   "vars": {
     "TURNSTILE_SITE_KEY": "0x4AAAAAAFRgpxXI2NOgPsDG",
@@ -24,10 +25,11 @@
     "TURNSTILE_LOCAL": "0"
   },
   "secrets": {
-    "required": ["TURNSTILE_SECRET"]
+    "required": ["TURNSTILE_SECRET", "ROOM_SECRET"]
   },
   "routes": [
-    { "pattern": "tech-demos.theserverless.dev/demos/partyserver*", "zone_name": "theserverless.dev" },
+    { "pattern": "tech-demos.theserverless.dev/demos/partyserver", "zone_name": "theserverless.dev" },
+    { "pattern": "tech-demos.theserverless.dev/demos/partyserver/*", "zone_name": "theserverless.dev" },
     { "pattern": "partyserver.tech-demos.theserverless.dev/*", "zone_name": "theserverless.dev" }
   ],
   "workers_dev": true,

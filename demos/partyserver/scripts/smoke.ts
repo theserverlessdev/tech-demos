@@ -1,8 +1,12 @@
 // Smoke: bun run scripts/smoke.ts [baseUrl]
 import YProvider from "y-partyserver/provider";
 import * as Y from "yjs";
-import { CLOSE_FULL, CLOSE_RATE, MAX_CONNECTIONS, MAX_STROKES, PARTY, ROOM_ID, type CreatedRoom, type RoomStatus } from "../src/shared/protocol";
+import { CLOSE_FRAME, CLOSE_FULL, CLOSE_RATE, MAX_DOC_BYTES, MAX_FRAME_BYTES, MAX_STROKES, PARTY, ROOM_ID, type CreatedRoom, type RoomStatus } from "../src/shared/protocol";
 import { TEST_TURNSTILE_SECRET, TEST_TURNSTILE_SITE_KEY, assessTurnstile } from "../src/worker/turnstile";
+import { verifyRoomId } from "../src/worker/ids";
+import { probeNinth, wrapSyncFrame, yjsFollowOnJunkFrames, yjsJunkKeyFrame, yjsSkipAheadFrame } from "./ninth";
+
+const LOCAL_ROOM_SECRET = "partyserver-local-room-secret";
 
 const base = (process.argv.find((arg) => arg.startsWith("http")) ?? "http://127.0.0.1:8787").replace(/\/$/, "");
 const DUMMY = "XXXX.DUMMY.TOKEN.XXXX";
@@ -81,6 +85,18 @@ check("room status has an alarm at expiry", status.status === 200 && meta?.alarm
 const unknown = await call("/api/rooms/not-a-room");
 check("unknown room id is 404", unknown.status === 404, unknown.status);
 
+const forged = await call("/api/rooms/abcdefghjkmnpqrst");
+check("forged HMAC room id is 404", forged.status === 404, forged.status);
+
+const malformed = await fetch(`${base}/api/rooms/%E0`);
+check("malformed percent-encoding is 404 not 500", malformed.status === 404, malformed.status);
+
+const partyHttp = await fetch(`${base}/parties/board-room/abcdefghjkmnpqrst`);
+check("party HTTP is 404", partyHttp.status === 404, partyHttp.status);
+
+check("created id verifies against ROOM_SECRET", await verifyRoomId(LOCAL_ROOM_SECRET, room.id));
+check("Turnstile secret does not verify when ROOM_SECRET is set", !(await verifyRoomId(TEST_TURNSTILE_SECRET, room.id)));
+
 const host = base.replace(/^https?:\/\//, "");
 const docA = new Y.Doc();
 const docB = new Y.Doc();
@@ -129,32 +145,180 @@ const providerE = new YProvider(host, room.id, peer, { party: PARTY, disableBc: 
 await waitFor(() => peer.getMap("strokes").size >= MAX_STROKES, 8000);
 await sleep(500);
 check("stroke cap stops the room growing", peer.getMap("strokes").size === MAX_STROKES, peer.getMap("strokes").size);
+
+const erased = [...docD.getMap("strokes").keys()].slice(0, 10);
+docD.transact(() => {
+  for (const key of erased) docD.getMap("strokes").delete(key);
+});
+docD.getMap("strokes").set(
+  "aftercap",
+  JSON.stringify({ id: "aftercap", color: "#c2410c", size: 6, points: [20, 20, 80, 80], client: "smokecli" }),
+);
+const reopened = await waitFor(() => peer.getMap("strokes").has("aftercap") && peer.getMap("strokes").size === MAX_STROKES - 9, 8000);
+check("erase at the cap syncs and accepts a new stroke", reopened, peer.getMap("strokes").size);
+docD.getMap("strokes").set(
+  "okstroke",
+  JSON.stringify({ id: "okstroke", color: "#c2410c", size: 6, points: [100, 100, 4000, 7000], client: "smokecli" }),
+);
+docD.getMap("strokes").set(
+  "offboard",
+  JSON.stringify({ id: "offboard", color: "#c2410c", size: 6, points: [100, 9000], client: "smokecli" }),
+);
+await sleep(600);
+check("on-board stroke is kept", peer.getMap("strokes").has("okstroke"));
+check("stroke at y=9000 is dropped", !peer.getMap("strokes").has("offboard"));
+const arrayAttack = new Y.Doc();
+arrayAttack.getArray("strokes").insert(0, ["wipe"]);
+const arrayWs = await openSocket(`${base.replace(/^http/, "ws")}/parties/board-room/${room.id}?_pk=arratk`);
+arrayWs.send(wrapSyncFrame(Y.encodeStateAsUpdate(arrayAttack)));
+await sleep(600);
+check("existing strokes survive an array insert", peer.getMap("strokes").has("okstroke") && peer.getMap("strokes").has("aftercap"));
+docD.getMap("strokes").set(
+  "afterarr",
+  JSON.stringify({ id: "afterarr", color: "#c2410c", size: 6, points: [30, 30, 90, 90], client: "smokecli" }),
+);
+const afterArr = await waitFor(() => peer.getMap("strokes").has("afterarr"), 8000);
+check("new stroke still syncs after an array insert", afterArr);
+check("array insert left no live list items", undeletedListCount(peer.getMap("strokes")) === 0);
+try {
+  arrayWs.close();
+} catch {
+  /* already closed */
+}
 providerD.disconnect();
 providerE.disconnect();
 await sleep(600);
 
-const sockets: WebSocket[] = [];
-for (let i = 0; i < MAX_CONNECTIONS; i++) {
-  sockets.push(await openSocket(`${base.replace(/^http/, "ws")}/parties/board-room/${room.id}?_pk=cap${i}`));
-}
-const overflow = await socketCloseCode(`${base.replace(/^http/, "ws")}/parties/board-room/${room.id}?_pk=overflow`);
-check("ninth connection is refused", overflow === CLOSE_FULL, overflow);
+const tombWatchDoc = new Y.Doc();
+const tombWatch = new YProvider(host, room.id, tombWatchDoc, { party: PARTY, disableBc: true });
+const tombReady = await waitFor(() => tombWatchDoc.getMap("strokes").has("okstroke"), 8000);
+check("tombstone observer synced existing ink", tombReady);
+const keptInk = ["okstroke", "aftercap", "afterarr"].filter((key) => tombWatchDoc.getMap("strokes").has(key));
+const beforeJunkBytes = ((await call(`/api/rooms/${room.id}`)).data as RoomStatus | null)?.docBytes ?? 0;
 
-const flooded = sockets[0];
-if (flooded) {
-  const closed = new Promise<number>((resolve) => {
-    flooded.addEventListener("close", (event) => resolve(event.code));
+await probeJunkPath("step2", room.id, tombWatchDoc, keptInk, beforeJunkBytes, yjsJunkKeyFrame(90, 1400, 1));
+await probeJunkPath("follow-on", room.id, tombWatchDoc, keptInk, beforeJunkBytes, null, yjsFollowOnJunkFrames());
+await probeJunkPath("skip-ahead", room.id, tombWatchDoc, keptInk, beforeJunkBytes, yjsSkipAheadFrame(200_000));
+
+tombWatch.disconnect();
+await sleep(400);
+
+const burstRoom = await call("/api/rooms", { method: "POST", body: { turnstileToken: DUMMY } });
+const burst = burstRoom.data as CreatedRoom | null;
+check("second room for the burst cap", burstRoom.status === 201 && !!burst && ROOM_ID.test(burst.id), burstRoom.data);
+if (burst?.id) {
+  const docBurst = new Y.Doc();
+  const providerBurst = new YProvider(host, burst.id, docBurst, { party: PARTY, disableBc: true });
+  await waitFor(() => providerBurst.wsconnected, 8000);
+  docBurst.transact(() => {
+    for (let i = 0; i < 400; i++) {
+      const id = `b${String(i).padStart(6, "0")}`;
+      docBurst.getMap("strokes").set(id, JSON.stringify({ id, color: "#e7e5e4", size: 3, points: [i, i, i + 10, i + 20], client: "smokecli" }));
+    }
   });
-  for (let i = 0; i < 400; i++) flooded.send(new Uint8Array([0, 1, 2, 3]));
-  const code = await Promise.race([closed, sleep(4000).then(() => 0)]);
-  check("frame flood closes the socket", code === CLOSE_RATE, code);
-}
-for (const socket of sockets) {
+  await sleep(800);
+  const docSeen = new Y.Doc();
+  const providerSeen = new YProvider(host, burst.id, docSeen, { party: PARTY, disableBc: true });
+  await waitFor(() => docSeen.getMap("strokes").size > 0, 8000);
+  await sleep(500);
+  check("one frame of 400 strokes is trimmed to the cap", docSeen.getMap("strokes").size === MAX_STROKES, docSeen.getMap("strokes").size);
+  providerBurst.disconnect();
+  providerSeen.disconnect();
+  await sleep(400);
+  const junkText = new Y.Doc();
+  junkText.getText("junk").insert(0, "x".repeat(200));
+  const junkTextWs = await openSocket(`${base.replace(/^http/, "ws")}/parties/board-room/${burst.id}?_pk=junktext`);
+  junkTextWs.send(wrapSyncFrame(Y.encodeStateAsUpdate(junkText)));
+  await sleep(400);
   try {
-    socket.close();
+    junkTextWs.close();
   } catch {
     /* already closed */
   }
+  const junkMap = new Y.Doc();
+  junkMap.getMap("strokes").set("bad", "not-json");
+  const junkMapWs = await openSocket(`${base.replace(/^http/, "ws")}/parties/board-room/${burst.id}?_pk=junkmap`);
+  junkMapWs.send(wrapSyncFrame(Y.encodeStateAsUpdate(junkMap)));
+  await sleep(400);
+  try {
+    junkMapWs.close();
+  } catch {
+    /* already closed */
+  }
+  const junkPeer = new Y.Doc();
+  const providerJunkPeer = new YProvider(host, burst.id, junkPeer, { party: PARTY, disableBc: true });
+  await waitFor(() => providerJunkPeer.wsconnected, 8000);
+  await sleep(400);
+  check("foreign root text is emptied", junkPeer.getText("junk").length === 0, junkPeer.getText("junk").length);
+  check("invalid stroke keys are dropped", !junkPeer.getMap("strokes").has("bad"));
+  providerJunkPeer.disconnect();
+}
+
+const arrRoom = await call("/api/rooms", { method: "POST", body: { turnstileToken: DUMMY } });
+const arr = arrRoom.data as CreatedRoom | null;
+check("room for strokes array probe", arrRoom.status === 201 && !!arr && ROOM_ID.test(arr.id), arrRoom.data);
+if (arr?.id) {
+  const freshAttack = new Y.Doc();
+  freshAttack.getArray("strokes").insert(0, ["junk-item", "another"]);
+  const arrAtk = await openSocket(`${base.replace(/^http/, "ws")}/parties/board-room/${arr.id}?_pk=arratk2`);
+  arrAtk.send(wrapSyncFrame(Y.encodeStateAsUpdate(freshAttack)));
+  await sleep(400);
+  try {
+    arrAtk.close();
+  } catch {
+    /* already closed */
+  }
+  const badMap = new Y.Doc();
+  badMap.getMap("strokes").set("bad", "not-json");
+  const badWs = await openSocket(`${base.replace(/^http/, "ws")}/parties/board-room/${arr.id}?_pk=arrbad`);
+  badWs.send(wrapSyncFrame(Y.encodeStateAsUpdate(badMap)));
+  await sleep(400);
+  try {
+    badWs.close();
+  } catch {
+    /* already closed */
+  }
+  const docArrPeer = new Y.Doc();
+  const providerArrPeer = new YProvider(host, arr.id, docArrPeer, { party: PARTY, disableBc: true });
+  await waitFor(() => providerArrPeer.wsconnected, 8000);
+  await sleep(400);
+  check("junk map entries after an array write never land", !docArrPeer.getMap("strokes").has("bad"));
+  check("fresh-room array items are deleted", undeletedListCount(docArrPeer.getMap("strokes")) === 0);
+  const docOk = new Y.Doc();
+  const providerOk = new YProvider(host, arr.id, docOk, { party: PARTY, disableBc: true });
+  await waitFor(() => providerOk.wsconnected, 8000);
+  docOk.getMap("strokes").set(
+    "okfresh",
+    JSON.stringify({ id: "okfresh", color: "#c2410c", size: 6, points: [40, 40, 80, 80], client: "smokecli" }),
+  );
+  const afterFresh = await waitFor(() => docArrPeer.getMap("strokes").has("okfresh"), 8000);
+  check("new stroke still syncs after an array write", afterFresh);
+  providerArrPeer.disconnect();
+  providerOk.disconnect();
+}
+
+let ninthRoom = "";
+try {
+  const ninth = await probeNinth(base);
+  ninthRoom = ninth.roomId;
+  check("ninth connection is refused", ninth.closeCode === CLOSE_FULL, ninth.closeCode);
+  check("ninth write did not land", ninth.landed === false);
+} catch (err) {
+  check("ninth probe ran", false, err instanceof Error ? err.message : String(err));
+}
+
+const floodId = ninthRoom || room.id;
+const flooded = await openSocket(`${base.replace(/^http/, "ws")}/parties/board-room/${floodId}?_pk=flood`);
+const closed = new Promise<number>((resolve) => {
+  flooded.addEventListener("close", (event) => resolve(event.code));
+});
+for (let i = 0; i < 400; i++) flooded.send(new Uint8Array([0, 1, 2, 3]));
+const code = await Promise.race([closed, sleep(4000).then(() => 0)]);
+check("frame flood closes the socket", code === CLOSE_RATE, code);
+try {
+  flooded.close();
+} catch {
+  /* already closed */
 }
 
 if (failures) {
@@ -184,6 +348,93 @@ async function waitFor(pred: () => boolean, timeoutMs: number): Promise<boolean>
   return false;
 }
 
+function undeletedListCount(map: Y.Map<unknown>): number {
+  type StartItem = { deleted: boolean; right: StartItem | null };
+  let count = 0;
+  let item = (map as unknown as { _start: StartItem | null })._start;
+  while (item) {
+    if (!item.deleted) count += 1;
+    item = item.right;
+  }
+  return count;
+}
+
+async function probeJunkPath(
+  label: string,
+  roomId: string,
+  observer: Y.Doc,
+  keptInk: string[],
+  beforeBytes: number,
+  frame: Uint8Array | null,
+  follow?: { first: Uint8Array; junk: Uint8Array },
+): Promise<void> {
+  const pk = label.replace(/[^a-z0-9]/g, "").slice(0, 10) || "junk";
+  const strokeId = `ok${pk}xx`.slice(0, 8);
+  const aheadOnly = label === "skip-ahead";
+  if (frame) {
+    check(`${label} frame is under the frame cap`, frame.byteLength <= MAX_FRAME_BYTES, frame.byteLength);
+  }
+  const ws = await openSocket(`${base.replace(/^http/, "ws")}/parties/board-room/${roomId}?_pk=${pk}`);
+  const closed = new Promise<number>((resolve) => {
+    ws.addEventListener("close", (event) => resolve(event.code));
+  });
+  if (follow) {
+    ws.send(follow.first);
+    await sleep(400);
+    ws.send(follow.junk);
+  } else if (frame) {
+    ws.send(frame);
+  }
+  const code = await Promise.race([closed, sleep(aheadOnly ? 800 : 4000).then(() => -1)]);
+  if (aheadOnly) {
+    check(`${label} does not fatal-close`, code !== CLOSE_FRAME, code);
+  } else {
+    check(`${label} closes the socket`, code === CLOSE_FRAME, code);
+  }
+  try {
+    ws.close();
+  } catch {
+    /* already closed */
+  }
+  await sleep(400);
+  const afterAttack = await call(`/api/rooms/${roomId}`);
+  const afterAttackMeta = afterAttack.data as RoomStatus | null;
+  check(`${label}: board is not full`, afterAttackMeta?.full === false, afterAttackMeta);
+  check(
+    `${label}: existing ink kept`,
+    keptInk.length > 0 && keptInk.every((key) => observer.getMap("strokes").has(key)),
+  );
+  check(
+    `${label}: junk keys did not land`,
+    ![...observer.getMap("strokes").keys()].some((key) => key.length > 16 || key.startsWith("sk")),
+  );
+
+  const writerDoc = new Y.Doc();
+  const writer = new YProvider(host, roomId, writerDoc, { party: PARTY, disableBc: true });
+  await waitFor(() => writer.wsconnected, 8000);
+  writerDoc.getMap("strokes").set(
+    strokeId,
+    JSON.stringify({ id: strokeId, color: "#c2410c", size: 6, points: [50, 50, 90, 90], client: "smokecli" }),
+  );
+  const landed = await waitFor(() => observer.getMap("strokes").has(strokeId), 8000);
+  check(`${label}: new stroke still syncs`, landed);
+  writer.disconnect();
+  await sleep(800);
+
+  const reloadDoc = new Y.Doc();
+  const reload = new YProvider(host, roomId, reloadDoc, { party: PARTY, disableBc: true });
+  const reloaded = await waitFor(() => reloadDoc.getMap("strokes").has(strokeId), 8000);
+  check(`${label}: stroke survived a real reload`, reloaded);
+  const status = await call(`/api/rooms/${roomId}`);
+  const meta = status.data as RoomStatus | null;
+  check(
+    `${label}: stored size stays small after reload`,
+    (meta?.docBytes ?? MAX_DOC_BYTES) < beforeBytes + 24_000 && (meta?.docBytes ?? MAX_DOC_BYTES) < MAX_DOC_BYTES,
+    { beforeBytes, docBytes: meta?.docBytes },
+  );
+  reload.disconnect();
+}
+
 function openSocket(url: string): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url);
@@ -195,17 +446,6 @@ function openSocket(url: string): Promise<WebSocket> {
     ws.addEventListener("error", () => {
       clearTimeout(timer);
       reject(new Error(`open error ${url}`));
-    });
-  });
-}
-
-function socketCloseCode(url: string): Promise<number> {
-  return new Promise((resolve) => {
-    const ws = new WebSocket(url);
-    const timer = setTimeout(() => resolve(0), 5000);
-    ws.addEventListener("close", (event) => {
-      clearTimeout(timer);
-      resolve(event.code);
     });
   });
 }
