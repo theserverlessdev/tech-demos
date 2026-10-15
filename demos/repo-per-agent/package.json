@@ -10,7 +10,8 @@
     "cf-typegen": "wrangler types",
     "test": "bun test test",
     "preview": "bun run build && bun run scripts/local-preview.ts",
-    "smoke": "bun run scripts/smoke.ts"
+    "smoke": "bun run scripts/smoke.ts",
+    "capture": "bun run scripts/capture.ts"
   },
   "dependencies": {
     "agents": "0.22.0",
