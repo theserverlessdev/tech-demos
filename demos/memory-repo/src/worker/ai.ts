@@ -52,12 +52,14 @@ export async function completeChat(
   return parsed;
 }
 
-const DREAM_SYSTEM = `You consolidate an agent's markdown memory. Merge duplicate bullets, drop lines that say nothing, and keep every distinct fact.
+const DREAM_SYSTEM = `You consolidate an agent's markdown memory. Merge duplicate or overlapping bullets, drop lines that say nothing, and keep every distinct fact.
 Reply with JSON only:
-{"message":"dream: short subject","why":"one sentence","files":{"MEMORY.md":"full file","people.md":"full file","preferences.md":"full file","projects.md":"full file"}}
-Return exactly those four files, each the full markdown document.
-MEMORY.md must link to people.md, preferences.md, and projects.md.
+{"message":"dream: short subject","why":"one sentence","files":{"people.md":"full file"}}
+Return only the files that changed. Omit unchanged files. You may return any subset of MEMORY.md, people.md, preferences.md, and projects.md.
+Each topic file may keep headings, then "- " bullets only. Do not use * or numbered lists.
+You may merge two bullets into one when the kept line still contains the dropped fact's words (Likes tea → Likes jasmine tea). You may not drop a distinct fact whose words are gone.
 Keep [source: ...] tags on facts you keep.
+MEMORY.md must keep the topic links and a ## Recent section of "- " bullets. You may add a short summary above ## Recent.
 If nothing should change, return the files unchanged.`;
 
 export async function completeDream(
@@ -69,6 +71,6 @@ export async function completeDream(
     files: input.files,
     summaries: input.summaries.slice(0, 12),
   };
-  const raw = await complete(env, DREAM_SYSTEM, JSON.stringify(payload), 2200);
+  const raw = await complete(env, DREAM_SYSTEM, JSON.stringify(payload), 6000);
   return parseDream(raw, current);
 }

@@ -99,7 +99,7 @@ img, svg, pre, code { max-width: 100%; }
   align-items: center;
   justify-content: center;
 }
-.btn:disabled { opacity: 0.55; cursor: wait; }
+.btn:disabled, .chip:disabled { opacity: 0.55; cursor: wait; }
 .btn-primary { background: var(--ember); border-color: var(--ember); color: #fffaf6; }
 .btn-ghost { background: transparent; }
 .btn-icon { width: var(--tap); height: var(--tap); padding: 0; }
@@ -246,6 +246,7 @@ textarea, input[type="text"] {
 }
 .hint:empty { display: none; }
 .hint.is-bad { color: var(--danger); }
+.hint-action { margin-top: 0.45rem; width: 100%; }
 
 .tree { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-bottom: 0.7rem; }
 .tree button {
@@ -304,7 +305,11 @@ textarea, input[type="text"] {
 .diff .del { color: var(--danger); background: var(--del-bg); }
 .foot { padding: 0.4rem 1.1rem calc(0.6rem + env(safe-area-inset-bottom)); color: var(--muted); border-top: 1px solid var(--border); }
 .foot p { margin: 0; overflow-wrap: anywhere; }
-.foot a { display: inline-flex; align-items: center; min-height: var(--tap); }
+.foot a { display: inline; padding: 0.55rem 0.05rem; }
+
+body.is-open .intro,
+body.is-open .shows--bar { display: none; }
+body.is-open .strip { padding-block: 0.35rem; font-size: 0.82rem; }
 
 input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="hidden"]),
 textarea, select { font-size: 16px; }
@@ -315,15 +320,30 @@ textarea, select { font-size: 16px; }
   .pane { display: none; border-left: 0; padding-bottom: 0.6rem; }
   .pane.is-active {
     display: flex;
-    height: calc(100dvh - 3.4rem);
-    max-height: calc(100dvh - 3.4rem);
+    height: calc(100dvh - 8.5rem);
+    max-height: calc(100dvh - 8.5rem);
     min-height: 0;
     overflow: hidden;
   }
-  #pane-chat .messages { flex: 1 1 auto; min-height: 0; overflow: auto; }
-  #pane-chat .chips,
-  #pane-chat .composer,
-  #pane-chat .hint { flex: none; }
+  body.is-open .pane.is-active {
+    height: calc(100dvh - 7.2rem);
+    max-height: calc(100dvh - 7.2rem);
+  }
+  #pane-chat.is-active { display: flex; flex-direction: column; }
+  #pane-chat .pane__head { order: 0; }
+  #pane-chat .composer {
+    order: 1;
+    position: sticky;
+    top: 0;
+    bottom: auto;
+    z-index: 3;
+    padding-top: 0.2rem;
+    background: var(--bg);
+  }
+  #pane-chat .chips { order: 2; }
+  #pane-chat .hint { order: 3; }
+  #pane-chat .messages { order: 4; flex: 1 1 auto; min-height: 0; overflow: auto; }
+  .diff { white-space: pre-wrap; overflow-wrap: anywhere; }
   #pane-memory.is-active,
   #pane-history.is-active { overflow: auto; }
   #pane-memory.is-active > *,
@@ -352,8 +372,56 @@ textarea, select { font-size: 16px; }
 }
 
 @media (max-width: 900px) and (max-height: 500px) {
-  .pane.is-active { min-height: 0; }
-  .messages { min-height: 6rem; }
+  .foot { display: none; }
+  body.is-open .strip { padding-block: 0.15rem; font-size: 0.78rem; }
+  .pane.is-active,
+  body.is-open .pane.is-active {
+    height: calc(100dvh - 5.2rem);
+    max-height: calc(100dvh - 5.2rem);
+    min-height: 0;
+    padding-top: 0.45rem;
+    padding-bottom: 0.3rem;
+  }
+  #pane-chat .pane__head { order: 0; flex: none; margin-bottom: 0.25rem; }
+  #pane-chat .messages {
+    order: 1;
+    flex: 1 1 0;
+    min-height: 8rem;
+    overflow: auto;
+  }
+  #pane-chat .chips {
+    order: 2;
+    flex: none;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    margin: 0.2rem 0;
+  }
+  #pane-chat .chips .chip {
+    flex: none;
+    white-space: nowrap;
+    min-height: 2.2rem;
+    padding: 0.2rem 0.65rem;
+  }
+  #pane-chat .composer {
+    order: 3;
+    position: static;
+    top: auto;
+    bottom: auto;
+    z-index: auto;
+    padding-top: 0.1rem;
+    background: var(--bg);
+  }
+  #pane-chat .hint {
+    order: 4;
+    flex: none;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem;
+  }
+  #pane-chat .hint:empty { display: none; }
+  #pane-chat textarea { min-height: var(--tap); height: var(--tap); resize: none; }
+  .hint-action { width: auto; margin-top: 0; min-height: 2.2rem; padding: 0.2rem 0.65rem; }
   .intro { padding-top: 0.45rem; padding-bottom: 0; }
   .intro ul { margin-top: 0.2rem; }
 }

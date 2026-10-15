@@ -1,0 +1,4 @@
+CREATE TABLE IF NOT EXISTS ai_meter (
+  day TEXT PRIMARY KEY,
+  calls INTEGER NOT NULL
+);
