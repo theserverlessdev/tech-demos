@@ -82,6 +82,16 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+function waitClose(ws: WebSocket, ms = 8_000): Promise<{ code: number; reason: string }> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("close timeout")), ms);
+    ws.addEventListener("close", (ev) => {
+      clearTimeout(timer);
+      resolve({ code: ev.code, reason: ev.reason });
+    });
+  });
+}
+
 check("missing secret is closed", assessTurnstile({ secret: "", siteKey: "real-site", allowTestCredentials: false }) === "closed");
 check(
   "production rejects the always-pass test secret",
@@ -241,6 +251,32 @@ check(
   helloC instanceof Error ? helloC : helloC.type === "hello" ? helloC.round : helloC,
 );
 c.close();
+await sleep(150);
+
+const ticketFlood = (await mint("frame-budget")).ticket;
+const flood = openSocket("frame-budget", "Flood", ticketFlood);
+const helloFlood = await waitFor(flood, (e) => e.type === "hello").catch((err) => err as Error);
+check("frame-budget socket receives hello", helloFlood instanceof Error === false && (helloFlood as ServerEvent).type === "hello");
+const floodClosed = waitClose(flood);
+for (let i = 0; i < 100; i++) flood.send(new Uint8Array(1));
+const floodEnd = await floodClosed.catch((err) => err as Error);
+check(
+  "100 binary frames close the socket with 1008",
+  floodEnd instanceof Error === false && floodEnd.code === 1008,
+  floodEnd instanceof Error ? floodEnd : { code: floodEnd.code, reason: floodEnd.reason },
+);
+
+const ticketOver = (await mint("frame-oversize")).ticket;
+const over = openSocket("frame-oversize", "Oversize", ticketOver);
+await waitFor(over, (e) => e.type === "hello");
+const overClosed = waitClose(over);
+over.send("x".repeat(600));
+const overEnd = await overClosed.catch((err) => err as Error);
+check(
+  "a >512-byte text frame closes with 1008",
+  overEnd instanceof Error === false && overEnd.code === 1008,
+  overEnd instanceof Error ? overEnd : { code: overEnd.code, reason: overEnd.reason },
+);
 
 if (failures) {
   console.error(`\n${failures} check(s) failed.`);

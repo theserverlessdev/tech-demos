@@ -37,6 +37,7 @@ type SocketState = {
   ipHash: string;
   tokens: number;
   tokenAt: number;
+  closed: boolean;
 };
 
 type GameSnap = {
@@ -91,6 +92,8 @@ function takeToken(state: SocketState, now: number): boolean {
 
 export class VibeRoom extends DurableObject<Env> {
   private game: GameSnap = emptyGame();
+  /** Sockets we already closed with 1008. workerd may still dispatch their frames. */
+  private readonly silenced = new WeakSet<WebSocket>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -176,6 +179,7 @@ export class VibeRoom extends DurableObject<Env> {
       ipHash,
       tokens: FRAME_BURST,
       tokenAt: now,
+      closed: false,
     };
     server.serializeAttachment(state);
     this.game.scores[id] = 0;
@@ -199,23 +203,25 @@ export class VibeRoom extends DurableObject<Env> {
   }
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
-    if (typeof message !== "string") return;
-    if (message.length > FRAME_MAX_BYTES) return;
+    if (this.silenced.has(ws)) return;
     const state = ws.deserializeAttachment() as SocketState | null;
     if (!state) return;
+    if (state.closed) {
+      this.silenced.add(ws);
+      return;
+    }
     const now = Date.now();
-    if (!takeToken(state, now)) {
-      try {
-        ws.close(1008, "slow down");
-      } catch {
-        /* already closed */
-      }
+    const allowed = takeToken(state, now);
+    const bad = typeof message !== "string" || message.length > FRAME_MAX_BYTES;
+    ws.serializeAttachment(state);
+    if (!allowed || bad) {
+      this.silence(ws, state, bad ? "bad frame" : "slow down");
       return;
     }
     state.lastSeen = now;
     ws.serializeAttachment(state);
 
-    const event = parseClient(message);
+    const event = parseClient(message as string);
     if (!event) {
       ws.send(jsonEvent({ type: "error", message: "That frame was not a move or start." }));
       return;
@@ -248,7 +254,23 @@ export class VibeRoom extends DurableObject<Env> {
     await this.drop(ws);
   }
 
+  private silence(ws: WebSocket, state: SocketState, reason: string): void {
+    state.closed = true;
+    this.silenced.add(ws);
+    try {
+      ws.serializeAttachment(state);
+    } catch {
+      /* closing */
+    }
+    try {
+      ws.close(1008, reason);
+    } catch {
+      /* already closed */
+    }
+  }
+
   private async drop(ws: WebSocket): Promise<void> {
+    this.silenced.add(ws);
     const state = ws.deserializeAttachment() as SocketState | null;
     try {
       ws.close(1000, "bye");

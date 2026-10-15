@@ -102,6 +102,7 @@ const state = {
   clockOffset: 0,
   widget: null as TurnstileApi | null,
   config: null as PublicConfig | null,
+  joining: false,
 };
 
 function serverNow(): number {
@@ -416,14 +417,20 @@ async function mintTicket(room: string): Promise<JoinTicket | null> {
 }
 
 async function joinRoom(raw?: string): Promise<void> {
-  const room = slugifyRoom(raw || ($("room") as HTMLInputElement).value);
-  ($("room") as HTMLInputElement).value = room;
-  const minted = await mintTicket(room);
-  if (!minted) return;
-  const url = new URL(location.href);
-  url.searchParams.set("room", minted.room.id);
-  history.replaceState(null, "", url);
-  enterStage(minted.room.id, minted.ticket);
+  if (state.joining) return;
+  state.joining = true;
+  try {
+    const room = slugifyRoom(raw || ($("room") as HTMLInputElement).value);
+    ($("room") as HTMLInputElement).value = room;
+    const minted = await mintTicket(room);
+    if (!minted) return;
+    const url = new URL(location.href);
+    url.searchParams.set("room", minted.room.id);
+    history.replaceState(null, "", url);
+    enterStage(minted.room.id, minted.ticket);
+  } finally {
+    state.joining = false;
+  }
 }
 
 function renderTurnstile(siteKey: string): Promise<TurnstileApi | null> {
@@ -441,9 +448,10 @@ function renderTurnstile(siteKey: string): Promise<TurnstileApi | null> {
           callback: () => {
             ($("join") as HTMLButtonElement).disabled = false;
             ($("create") as HTMLButtonElement).disabled = false;
+            if (!$("stage").hidden) return;
             setStatus("Check passed. Join a room when you are ready.", "ok");
             const deep = new URLSearchParams(location.search).get("room");
-            if (deep && $("stage").hidden) void joinRoom(deep);
+            if (deep) void joinRoom(deep);
           },
           "error-callback": () => setStatus("Turnstile could not check this browser.", "warn"),
         });
@@ -493,9 +501,6 @@ function boot(): void {
   roomInput.value = slugifyRoom(params.get("room") || "arena");
 
   $("create").addEventListener("click", () => {
-    void joinRoom();
-  });
-  $("join").addEventListener("click", () => {
     void joinRoom();
   });
   $("leave").addEventListener("click", () => leave());
