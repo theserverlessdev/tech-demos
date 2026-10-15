@@ -1,9 +1,10 @@
 // Smoke: bun run scripts/smoke.ts [baseUrl]
 import YProvider from "y-partyserver/provider";
 import * as Y from "yjs";
-import { CLOSE_FULL, CLOSE_RATE, MAX_CONNECTIONS, MAX_STROKES, PARTY, ROOM_ID, type CreatedRoom, type RoomStatus } from "../src/shared/protocol";
+import { CLOSE_FULL, CLOSE_RATE, MAX_STROKES, PARTY, ROOM_ID, type CreatedRoom, type RoomStatus } from "../src/shared/protocol";
 import { TEST_TURNSTILE_SECRET, TEST_TURNSTILE_SITE_KEY, assessTurnstile } from "../src/worker/turnstile";
 import { verifyRoomId } from "../src/worker/ids";
+import { probeNinth } from "./ninth";
 
 const base = (process.argv.find((arg) => arg.startsWith("http")) ?? "http://127.0.0.1:8787").replace(/\/$/, "");
 const DUMMY = "XXXX.DUMMY.TOKEN.XXXX";
@@ -194,25 +195,68 @@ if (burst?.id) {
   providerJunkPeer.disconnect();
 }
 
-const sockets: WebSocket[] = [];
-for (let i = 0; i < MAX_CONNECTIONS; i++) {
-  sockets.push(await openSocket(`${base.replace(/^http/, "ws")}/parties/board-room/${room.id}?_pk=cap${i}`));
-}
-const overflow = await socketCloseCode(`${base.replace(/^http/, "ws")}/parties/board-room/${room.id}?_pk=overflow`);
-check("ninth connection is refused", overflow === CLOSE_FULL, overflow);
+const boundRoom = await call("/api/rooms", { method: "POST", body: { turnstileToken: DUMMY } });
+const bound = boundRoom.data as CreatedRoom | null;
+check("room for off-board and array probes", boundRoom.status === 201 && !!bound && ROOM_ID.test(bound.id), boundRoom.data);
+if (bound?.id) {
+  const docOff = new Y.Doc();
+  const providerOff = new YProvider(host, bound.id, docOff, { party: PARTY, disableBc: true });
+  await waitFor(() => providerOff.wsconnected, 8000);
+  docOff.getMap("strokes").set(
+    "okstroke",
+    JSON.stringify({ id: "okstroke", color: "#c2410c", size: 6, points: [100, 100, 4000, 7000], client: "smokecli" }),
+  );
+  docOff.getMap("strokes").set(
+    "offboard",
+    JSON.stringify({ id: "offboard", color: "#c2410c", size: 6, points: [100, 9000], client: "smokecli" }),
+  );
+  await sleep(600);
+  const docOffPeer = new Y.Doc();
+  const providerOffPeer = new YProvider(host, bound.id, docOffPeer, { party: PARTY, disableBc: true });
+  await waitFor(() => docOffPeer.getMap("strokes").has("okstroke"), 8000);
+  await sleep(400);
+  check("on-board stroke is kept", docOffPeer.getMap("strokes").has("okstroke"));
+  check("stroke at y=9000 is dropped", !docOffPeer.getMap("strokes").has("offboard"));
+  providerOff.disconnect();
+  providerOffPeer.disconnect();
+  await sleep(400);
 
-const flooded = sockets[0];
-if (flooded) {
+  const arrRoom = await call("/api/rooms", { method: "POST", body: { turnstileToken: DUMMY } });
+  const arr = arrRoom.data as CreatedRoom | null;
+  check("room for strokes array probe", arrRoom.status === 201 && !!arr && ROOM_ID.test(arr.id), arrRoom.data);
+  if (arr?.id) {
+    const docArr = new Y.Doc();
+    const providerArr = new YProvider(host, arr.id, docArr, { party: PARTY, disableBc: true });
+    await waitFor(() => providerArr.wsconnected, 8000);
+    docArr.getArray("strokes").insert(0, ["junk-item", "another"]);
+    await sleep(600);
+    const docArrPeer = new Y.Doc();
+    const providerArrPeer = new YProvider(host, arr.id, docArrPeer, { party: PARTY, disableBc: true });
+    await waitFor(() => providerArrPeer.wsconnected, 8000);
+    await sleep(400);
+    check("list items under strokes are deleted", docArrPeer.getArray("strokes").length === 0, docArrPeer.getArray("strokes").length);
+    providerArr.disconnect();
+    providerArrPeer.disconnect();
+  }
+}
+
+const ninth = await probeNinth(base);
+check("ninth connection is refused", ninth.closeCode === CLOSE_FULL, ninth.closeCode);
+check("ninth write did not land", ninth.landed === false);
+
+const floodRoom = await call("/api/rooms", { method: "POST", body: { turnstileToken: DUMMY } });
+const flood = floodRoom.data as CreatedRoom | null;
+check("room for the frame flood", floodRoom.status === 201 && !!flood && ROOM_ID.test(flood.id), floodRoom.data);
+if (flood?.id) {
+  const flooded = await openSocket(`${base.replace(/^http/, "ws")}/parties/board-room/${flood.id}?_pk=flood`);
   const closed = new Promise<number>((resolve) => {
     flooded.addEventListener("close", (event) => resolve(event.code));
   });
   for (let i = 0; i < 400; i++) flooded.send(new Uint8Array([0, 1, 2, 3]));
   const code = await Promise.race([closed, sleep(4000).then(() => 0)]);
   check("frame flood closes the socket", code === CLOSE_RATE, code);
-}
-for (const socket of sockets) {
   try {
-    socket.close();
+    flooded.close();
   } catch {
     /* already closed */
   }
@@ -256,17 +300,6 @@ function openSocket(url: string): Promise<WebSocket> {
     ws.addEventListener("error", () => {
       clearTimeout(timer);
       reject(new Error(`open error ${url}`));
-    });
-  });
-}
-
-function socketCloseCode(url: string): Promise<number> {
-  return new Promise((resolve) => {
-    const ws = new WebSocket(url);
-    const timer = setTimeout(() => resolve(0), 5000);
-    ws.addEventListener("close", (event) => {
-      clearTimeout(timer);
-      resolve(event.code);
     });
   });
 }

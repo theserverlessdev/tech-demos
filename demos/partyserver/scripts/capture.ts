@@ -72,6 +72,24 @@ await phone.waitForTimeout(400);
 await phone.screenshot({ path: `${out.pathname}/board-mobile.png` });
 await mobile.close();
 
+const landscape = await browser.newContext({ viewport: { width: 844, height: 390 }, colorScheme: "dark" });
+await landscape.addInitScript(dark);
+const land = await landscape.newPage();
+await land.goto(roomUrl, { waitUntil: "domcontentloaded" });
+await land.locator("#canvas").waitFor();
+await land.waitForTimeout(400);
+await land.screenshot({ path: `${out.pathname}/board-844x390.png` });
+await landscape.close();
+
+const widePhone = await browser.newContext({ viewport: { width: 932, height: 430 }, colorScheme: "dark" });
+await widePhone.addInitScript(dark);
+const wide = await widePhone.newPage();
+await wide.goto(roomUrl, { waitUntil: "domcontentloaded" });
+await wide.locator("#canvas").waitFor();
+await wide.waitForTimeout(400);
+await wide.screenshot({ path: `${out.pathname}/board-932x430.png` });
+await widePhone.close();
+
 const video = pageA.video();
 await contextA.close();
 await contextB.close();

@@ -24,11 +24,25 @@ await land.locator("#canvas").waitFor();
 await land.waitForTimeout(300);
 const wrap = await land.locator(".canvas-wrap").boundingBox();
 if (!wrap) throw new Error("no canvas-wrap");
-const tooTall = wrap.height > 390;
+const tooTall = wrap.height > 390 || wrap.height < 80;
 console.log("landscape wrap", Math.round(wrap.width), Math.round(wrap.height), tooTall ? "OVERFLOW" : "ok");
 await land.screenshot({ path: `${out.pathname}/board-844x390.png` });
 await landscape.close();
-if (tooTall) throw new Error(`landscape canvas wrap is ${wrap.height}px, taller than 390`);
+if (tooTall) throw new Error(`844×390 canvas wrap is ${wrap.height}px, not in 80–390`);
+
+const widePhone = await browser.newContext({ viewport: { width: 932, height: 430 }, colorScheme: "dark" });
+const wide = await widePhone.newPage();
+await wide.addInitScript(() => localStorage.setItem("theme", "dark"));
+await wide.goto(roomUrl, { waitUntil: "domcontentloaded" });
+await wide.locator("#canvas").waitFor();
+await wide.waitForTimeout(300);
+const wrapWide = await wide.locator(".canvas-wrap").boundingBox();
+if (!wrapWide) throw new Error("no canvas-wrap at 932×430");
+const wideBad = wrapWide.height > 430 || wrapWide.height < 80;
+console.log("932x430 wrap", Math.round(wrapWide.width), Math.round(wrapWide.height), wideBad ? "OVERFLOW" : "ok");
+await wide.screenshot({ path: `${out.pathname}/board-932x430.png` });
+await widePhone.close();
+if (wideBad) throw new Error(`932×430 canvas wrap is ${wrapWide.height}px, not in 80–430`);
 
 const sockets: WebSocket[] = [];
 const id = new URL(roomUrl).searchParams.get("room");
@@ -48,9 +62,23 @@ await page.waitForFunction(() => {
 }, { timeout: 15_000 });
 const status = await page.locator("#status-text").textContent();
 console.log("ninth visitor status:", status);
+await page.waitForFunction(() => document.getElementById("workspace")?.classList.contains("is-fatal"), { timeout: 8_000 });
+const canvasEvents = await page.locator("#canvas").evaluate((el) => getComputedStyle(el).pointerEvents);
+const hintGone = await page.locator("#canvas-hint").evaluate((el) => {
+  const node = el as HTMLElement;
+  return node.hidden || getComputedStyle(node).display === "none";
+});
+const toolsLocked = await page.locator("#tool-pen").evaluate((el) => {
+  const node = el as HTMLButtonElement;
+  return node.disabled || getComputedStyle(node).pointerEvents === "none";
+});
+console.log("fatal canvas", canvasEvents, "hint hidden", hintGone, "pen locked", toolsLocked);
 await page.screenshot({ path: `${out.pathname}/full-room-390.png` });
 if (status?.includes("Reconnecting")) throw new Error("ninth visitor still says Reconnecting");
 if (!status?.toLowerCase().includes("full")) throw new Error(`unexpected ninth status: ${status}`);
+if (canvasEvents !== "none") throw new Error(`canvas still accepts pointers after fatal close: ${canvasEvents}`);
+if (!hintGone) throw new Error("Draw here hint still visible after fatal close");
+if (!toolsLocked) throw new Error("pen tool still live after fatal close");
 
 for (const socket of sockets) {
   try { socket.close(); } catch { /* already closed */ }

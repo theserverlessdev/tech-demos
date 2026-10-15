@@ -35,6 +35,28 @@ test("parseStroke drops junk and non-json", () => {
   expect(MAX_STROKES).toBe(240);
 });
 
+test("parseStroke rejects y above BOARD_HEIGHT", () => {
+  const raw = JSON.stringify({
+    id: "stroke01",
+    color: "#c2410c",
+    size: 6,
+    points: [100, 9000],
+    client: "smokecli",
+  });
+  expect(parseStroke(raw)).toBeNull();
+});
+
+test("parseStroke rejects x above BOARD_WIDTH", () => {
+  const raw = JSON.stringify({
+    id: "stroke01",
+    color: "#c2410c",
+    size: 6,
+    points: [BOARD_WIDTH + 1, 100],
+    client: "smokecli",
+  });
+  expect(parseStroke(raw)).toBeNull();
+});
+
 test("cleanName and isInk bound presence", () => {
   expect(cleanName(`  ${"a".repeat(80)}  `).length).toBe(24);
   expect(isInk("#c2410c")).toBe(true);

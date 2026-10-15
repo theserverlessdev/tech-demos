@@ -20,7 +20,7 @@ Walkthrough stills and a short video: [artifacts/](./artifacts/).
 - Open a room after the Turnstile check and send the link.
 - Draw and watch the stroke sync to another tab. Ink uses a 4:3 logical board, so a circle on a desktop stays a circle on a phone.
 - See live cursors that disappear when the socket closes.
-- Hit the caps: 8 connections, 240 strokes, and a 256 KB snapshot. Erasing reopens a full board. A 9th visitor and an expired room show the real reason, not "Reconnecting…".
+- Hit the caps: 8 connections, 240 strokes, and a 256 KB snapshot. Erasing reopens a full board. A 9th visitor sees "This room is full." An expired room sees "This room has expired."
 
 **What you could build**
 
@@ -31,7 +31,7 @@ Walkthrough stills and a short video: [artifacts/](./artifacts/).
 **Limits**
 
 - Display names ride awareness only. They are not written to Durable Object storage.
-- Creating a room needs Turnstile and `CREATE_LIMIT`. Opening a socket needs `CONNECT_LIMIT`. Status lookups need `READ_LIMIT`. Room ids are HMAC-tagged with `TURNSTILE_SECRET` so a forged id never wakes a Durable Object.
+- Creating a room needs Turnstile and `CREATE_LIMIT`. Opening a socket needs `CONNECT_LIMIT`. Status lookups need `READ_LIMIT`. Room ids are HMAC-tagged with a key derived from `TURNSTILE_SECRET`, so a forged id never wakes a Durable Object.
 - This is a small board inspired by PartyKit, not a fork of that monorepo.
 
 ## What it proves
@@ -69,12 +69,12 @@ bun install
 bun run dev
 ```
 
-`.dev.vars.example` holds Cloudflare's published always-pass Turnstile test pair plus `TURNSTILE_LOCAL=1`. Wrangler dev rewrites `Host` to the production route, so that flag (not the hostname) is what allows the test pair. Production `wrangler.jsonc` leaves `TURNSTILE_LOCAL` at `"0"`. A deploy with the test secret, an empty secret, or no site key fails closed. Room ids are tagged with HMAC-SHA256 of that same `TURNSTILE_SECRET`.
+`.dev.vars.example` holds Cloudflare's published always-pass Turnstile test pair plus `TURNSTILE_LOCAL=1`. Wrangler dev rewrites `Host` to the production route, so that flag (not the hostname) is what allows the test pair. Production `wrangler.jsonc` leaves `TURNSTILE_LOCAL` at `"0"`. A deploy with the test secret, an empty secret, or no site key fails closed. Room ids are tagged with HMAC-SHA256 of a key derived from `TURNSTILE_SECRET`, not the Turnstile secret itself.
 
 Then, in another terminal:
 
 ```bash
-bun test demos/partyserver
+bun run test
 bun run scripts/smoke.ts http://127.0.0.1:8787
 ```
 
@@ -107,12 +107,4 @@ Routes:
 
 Redeploy `apps/hub` if the gallery card is missing. The registry fallback redirects to the subdomain if the zone route is missing.
 
-## Owner steps
-
-This PR does not deploy and does not call the Cloudflare API. After merge, from the owner account:
-
-1. Redeploy this Worker (`wrangler deploy` as above). That picks up `READ_LIMIT` (7502), the new create/connect ids (7500/7501), the split hub routes, and HMAC room ids. `TURNSTILE_SECRET` is already set; it is also the HMAC key. No new secret, no D1, no R2, no new Durable Object class.
-2. Redeploy `apps/hub` so the gallery card matches the copy in `registry.ts`.
-3. Rooms created before this deploy become invalid (id length + HMAC). They expire in two hours either way.
-
-`bun run typecheck` runs `wrangler types` before `tsc`, so a clean clone does not need a committed `worker-configuration.d.ts`.
+`bun run typecheck` runs `wrangler types` before `tsc`, so a clean clone does not need a committed `worker-configuration.d.ts`. After a Worker deploy, redeploy `apps/hub` so the gallery card stays on the hub.

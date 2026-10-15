@@ -221,6 +221,7 @@ async function joinRoom(id: string): Promise<void> {
   }
   paintExpiry(status.expiresAt);
   window.setInterval(() => paintExpiry(status.expiresAt), 30_000);
+  if (status.full) showBoardHint("This board is full. Erase something or open a new room.", "error");
 
   const nameInput = byId<HTMLInputElement>("board-name");
   nameInput.value = storedName() === "Guest" ? "" : storedName();
@@ -238,23 +239,7 @@ async function joinRoom(id: string): Promise<void> {
     disableBc: true,
   });
 
-  const presence = (): Presence => ({
-    name: cleanName(nameInput.value),
-    color,
-    x: 0,
-    y: 0,
-    on: false,
-  });
-  let cursor = presence();
-  provider.awareness.setLocalState(cursor);
-
   let fatal = false;
-  provider.on("status", (next: { status: string }) => {
-    if (fatal) return;
-    if (next.status === "connected") setStatus("connected", "Live on the Durable Object");
-    else if (next.status === "connecting") setStatus("", "Connecting…");
-    else setStatus("", "Reconnecting…");
-  });
   provider.on("connection-close", (event: CloseEvent) => {
     const isFatal = [CLOSE_EXPIRED, CLOSE_FULL, CLOSE_UNKNOWN, CLOSE_RATE, CLOSE_FRAME].includes(event.code);
     if (!isFatal) return;
@@ -269,6 +254,24 @@ async function joinRoom(id: string): Promise<void> {
             ? "This connection was closed for sending too much."
             : "This room does not exist.";
     setStatus("error", text);
+    lockBoard();
+  });
+
+  const presence = (): Presence => ({
+    name: cleanName(nameInput.value),
+    color,
+    x: 0,
+    y: 0,
+    on: false,
+  });
+  let cursor = presence();
+  provider.awareness.setLocalState(cursor);
+
+  provider.on("status", (next: { status: string }) => {
+    if (fatal) return;
+    if (next.status === "connected") setStatus("connected", "Live on the Durable Object");
+    else if (next.status === "connecting") setStatus("", "Connecting…");
+    else setStatus("", "Reconnecting…");
   });
   provider.on("custom-message", (message: string) => {
     try {
@@ -327,7 +330,7 @@ async function joinRoom(id: string): Promise<void> {
     if (draft && draft.length >= 2) {
       drawStroke(ctx, { id: "draft", color, size, points: draft, client: me }, layout);
     }
-    hintNode.hidden = count > 0 || draft !== null;
+    hintNode.hidden = fatal || count > 0 || draft !== null;
     const states = provider.awareness.getStates();
     states.forEach((raw, clientId) => {
       if (clientId === doc.clientID) return;
@@ -343,22 +346,28 @@ async function joinRoom(id: string): Promise<void> {
   provider.awareness.on("change", schedule);
   new ResizeObserver(schedule).observe(canvas);
 
-  const pointOf = (event: PointerEvent): [number, number] => {
+  const pointOf = (event: PointerEvent): [number, number] | null => {
     const rect = canvas.getBoundingClientRect();
     const layout = layoutOf(rect.width, rect.height);
-    const x = Math.round(Math.min(BOARD_WIDTH, Math.max(0, (event.clientX - rect.left - layout.ox) / layout.scale)));
-    const y = Math.round(Math.min(BOARD_HEIGHT, Math.max(0, (event.clientY - rect.top - layout.oy) / layout.scale)));
+    const px = event.clientX - rect.left;
+    const py = event.clientY - rect.top;
+    if (px < layout.ox || py < layout.oy || px > layout.ox + layout.drawW || py > layout.oy + layout.drawH) return null;
+    const x = Math.round(Math.min(BOARD_WIDTH, Math.max(0, (px - layout.ox) / layout.scale)));
+    const y = Math.round(Math.min(BOARD_HEIGHT, Math.max(0, (py - layout.oy) / layout.scale)));
     return [x, y];
   };
 
   canvas.addEventListener("pointerdown", (event) => {
+    if (fatal) return;
+    const at = pointOf(event);
+    if (!at) return;
     if (strokes.size >= MAX_STROKES && tool === "pen") {
       showBoardHint("This board is full. Erase something or open a new room.", "error");
       return;
     }
     event.preventDefault();
     canvas.setPointerCapture(event.pointerId);
-    const [x, y] = pointOf(event);
+    const [x, y] = at;
     if (tool === "erase") {
       eraseAt(strokes, x, y);
       return;
@@ -367,7 +376,10 @@ async function joinRoom(id: string): Promise<void> {
     schedule();
   });
   canvas.addEventListener("pointermove", (event) => {
-    const [x, y] = pointOf(event);
+    if (fatal) return;
+    const at = pointOf(event);
+    if (!at) return;
+    const [x, y] = at;
     const now = Date.now();
     if (now - lastCursor > 40) {
       lastCursor = now;
@@ -393,9 +405,9 @@ async function joinRoom(id: string): Promise<void> {
     schedule();
   });
   const finish = (event: PointerEvent) => {
-    if (!draft) return;
-    const [x, y] = pointOf(event);
-    draft.push(x, y);
+    if (fatal || !draft) return;
+    const at = pointOf(event);
+    if (at) draft.push(at[0], at[1]);
     commitStroke(strokes, { id: randomId(8), color, size, points: draft.slice(0, 600), client: me }, mine);
     draft = null;
     schedule();
@@ -427,6 +439,7 @@ async function joinRoom(id: string): Promise<void> {
     button.setAttribute("aria-label", ink);
     if (ink === color) button.classList.add("is-on");
     button.addEventListener("click", () => {
+      if (fatal) return;
       color = ink;
       localStorage.setItem("partyserver.color", ink);
       cursor = { ...cursor, color };
@@ -439,6 +452,7 @@ async function joinRoom(id: string): Promise<void> {
 
   for (const button of document.querySelectorAll<HTMLButtonElement>(".size")) {
     button.addEventListener("click", () => {
+      if (fatal) return;
       const next = Number(button.dataset.size);
       if (!STROKE_SIZES.includes(next as (typeof STROKE_SIZES)[number])) return;
       size = next as (typeof STROKE_SIZES)[number];
@@ -447,18 +461,21 @@ async function joinRoom(id: string): Promise<void> {
     });
   }
   byId("tool-pen").addEventListener("click", () => {
+    if (fatal) return;
     tool = "pen";
     byId("tool-pen").classList.add("is-on");
     byId("tool-erase").classList.remove("is-on");
     canvas.style.cursor = "crosshair";
   });
   byId("tool-erase").addEventListener("click", () => {
+    if (fatal) return;
     tool = "erase";
     byId("tool-erase").classList.add("is-on");
     byId("tool-pen").classList.remove("is-on");
     canvas.style.cursor = "cell";
   });
   byId("undo").addEventListener("click", () => {
+    if (fatal) return;
     const id = mine.pop();
     if (id) strokes.delete(id);
     schedule();
@@ -472,6 +489,7 @@ async function joinRoom(id: string): Promise<void> {
     }
   });
 
+  if (fatal) lockBoard();
   schedule();
 }
 
@@ -580,6 +598,19 @@ function setStatus(state: string, text: string): void {
 
 function showBoardHint(text: string, tone: "error" | "ok"): void {
   hint(byId("board-hint"), text, tone);
+}
+
+function lockBoard(): void {
+  const workspace = byId<HTMLElement>("workspace");
+  workspace.classList.add("is-fatal");
+  const canvas = byId<HTMLCanvasElement>("canvas");
+  canvas.style.pointerEvents = "none";
+  canvas.style.cursor = "default";
+  byId("canvas-hint").hidden = true;
+  for (const id of ["tool-pen", "tool-erase", "undo"]) {
+    (byId<HTMLButtonElement>(id) as HTMLButtonElement).disabled = true;
+  }
+  for (const button of document.querySelectorAll<HTMLButtonElement>(".swatch, .size")) button.disabled = true;
 }
 
 function paintExpiry(expiresAt: number): void {

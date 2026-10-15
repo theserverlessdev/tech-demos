@@ -86,10 +86,11 @@ export class BoardRoom extends YServer<Env> {
   override async onConnect(connection: Connection, ctx: ConnectionContext): Promise<void> {
     if (!(await this.#admitSocket(connection))) return;
     await super.onConnect(connection, ctx);
+    if (this.#overCap) this.sendCustomMessage(connection, JSON.stringify({ type: "cap" }));
   }
 
   override async onMessage(connection: Connection, message: string | ArrayBuffer | ArrayBufferView): Promise<void> {
-    if (!(await this.#admitSocket(connection))) return;
+    if (!isRecord(connection.state) || connection.state.ok !== true) return;
     const size = byteLength(message);
     if (size > MAX_FRAME_BYTES) {
       connection.close(CLOSE_FRAME, "frame too large");
@@ -167,7 +168,7 @@ export class BoardRoom extends YServer<Env> {
       expiresAt: meta.expiresAt,
       alarmAt,
       connections: connectionCount(this),
-      strokes: expired ? 0 : this.document.getMap("strokes").size,
+      strokes: expired ? 0 : (strokeMap(this.document)?.size ?? 0),
       docBytes: stored?.byteLength ?? 0,
       full: this.#overCap,
       expired,
@@ -200,7 +201,7 @@ export class BoardRoom extends YServer<Env> {
       if (tooBig) return;
       await txn.put("yjs", bytes);
     });
-    if (tooBig) this.#syncCap();
+    if (tooBig) this.#syncCap(bytes.byteLength);
   }
 
   /**
@@ -209,15 +210,17 @@ export class BoardRoom extends YServer<Env> {
    */
   #enforce(tr: Y.Transaction | null): void {
     const doc = this.document;
-    const strokes = doc.getMap<string>("strokes");
+    let trimmed = false;
+    let bytes = 0;
     doc.transact(() => {
       for (const name of [...doc.share.keys()]) {
         if (name === "strokes") continue;
         purgeForeign(doc, name);
       }
-      for (const key of [...strokes.keys()]) {
-        const parsed = parseStroke(strokes.get(key));
-        if (!parsed || parsed.id !== key) strokes.delete(key);
+      const strokes = strokeMap(doc);
+      if (!strokes) {
+        bytes = Y.encodeStateAsUpdate(doc).byteLength;
+        return;
       }
       const added: string[] = [];
       if (tr) {
@@ -226,28 +229,46 @@ export class BoardRoom extends YServer<Env> {
             if (typeof key === "string" && strokes.has(key)) added.push(key);
           }
         }
+        for (const key of added) {
+          const parsed = parseStroke(strokes.get(key));
+          if (!parsed || parsed.id !== key) {
+            strokes.delete(key);
+            trimmed = true;
+          }
+        }
+      } else {
+        for (const key of [...strokes.keys()]) {
+          const parsed = parseStroke(strokes.get(key));
+          if (!parsed || parsed.id !== key) strokes.delete(key);
+        }
       }
       while (strokes.size > MAX_STROKES) {
         const victim = added.pop() ?? [...strokes.keys()].pop();
         if (!victim) break;
         strokes.delete(victim);
+        trimmed = true;
       }
-      let bytes = Y.encodeStateAsUpdate(doc).byteLength;
-      const byteVictims = [...added];
-      while (bytes > MAX_DOC_BYTES) {
-        const victim = byteVictims.pop() ?? [...strokes.keys()].pop();
-        if (!victim) break;
-        strokes.delete(victim);
-        bytes = Y.encodeStateAsUpdate(doc).byteLength;
+      bytes = Y.encodeStateAsUpdate(doc).byteLength;
+      if (bytes > MAX_DOC_BYTES) {
+        const byteVictims = [...added];
+        while (bytes > MAX_DOC_BYTES) {
+          const victim = byteVictims.pop() ?? [...strokes.keys()].pop();
+          if (!victim) break;
+          strokes.delete(victim);
+          trimmed = true;
+          bytes = Y.encodeStateAsUpdate(doc).byteLength;
+        }
       }
     }, GUARD);
-    this.#syncCap();
+    this.#syncCap(bytes);
+    if (trimmed && tr && isConnection(tr.origin)) {
+      this.sendCustomMessage(tr.origin, JSON.stringify({ type: "cap" }));
+    }
   }
 
-  #syncCap(): void {
-    const strokes = this.document.getMap("strokes").size;
-    const bytes = Y.encodeStateAsUpdate(this.document).byteLength;
-    const next = strokes >= MAX_STROKES || bytes > MAX_DOC_BYTES;
+  #syncCap(docBytes: number): void {
+    const strokes = strokeMap(this.document)?.size ?? 0;
+    const next = strokes >= MAX_STROKES || docBytes > MAX_DOC_BYTES;
     if (next === this.#overCap) return;
     this.#overCap = next;
     this.broadcastCustomMessage(JSON.stringify({ type: next ? "cap" : "open" }));
@@ -256,15 +277,20 @@ export class BoardRoom extends YServer<Env> {
   async #admitSocket(connection: Connection): Promise<boolean> {
     const prior = connection.state;
     if (isRecord(prior) && prior.ok === true) return true;
+    const reject = (code: number, reason: string): false => {
+      try {
+        connection.setState((prev: unknown) => ({ ...(isRecord(prev) ? prev : {}), ok: false }));
+      } catch {
+        /* attachment may already be closing */
+      }
+      connection.close(code, reason);
+      return false;
+    };
     const gate = await this.#gate();
     if (gate !== "open") {
-      connection.close(gate === "expired" ? CLOSE_EXPIRED : CLOSE_UNKNOWN, gate === "expired" ? "room expired" : "unknown room");
-      return false;
+      return reject(gate === "expired" ? CLOSE_EXPIRED : CLOSE_UNKNOWN, gate === "expired" ? "room expired" : "unknown room");
     }
-    if (connectionCount(this) > MAX_CONNECTIONS) {
-      connection.close(CLOSE_FULL, "room full");
-      return false;
-    }
+    if (connectionCount(this) > MAX_CONNECTIONS) return reject(CLOSE_FULL, "room full");
     try {
       connection.setState((prev: unknown) => ({ ...(isRecord(prev) ? prev : {}), ok: true }));
     } catch {
@@ -305,18 +331,40 @@ export class BoardRoom extends YServer<Env> {
  * document upgrades them to the constructor that belongs to the same yjs copy
  * as the Durable Object (instanceof across copies is unreliable).
  */
+function typeName(doc: Y.Doc, name: string): string {
+  const raw = doc.share.get(name) as { constructor?: { name?: string } } | undefined;
+  return raw?.constructor?.name ?? "";
+}
+
+/** Map of ink, or null when the root is missing or was created as an Array/Text and emptied. */
+function strokeMap(doc: Y.Doc): Y.Map<string> | null {
+  const ctor = typeName(doc, "strokes");
+  if (ctor === "YArray" || ctor === "YText") {
+    purgeForeign(doc, "strokes");
+    return null;
+  }
+  if (ctor !== "YMap" && !doc.share.has("strokes")) return null;
+  return doc.getMap<string>("strokes");
+}
+
 function purgeForeign(doc: Y.Doc, name: string): void {
-  const raw = doc.share.get(name) as { _map?: Map<unknown, unknown>; _start?: unknown; constructor?: { name?: string } } | undefined;
-  if (!raw) return;
-  const ctor = raw.constructor?.name ?? "";
-  const asMap = ctor === "YMap" || (Boolean(raw._map && raw._map.size > 0) && raw._start == null);
-  if (asMap) {
+  const ctor = typeName(doc, name);
+  if (ctor === "YMap") {
     const map = doc.getMap(name);
     for (const key of [...map.keys()]) map.delete(key);
     return;
   }
+  if (ctor === "YArray") {
+    const arr = doc.getArray(name);
+    if (arr.length > 0) arr.delete(0, arr.length);
+    return;
+  }
   const text = doc.getText(name);
   if (text.length > 0) text.delete(0, text.length);
+}
+
+function isConnection(value: unknown): value is Connection {
+  return isRecord(value) && typeof (value as Connection).send === "function";
 }
 
 function positiveInt(value: string | undefined, fallback: number): number {

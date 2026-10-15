@@ -285,7 +285,7 @@ export const demos: DemoEntry[] = [
     title: "Partyboard",
     description: "A shared ink board. A stroke in one tab shows up in the others.",
     demonstrates:
-      "PartyServer routes each ink room to one hibernating Durable Object. Yjs strokes persist in Durable Object storage; cursors stay on the awareness channel and are not stored. An alarm runs deleteAll two hours after create. Caps are enforced in the Durable Object so erasing reopens a full board.",
+      "PartyServer routes each ink room to one hibernating Durable Object. Yjs strokes persist in Durable Object storage; cursors stay on the awareness channel and are not stored. An alarm wipes the room two hours after it is created. Caps are enforced in the Durable Object so erasing reopens a full board.",
     capabilities: [
       "Open a room after the Turnstile check and send the link",
       "Draw and watch the stroke sync to another tab",

@@ -26,3 +26,8 @@ test("empty secret never verifies", async () => {
 test("a 10-char legacy id is rejected by ROOM_ID", () => {
   expect(ROOM_ID.test("abcdefghjk")).toBe(false);
 });
+
+test("a different secret does not verify the same id", async () => {
+  const id = await mintRoomId(SECRET);
+  expect(await verifyRoomId("other-secret-value-not-the-test-pair", id)).toBe(false);
+});

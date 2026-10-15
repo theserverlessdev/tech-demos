@@ -175,7 +175,13 @@ canvas {
   .topbar__title h1 { font-size: 16px; }
   .card h2 { font-size: 28px; }
   .stage { grid-template-columns: 1fr; }
-  .canvas-wrap { height: 62dvh; min-height: 0; }
+  .canvas-wrap {
+    aspect-ratio: 4 / 3;
+    width: 100%;
+    height: auto;
+    max-height: 62dvh;
+    min-height: 0;
+  }
   .aside { border-left: none; border-top: 1px solid var(--border); }
 }
 
@@ -224,13 +230,23 @@ select {
   .title-input, .composer input, .join input { min-width: 0; max-width: 100%; }
   .field input { min-height: 44px; }
 }
-@media (max-width: 900px) and (max-height: 520px) {
-  .canvas-wrap { height: 42dvh; min-height: 0; }
+@media (orientation: landscape) and (max-height: 520px) {
+  .canvas-wrap {
+    aspect-ratio: 4 / 3;
+    max-height: 42dvh;
+    height: auto;
+    min-height: 0;
+  }
   .chat { min-height: 0; }
   .lobby { min-height: 0; padding-top: 0.5rem; padding-bottom: 0.5rem; }
 }
 
-.canvas-wrap { touch-action: none; }
+.workspace.is-fatal canvas { pointer-events: none; cursor: default; }
+.workspace.is-fatal .canvas-hint { display: none; }
+.workspace.is-fatal .aside button {
+  pointer-events: none;
+  opacity: 0.45;
+}
 
 
 .shows {

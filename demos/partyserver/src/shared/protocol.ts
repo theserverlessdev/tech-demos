@@ -93,8 +93,10 @@ export function parseStroke(value: unknown): Stroke | null {
   if (typeof rec.client !== "string" || !CLIENT_ID.test(rec.client)) return null;
   if (!Array.isArray(rec.points) || rec.points.length < 2 || rec.points.length > 600 || rec.points.length % 2 !== 0) return null;
   const points: number[] = [];
-  for (const point of rec.points) {
-    if (typeof point !== "number" || !Number.isInteger(point) || point < 0 || point > 10_000) return null;
+  for (let i = 0; i < rec.points.length; i++) {
+    const point = rec.points[i];
+    const max = i % 2 === 0 ? BOARD_WIDTH : BOARD_HEIGHT;
+    if (typeof point !== "number" || !Number.isInteger(point) || point < 0 || point > max) return null;
     points.push(point);
   }
   return { id: rec.id, color: rec.color, size: rec.size, points, client: rec.client };
