@@ -144,6 +144,7 @@ button { cursor: pointer; background: none; border: none; }
   display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
   padding: 8px 20px; border-bottom: 1px solid var(--border);
   background: var(--surface);
+  scroll-margin-top: calc(var(--topbar-h) + 12px);
 }
 .gate .hint { flex: 1; min-width: 12rem; margin: 0; }
 
@@ -276,6 +277,7 @@ textarea:disabled { opacity: 0.55; }
 
 @media (max-width: 960px) {
   .layout { grid-template-columns: 1fr; }
+  .gate { scroll-margin-top: 7rem; }
   .topbar { grid-template-columns: auto 1fr; gap: 10px; height: auto; padding: 10px 14px; }
   .topbar__actions { grid-column: 1 / -1; justify-content: flex-end; }
   .topbar__title p { display: none; }

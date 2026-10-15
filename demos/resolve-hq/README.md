@@ -31,6 +31,7 @@ A support inbox on Cloudflare Workers. This is a **small demo** inspired by [mir
 - Five seeded conversations are **public** (original thread only). Replies you add on those seeds are dropped on the hourly cron. Visitor-sandbox tickets and R2 uploads last 24 h. Seed status, priority, assignee, and `updated_at` are locked.
 - Draft, inbound, and upload are same-origin + Turnstile + session. The shared AI budget is 80 drafts/day (8/network).
 - Files are not permanent hosting: allowlisted types, `Content-Disposition: attachment`, `nosniff`, sandboxed CSP, CORP.
+- Ticket reads need Safari 16.4+ (or another browser that sends `Origin` or `Sec-Fetch-Site`). Older Safari omits both, so `/api/tickets` returns 403.
 
 Walkthrough stills and a short video: [artifacts/](./artifacts/).
 

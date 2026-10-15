@@ -74,12 +74,12 @@ function mountTurnstile(action: WidgetAction) {
     action,
     appearance: action === "session" ? "always" : "interaction-only",
     callback: onToken,
+    "before-interactive-callback": revealGate,
     "error-callback": () => setHint("Turnstile failed to load. Refresh and try again.", "error"),
     "expired-callback": () => {
       readyToken = null;
     },
   });
-  revealGate();
 }
 
 function takeToken(): Promise<string> {
@@ -90,7 +90,6 @@ function takeToken(): Promise<string> {
     return Promise.resolve(token);
   }
   return new Promise((resolve, reject) => {
-    revealGate();
     const timer = setTimeout(() => {
       tokenWaiter = null;
       reject(new Error("Complete the Turnstile check first."));
@@ -178,7 +177,6 @@ function setHint(message: string, tone: "" | "ok" | "error" = "") {
     delete el.dataset.tone;
     delete echo.dataset.tone;
   }
-  if (tone === "error" || (message && !tone)) revealGate();
 }
 
 function setDraftPath(source: DraftResult["source"] | null, model?: string) {

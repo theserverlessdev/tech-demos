@@ -39,7 +39,7 @@
     </div>
   </header>
 
-  <p class="shows shows--bar"><span class="shows__k">What this shows</span> Seed tickets are public (original thread only). Replies, inbound, and uploads you add stay in this browser and reset hourly. Seed status and inbox order are locked. Draft reply is Turnstile-gated and labelled Workers AI or stub.</p>
+  <p class="shows shows--bar"><span class="shows__k">What this shows</span> Seed tickets are public (original thread only). Replies you add on those seeds drop hourly. Sandbox tickets and uploads last 24 h. Seed status and inbox order are locked. Draft reply is Turnstile-gated and labelled Workers AI or stub.</p>
 
   <div class="strip" id="strip" role="status">
     <span class="strip__dot"></span>
@@ -106,7 +106,7 @@
       <p class="path" id="draft-path" hidden></p>
       <label class="sr-only" for="reply">Reply body</label>
       <textarea id="reply" rows="10" placeholder="Write the customer-facing reply…" disabled></textarea>
-      <p class="hint" id="composer-hint" role="status"></p>
+      <p class="hint" id="composer-hint" aria-hidden="true"></p>
       <p class="hint" id="budget-note">Checking the daily draft budget…</p>
       <div class="composer__row">
         <button class="btn" id="draft" type="button" disabled>Draft reply</button>
@@ -129,7 +129,7 @@
     <p>
       A slice of <a href="https://github.com/mirza-rizvi/ResolveHQ" rel="noopener" target="_blank">mirza-rizvi/ResolveHQ</a>
       on Workers, D1, R2, Queues, Turnstile, and Workers AI.
-      Seed tickets are public (original thread). Your replies, inbound, and uploads stay in this browser and are cleaned up hourly. Seed status is locked.
+      Seed tickets are public (original thread). Replies you add on those seeds drop hourly. Sandbox tickets and uploads last 24 h. Seed status is locked.
       <a href="https://github.com/theserverlessdev/tech-demos/tree/main/demos/resolve-hq" rel="noopener" target="_blank">Source</a>
     </p>
   </footer>
