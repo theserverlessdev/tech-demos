@@ -34,16 +34,17 @@
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["BoardRoom"] }],
   "workflows": [
     {
-      "name": "tech-demos-tanbase-split",
+      "name": "tech-demos-tanbase-split-local",
       "binding": "SPLIT_TASK",
       "class_name": "SplitTaskWorkflow"
     }
   ],
   "ratelimits": [
-    // Local only. Smoke's concurrency-cap probe needs room above production's 40/min.
-    { "name": "WRITE_LIMIT", "namespace_id": "7540", "simple": { "limit": 200, "period": 60 } },
-    { "name": "UPLOAD_LIMIT", "namespace_id": "7541", "simple": { "limit": 8, "period": 60 } },
-    { "name": "AI_LIMIT", "namespace_id": "7542", "simple": { "limit": 4, "period": 60 } }
+    // Local IDs 7543–7545 so this file cannot share production's 7540–7542 buckets.
+    // Smoke's concurrency-cap probe needs room above production's 40/min.
+    { "name": "WRITE_LIMIT", "namespace_id": "7543", "simple": { "limit": 200, "period": 60 } },
+    { "name": "UPLOAD_LIMIT", "namespace_id": "7544", "simple": { "limit": 8, "period": 60 } },
+    { "name": "AI_LIMIT", "namespace_id": "7545", "simple": { "limit": 4, "period": 60 } }
   ],
   "secrets": {
     "required": ["TURNSTILE_SECRET"]

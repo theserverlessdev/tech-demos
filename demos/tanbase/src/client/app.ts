@@ -74,18 +74,22 @@ async function api<T>(path: string, init: { method?: string; body?: unknown; for
     headers["content-type"] = "application/json";
     body = JSON.stringify(init.body);
   }
-  const res = await fetch(`${root()}${path}`, { method: init.method ?? "GET", headers, body, credentials: "same-origin" });
-  const text = await res.text();
-  let parsed: unknown = null;
   try {
-    parsed = text ? JSON.parse(text) : null;
+    const res = await fetch(`${root()}${path}`, { method: init.method ?? "GET", headers, body, credentials: "same-origin" });
+    const text = await res.text();
+    let parsed: unknown = null;
+    try {
+      parsed = text ? JSON.parse(text) : null;
+    } catch {
+      parsed = null;
+    }
+    const message = parsed && typeof parsed === "object" && parsed !== null && "error" in parsed
+      ? String((parsed as { error?: { message?: string } }).error?.message ?? "Request failed.")
+      : "";
+    return { ok: res.ok, status: res.status, data: res.ok ? (parsed as T) : null, error: res.ok ? "" : message || "Request failed." };
   } catch {
-    parsed = null;
+    return { ok: false, status: 0, data: null, error: "Network error." };
   }
-  const message = parsed && typeof parsed === "object" && parsed !== null && "error" in parsed
-    ? String((parsed as { error?: { message?: string } }).error?.message ?? "Request failed.")
-    : "";
-  return { ok: res.ok, status: res.status, data: res.ok ? (parsed as T) : null, error: res.ok ? "" : message || "Request failed." };
 }
 
 function setStrip(text: string): void {
@@ -218,6 +222,7 @@ async function openBoard(id: string): Promise<void> {
     }
     setStrip(res.error);
     if (!board || gone) renderEmpty(res.error);
+    else syncSwitcher();
     return;
   }
   sessionStorage.setItem("tanbase-board", id);
@@ -456,8 +461,13 @@ function cardNode(task: Task): HTMLElement {
   return button;
 }
 
+function syncSwitcher(): void {
+  const switcher = document.querySelector("#switcher");
+  if (switcher instanceof HTMLSelectElement && board) switcher.value = board.id;
+}
+
 function fillColumns(): void {
-  if (!board) return;
+  if (!board || dragId || document.querySelector(".card.is-dragging, .card.is-armed")) return;
   for (const column of COLUMNS) {
     const list = document.querySelector(`[data-list="${column}"]`);
     const count = document.querySelector(`[data-count="${column}"]`);

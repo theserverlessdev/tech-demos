@@ -16,16 +16,12 @@ import {
   readJson,
   requireContentLength,
   safeFilename,
+  localHooksEnabled,
 } from "./validate";
 
 const COOKIE = "tb_vid";
 const VISITOR_RE = /^v_[a-f0-9]{24}$/;
 const ID_RE = /^[a-z]_[a-f0-9]{16}$/;
-
-// Production var is "". `.dev.vars` sets "1". The generated type is the literal "".
-function localHooksEnabled(flag: string): boolean {
-  return flag === "1";
-}
 
 const ALLOWED_TYPES: Record<string, (bytes: Uint8Array) => boolean> = {
   "image/png": (bytes) => bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47,

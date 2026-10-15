@@ -12,6 +12,11 @@ export function clientIp(request: Request): string {
   return request.headers.get("cf-connecting-ip") || "local";
 }
 
+// Production var is "". `.dev.vars` sets "1". The generated type is the literal "".
+export function localHooksEnabled(flag: string): boolean {
+  return flag === "1";
+}
+
 function originHostOf(request: Request): string | null {
   const origin = request.headers.get("origin");
   if (!origin) return null;

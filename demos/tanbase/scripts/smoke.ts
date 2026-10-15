@@ -99,6 +99,16 @@ function nextPeers(queue: { next: (ms?: number) => Promise<ServerEvent> }, ms = 
 
 type Counts = { visitors: number; boards: number; tasks: number; orphanTasks: number; orphanChildren: number };
 
+async function waitSplitStep(boardId: string, splitId: string, name: string, ms = 4000): Promise<boolean> {
+  const started = Date.now();
+  while (Date.now() - started < ms) {
+    const status = await call<{ split: SplitRun }>(`/api/boards/${boardId}/splits/${splitId}`);
+    if (status.data?.split.steps.some((step) => step.name === name)) return true;
+    await Bun.sleep(150);
+  }
+  return false;
+}
+
 console.log(`Target: ${base}`);
 
 const health = await call<{ ok: boolean; turnstile: boolean; model: string }>("/api/health");
@@ -187,10 +197,13 @@ if (orphanBoardId) {
     body: { turnstileToken: token },
     headers: { "cf-turnstile-response": token },
   });
-  check("orphan-split starts", orphanSplit.status === 202, orphanSplit.status);
+  const orphanSplitId = orphanSplit.data?.split.id ?? "";
+  check("orphan-split starts", orphanSplit.status === 202 && Boolean(orphanSplitId), orphanSplit.status);
+  const reachedAi = orphanSplitId ? await waitSplitStep(orphanBoardId, orphanSplitId, "ask workers ai") : false;
+  check("orphan-split reached the AI step before the delete", reachedAi, reachedAi);
   const deleted = await call(`/api/boards/${orphanBoardId}`, { method: "DELETE" });
-  check("orphan-split board is deleted while the workflow runs", deleted.status === 200, deleted.status);
-  await Bun.sleep(2500);
+  check("orphan-split board is deleted during the local write delay", deleted.status === 200, deleted.status);
+  await Bun.sleep(5000);
   const afterOrphan = await call<Counts>("/api/counts");
   check(
     "deleting a board mid-split leaves no orphan tasks",
@@ -198,6 +211,29 @@ if (orphanBoardId) {
     afterOrphan.data,
   );
 }
+
+const parentCard = await call<BoardSnapshot>(`/api/boards/${boardId}/tasks`, { method: "POST", body: { title: "Parent mid-split" } });
+const parentId = parentCard.data?.tasks.find((item) => item.title === "Parent mid-split")?.id ?? "";
+const parentSplit = await call<{ split: SplitRun }>(`/api/boards/${boardId}/tasks/${parentId}/split`, {
+  method: "POST",
+  body: { turnstileToken: token },
+  headers: { "cf-turnstile-response": token },
+});
+const parentSplitId = parentSplit.data?.split.id ?? "";
+check("parent-split starts", parentSplit.status === 202 && Boolean(parentSplitId), parentSplit.status);
+const parentReachedAi = parentSplitId ? await waitSplitStep(boardId, parentSplitId, "ask workers ai") : false;
+check("parent-split reached the AI step before the delete", parentReachedAi, parentReachedAi);
+const parentGone = await call(`/api/boards/${boardId}/tasks/${parentId}`, { method: "DELETE" });
+check("parent card is deleted during the local write delay", parentGone.status === 200, parentGone.status);
+await Bun.sleep(5000);
+const afterParent = await call<BoardSnapshot>(`/api/boards/${boardId}`);
+const afterParentCounts = await call<Counts>("/api/counts");
+const leftoverKids = afterParent.data?.tasks.filter((item) => item.parentId === parentId) ?? [];
+check(
+  "deleting the parent mid-split leaves no orphan children",
+  leftoverKids.length === 0 && (afterParentCounts.data?.orphanChildren ?? 1) === 0,
+  { leftover: leftoverKids.length, counts: afterParentCounts.data },
+);
 
 const boardBurst = await Promise.all(
   Array.from({ length: 8 }, (_, i) =>

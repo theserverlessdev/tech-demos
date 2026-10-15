@@ -105,6 +105,7 @@ Worker `tech-demos-tanbase`:
 - **B1.** `handleApi` mints a `tb_vid` cookie without inserting a visitor. `ensureVisitor` runs only from `createBoard`. Sweep deletes visitors that own no board.
 - **S1.** Split uses `reasoning_effort: "low"`, `max_tokens: 2000`, and a JSON schema. `chat_template_kwargs` is gone. README says a live paid call was not made here.
 - **S2.** Board, task, attachment, and split inserts are `INSERT … SELECT … WHERE COUNT(*) < cap`. `meta.changes === 0` is the cap. Smoke fires a parallel create burst.
+- **S9 (race).** Local hooks pause 4s between the AI step and the write so smoke can delete the board or parent mid-split. The write is `INSERT … WHERE EXISTS` parent and board.
 - **S3.** JSON and uploads reject missing or oversize `Content-Length` before reading. Uploads send `cf-turnstile-response` and verify it before `formData()`.
 - **S4.** `webSocketClose` closes the socket, then broadcasts the remaining peer count. `accept()` checks ownership first and notifies the other sockets. Smoke asserts the first tab gets `peers: 2` on join and `peers: 1` on leave.
 - **S5.** Phone drag uses a `touch-action: none` Move handle, edge auto-scroll, and `pointercancel` clears `.is-over`. There is no long-press path.
@@ -114,7 +115,7 @@ Worker `tech-demos-tanbase`:
 ## Testing
 
 - `bun run typecheck`
-- `scripts/smoke.ts`: create board, task CRUD, two WebSocket clients (first tab sees 2 then 1 peers), attachment round-trip, rejected upload, workflow split (Workers AI or fallback), concurrent card/board caps, orphan-split delete, overdue reminder, TTL sweep.
+- `scripts/smoke.ts`: create board, task CRUD, two WebSocket clients (first tab sees 2 then 1 peers), attachment round-trip, rejected upload, workflow split (Workers AI or fallback), concurrent card/board caps, mid-split board and parent deletes after the AI step, overdue reminder, TTL sweep.
 - Browser screenshot and a short video.
 
 ## Deferred

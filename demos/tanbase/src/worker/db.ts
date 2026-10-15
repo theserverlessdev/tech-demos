@@ -517,6 +517,13 @@ async function deleteOrphans(env: Env, table: "tasks" | "attachments" | "splits"
 }
 
 export async function sweepOrphans(env: Env): Promise<number> {
+  const leaked = await env.DB.prepare(
+    `SELECT r2_key FROM attachments WHERE board_id NOT IN (SELECT id FROM boards) LIMIT ?`,
+  )
+    .bind(LIMITS.sweepBatch)
+    .all<{ r2_key: string }>();
+  const keys = leaked.results.map((row) => row.r2_key);
+  if (keys.length) await env.FILES.delete(keys);
   const tasks = await deleteOrphans(env, "tasks");
   const attachments = await deleteOrphans(env, "attachments");
   const splits = await deleteOrphans(env, "splits");

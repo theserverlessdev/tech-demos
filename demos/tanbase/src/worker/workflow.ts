@@ -4,6 +4,7 @@ import { NonRetryableError } from "cloudflare:workflows";
 import { LIMITS, type SplitStep } from "../shared/types";
 import { updateSplit, writeSubtasks, type SubtaskDraft } from "./db";
 import { notifyBoard } from "./board";
+import { localHooksEnabled } from "./validate";
 
 type Params = { boardId: string; taskId: string; splitId: string };
 
@@ -131,6 +132,11 @@ export class SplitTaskWorkflow extends WorkflowEntrypoint<Env, Params> {
         return { subtasks, source, steps };
       },
     );
+
+    // Local smoke only. Holds the write so delete-board / delete-parent can land mid-split.
+    if (localHooksEnabled(this.env.ALLOW_LOCAL_HOOKS)) {
+      await step.sleep("local orphan race", "4 seconds");
+    }
 
     const written = await step.do("write subtasks", async () => {
       const { boardId, taskId, splitId } = event.payload;
