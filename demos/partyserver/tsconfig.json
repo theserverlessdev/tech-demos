@@ -4,5 +4,6 @@
     "types": [],
     "lib": ["ESNext"]
   },
-  "include": ["src/worker/**/*.ts", "src/shared/**/*.ts", "worker-configuration.d.ts"]
+  "include": ["src/worker/**/*.ts", "src/shared/**/*.ts", "worker-configuration.d.ts"],
+  "exclude": ["src/**/*.test.ts"]
 }

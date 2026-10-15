@@ -1,6 +1,7 @@
 import { routePartykitRequest } from "partyserver";
 import { BASE_PATH, ROOM_ID } from "../shared/protocol";
 import { HttpError, handleApi } from "./api";
+import { verifyRoomId } from "./ids";
 import { BoardRoom } from "./room";
 
 export { BoardRoom };
@@ -88,14 +89,14 @@ export default {
             if (lobby.className !== "BoardRoom" || !ROOM_ID.test(lobby.name)) {
               return new Response("Not found", { status: 404 });
             }
+            if (!(await verifyRoomId(env.TURNSTILE_SECRET ?? "", lobby.name))) {
+              return new Response("Not found", { status: 404 });
+            }
             const { success } = await env.CONNECT_LIMIT.limit({ key: clientIp(request) });
             if (!success) return new Response("Too many connections. Wait a minute.", { status: 429 });
           },
-          onBeforeRequest: (req) => {
-            const headers = new Headers(req.headers);
-            headers.delete("x-party-internal");
-            return new Request(req, { headers });
-          },
+          // HTTP through the party router is unused; api.ts talks to the DO directly.
+          onBeforeRequest: () => new Response("Not found", { status: 404 }),
         });
         if (routed) return routed;
       } catch (err) {

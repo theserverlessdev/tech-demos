@@ -63,8 +63,12 @@ await pageB.screenshot({ path: `${out.pathname}/board-peer.png` });
 const mobile = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme: "dark" });
 await mobile.addInitScript(dark);
 const phone = await mobile.newPage();
+await phone.goto(`${base}/`, { waitUntil: "domcontentloaded" });
+await phone.locator("#open-room:enabled").waitFor({ timeout: 20_000 });
+await phone.screenshot({ path: `${out.pathname}/gate-390.png` });
 await phone.goto(roomUrl, { waitUntil: "domcontentloaded" });
 await phone.locator("#canvas").waitFor();
+await phone.waitForTimeout(400);
 await phone.screenshot({ path: `${out.pathname}/board-mobile.png` });
 await mobile.close();
 

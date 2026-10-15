@@ -3,6 +3,7 @@ import YProvider from "y-partyserver/provider";
 import * as Y from "yjs";
 import { CLOSE_FULL, CLOSE_RATE, MAX_CONNECTIONS, MAX_STROKES, PARTY, ROOM_ID, type CreatedRoom, type RoomStatus } from "../src/shared/protocol";
 import { TEST_TURNSTILE_SECRET, TEST_TURNSTILE_SITE_KEY, assessTurnstile } from "../src/worker/turnstile";
+import { verifyRoomId } from "../src/worker/ids";
 
 const base = (process.argv.find((arg) => arg.startsWith("http")) ?? "http://127.0.0.1:8787").replace(/\/$/, "");
 const DUMMY = "XXXX.DUMMY.TOKEN.XXXX";
@@ -81,6 +82,17 @@ check("room status has an alarm at expiry", status.status === 200 && meta?.alarm
 const unknown = await call("/api/rooms/not-a-room");
 check("unknown room id is 404", unknown.status === 404, unknown.status);
 
+const forged = await call("/api/rooms/abcdefghjkmnpqrst");
+check("forged HMAC room id is 404", forged.status === 404, forged.status);
+
+const malformed = await fetch(`${base}/api/rooms/%E0`);
+check("malformed percent-encoding is 404 not 500", malformed.status === 404, malformed.status);
+
+const partyHttp = await fetch(`${base}/parties/board-room/abcdefghjkmnpqrst`);
+check("party HTTP is 404", partyHttp.status === 404, partyHttp.status);
+
+check("created id verifies against the local test secret", await verifyRoomId(TEST_TURNSTILE_SECRET, room.id));
+
 const host = base.replace(/^https?:\/\//, "");
 const docA = new Y.Doc();
 const docB = new Y.Doc();
@@ -129,9 +141,58 @@ const providerE = new YProvider(host, room.id, peer, { party: PARTY, disableBc: 
 await waitFor(() => peer.getMap("strokes").size >= MAX_STROKES, 8000);
 await sleep(500);
 check("stroke cap stops the room growing", peer.getMap("strokes").size === MAX_STROKES, peer.getMap("strokes").size);
+
+const erased = [...docD.getMap("strokes").keys()].slice(0, 10);
+docD.transact(() => {
+  for (const key of erased) docD.getMap("strokes").delete(key);
+});
+docD.getMap("strokes").set(
+  "aftercap",
+  JSON.stringify({ id: "aftercap", color: "#c2410c", size: 6, points: [20, 20, 80, 80], client: "smokecli" }),
+);
+const reopened = await waitFor(() => peer.getMap("strokes").has("aftercap") && peer.getMap("strokes").size === MAX_STROKES - 9, 8000);
+check("erase at the cap syncs and accepts a new stroke", reopened, peer.getMap("strokes").size);
 providerD.disconnect();
 providerE.disconnect();
 await sleep(600);
+
+const burstRoom = await call("/api/rooms", { method: "POST", body: { turnstileToken: DUMMY } });
+const burst = burstRoom.data as CreatedRoom | null;
+check("second room for the burst cap", burstRoom.status === 201 && !!burst && ROOM_ID.test(burst.id), burstRoom.data);
+if (burst?.id) {
+  const docBurst = new Y.Doc();
+  const providerBurst = new YProvider(host, burst.id, docBurst, { party: PARTY, disableBc: true });
+  await waitFor(() => providerBurst.wsconnected, 8000);
+  docBurst.transact(() => {
+    for (let i = 0; i < 400; i++) {
+      const id = `b${String(i).padStart(6, "0")}`;
+      docBurst.getMap("strokes").set(id, JSON.stringify({ id, color: "#e7e5e4", size: 3, points: [i, i, i + 10, i + 20], client: "smokecli" }));
+    }
+  });
+  await sleep(800);
+  const docSeen = new Y.Doc();
+  const providerSeen = new YProvider(host, burst.id, docSeen, { party: PARTY, disableBc: true });
+  await waitFor(() => docSeen.getMap("strokes").size > 0, 8000);
+  await sleep(500);
+  check("one frame of 400 strokes is trimmed to the cap", docSeen.getMap("strokes").size === MAX_STROKES, docSeen.getMap("strokes").size);
+  providerBurst.disconnect();
+  providerSeen.disconnect();
+  await sleep(400);
+  const junkDoc = new Y.Doc();
+  const providerJunk = new YProvider(host, burst.id, junkDoc, { party: PARTY, disableBc: true });
+  await waitFor(() => providerJunk.wsconnected, 8000);
+  junkDoc.getText("junk").insert(0, "x".repeat(200));
+  junkDoc.getMap("strokes").set("bad", "not-json");
+  await sleep(600);
+  const junkPeer = new Y.Doc();
+  const providerJunkPeer = new YProvider(host, burst.id, junkPeer, { party: PARTY, disableBc: true });
+  await waitFor(() => providerJunkPeer.wsconnected, 8000);
+  await sleep(400);
+  check("foreign root text is emptied", junkPeer.getText("junk").length === 0, junkPeer.getText("junk").length);
+  check("invalid stroke keys are dropped", !junkPeer.getMap("strokes").has("bad"));
+  providerJunk.disconnect();
+  providerJunkPeer.disconnect();
+}
 
 const sockets: WebSocket[] = [];
 for (let i = 0; i < MAX_CONNECTIONS; i++) {

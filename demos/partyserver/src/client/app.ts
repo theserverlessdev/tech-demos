@@ -2,6 +2,8 @@ import YProvider from "y-partyserver/provider";
 import * as Y from "yjs";
 import {
   BASE_PATH,
+  BOARD_HEIGHT,
+  BOARD_WIDTH,
   CLOSE_EXPIRED,
   CLOSE_FRAME,
   CLOSE_FULL,
@@ -10,8 +12,10 @@ import {
   INK,
   MAX_STROKES,
   PARTY,
+  ROOM_ALPHABET,
   ROOM_ID,
   STROKE_SIZES,
+  cleanName,
   isInk,
   parseStroke,
   type PublicConfig,
@@ -37,7 +41,7 @@ type TurnstileApi = {
 
 type Presence = { name: string; color: string; x: number; y: number; on: boolean };
 
-const ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
+type BoardLayout = { ox: number; oy: number; scale: number; drawW: number; drawH: number };
 
 function byId<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id);
@@ -50,16 +54,11 @@ function api(path: string): string {
   return `${base}${path}`;
 }
 
-function cleanName(value: string): string {
-  const cleaned = value.replace(/[\u0000-\u001f]/g, "").replace(/\s+/g, " ").trim().slice(0, 24);
-  return cleaned || "Guest";
-}
-
 function randomId(length: number): string {
   const bytes = new Uint8Array(length);
   crypto.getRandomValues(bytes);
   let id = "";
-  for (const byte of bytes) id += ALPHABET[byte % ALPHABET.length]!;
+  for (const byte of bytes) id += ROOM_ALPHABET[byte % ROOM_ALPHABET.length]!;
   return id;
 }
 
@@ -89,6 +88,13 @@ function hint(node: HTMLElement, text: string, tone?: "error" | "ok"): void {
   node.textContent = text;
   if (tone) node.dataset.tone = tone;
   else delete node.dataset.tone;
+}
+
+function layoutOf(width: number, height: number): BoardLayout {
+  const scale = Math.min(width / BOARD_WIDTH, height / BOARD_HEIGHT);
+  const drawW = BOARD_WIDTH * scale;
+  const drawH = BOARD_HEIGHT * scale;
+  return { ox: (width - drawW) / 2, oy: (height - drawH) / 2, scale, drawW, drawH };
 }
 
 document.getElementById("theme")?.addEventListener("click", () => {
@@ -190,6 +196,7 @@ async function createRoom(widget: TurnstileApi): Promise<void> {
     location.assign(next.toString());
   } catch {
     hint(gateHint, "The room was not created.", "error");
+    widget.reset();
     open.disabled = false;
   }
 }
@@ -200,13 +207,20 @@ async function joinRoom(id: string): Promise<void> {
   workspace.hidden = false;
   byId<HTMLElement>("room-label").textContent = id;
 
-  const statusRes = await fetch(api(`/api/rooms/${id}`));
-  if (!statusRes.ok) {
-    setStatus("error", "This room is gone. Open a new one.");
+  let status: RoomStatus;
+  try {
+    const statusRes = await fetch(api(`/api/rooms/${id}`));
+    if (!statusRes.ok) {
+      setStatus("error", "This room is gone. Open a new one.");
+      return;
+    }
+    status = (await statusRes.json()) as RoomStatus;
+  } catch {
+    setStatus("error", "The board could not be reached.");
     return;
   }
-  const status = (await statusRes.json()) as RoomStatus;
   paintExpiry(status.expiresAt);
+  window.setInterval(() => paintExpiry(status.expiresAt), 30_000);
 
   const nameInput = byId<HTMLInputElement>("board-name");
   nameInput.value = storedName() === "Guest" ? "" : storedName();
@@ -234,14 +248,17 @@ async function joinRoom(id: string): Promise<void> {
   let cursor = presence();
   provider.awareness.setLocalState(cursor);
 
+  let fatal = false;
   provider.on("status", (next: { status: string }) => {
+    if (fatal) return;
     if (next.status === "connected") setStatus("connected", "Live on the Durable Object");
     else if (next.status === "connecting") setStatus("", "Connecting…");
     else setStatus("", "Reconnecting…");
   });
   provider.on("connection-close", (event: CloseEvent) => {
-    const fatal = [CLOSE_EXPIRED, CLOSE_FULL, CLOSE_UNKNOWN, CLOSE_RATE, CLOSE_FRAME].includes(event.code);
-    if (!fatal) return;
+    const isFatal = [CLOSE_EXPIRED, CLOSE_FULL, CLOSE_UNKNOWN, CLOSE_RATE, CLOSE_FRAME].includes(event.code);
+    if (!isFatal) return;
+    fatal = true;
     provider.shouldConnect = false;
     const text =
       event.code === CLOSE_FULL
@@ -257,6 +274,7 @@ async function joinRoom(id: string): Promise<void> {
     try {
       const parsed = JSON.parse(message) as { type?: string };
       if (parsed.type === "cap") showBoardHint("This board is full. Erase something or open a new room.", "error");
+      if (parsed.type === "open") hint(byId("board-hint"), "");
     } catch {
       /* ignore non-json control frames */
     }
@@ -279,7 +297,24 @@ async function joinRoom(id: string): Promise<void> {
       canvas.height = height;
     }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, rect.width, rect.height);
+    const layout = layoutOf(rect.width, rect.height);
+    const styles = getComputedStyle(document.documentElement);
+    ctx.fillStyle = styles.getPropertyValue("--surface-2").trim() || "#1b1b20";
+    ctx.fillRect(0, 0, rect.width, rect.height);
+    ctx.fillStyle = styles.getPropertyValue("--paper").trim() || "#141418";
+    ctx.fillRect(layout.ox, layout.oy, layout.drawW, layout.drawH);
+    const grid = styles.getPropertyValue("--grid").trim() || "rgba(255,255,255,0.045)";
+    ctx.fillStyle = grid;
+    const step = 22;
+    for (let x = layout.ox; x < layout.ox + layout.drawW; x += step) {
+      for (let y = layout.oy; y < layout.oy + layout.drawH; y += step) {
+        ctx.fillRect(x, y, 1, 1);
+      }
+    }
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(layout.ox, layout.oy, layout.drawW, layout.drawH);
+    ctx.clip();
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
     let count = 0;
@@ -287,18 +322,19 @@ async function joinRoom(id: string): Promise<void> {
       const stroke = parseStroke(raw);
       if (!stroke) return;
       count += 1;
-      drawStroke(ctx, stroke, rect.width, rect.height);
+      drawStroke(ctx, stroke, layout);
     });
     if (draft && draft.length >= 2) {
-      drawStroke(ctx, { id: "draft", color, size, points: draft, client: me }, rect.width, rect.height);
+      drawStroke(ctx, { id: "draft", color, size, points: draft, client: me }, layout);
     }
     hintNode.hidden = count > 0 || draft !== null;
     const states = provider.awareness.getStates();
     states.forEach((raw, clientId) => {
       if (clientId === doc.clientID) return;
       if (!isPresence(raw) || !raw.on) return;
-      drawCursor(ctx, raw, rect.width, rect.height);
+      drawCursor(ctx, raw, layout);
     });
+    ctx.restore();
     paintPeople(provider, doc.clientID);
   };
 
@@ -309,14 +345,15 @@ async function joinRoom(id: string): Promise<void> {
 
   const pointOf = (event: PointerEvent): [number, number] => {
     const rect = canvas.getBoundingClientRect();
-    const x = Math.round(Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)) * 10_000);
-    const y = Math.round(Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height)) * 10_000);
+    const layout = layoutOf(rect.width, rect.height);
+    const x = Math.round(Math.min(BOARD_WIDTH, Math.max(0, (event.clientX - rect.left - layout.ox) / layout.scale)));
+    const y = Math.round(Math.min(BOARD_HEIGHT, Math.max(0, (event.clientY - rect.top - layout.oy) / layout.scale)));
     return [x, y];
   };
 
   canvas.addEventListener("pointerdown", (event) => {
     if (strokes.size >= MAX_STROKES && tool === "pen") {
-      showBoardHint("This board is full.", "error");
+      showBoardHint("This board is full. Erase something or open a new room.", "error");
       return;
     }
     event.preventDefault();
@@ -334,7 +371,14 @@ async function joinRoom(id: string): Promise<void> {
     const now = Date.now();
     if (now - lastCursor > 40) {
       lastCursor = now;
-      cursor = { ...cursor, x: x / 10_000, y: y / 10_000, on: true, name: cleanName(nameInput.value), color };
+      cursor = {
+        ...cursor,
+        x: x / BOARD_WIDTH,
+        y: y / BOARD_HEIGHT,
+        on: true,
+        name: cleanName(nameInput.value),
+        color,
+      };
       provider.awareness.setLocalState(cursor);
     }
     if (!draft) return;
@@ -342,7 +386,10 @@ async function joinRoom(id: string): Promise<void> {
     const py = draft[draft.length - 1] ?? y;
     if (Math.hypot(x - px, y - py) < 40) return;
     draft.push(x, y);
-    if (draft.length > 500) draft = draft.slice(draft.length - 500);
+    if (draft.length >= 500) {
+      commitStroke(strokes, { id: randomId(8), color, size, points: draft.slice(), client: me }, mine);
+      draft = [x, y];
+    }
     schedule();
   });
   const finish = (event: PointerEvent) => {
@@ -425,22 +472,12 @@ async function joinRoom(id: string): Promise<void> {
     }
   });
 
-  window.setInterval(() => {
-    void fetch(api(`/api/rooms/${id}`))
-      .then((res) => (res.ok ? (res.json() as Promise<RoomStatus>) : null))
-      .then((next) => {
-        if (!next) return;
-        paintExpiry(next.expiresAt);
-        if (next.full) showBoardHint("This board is full.", "error");
-      })
-      .catch(() => undefined);
-  }, 20_000);
   schedule();
 }
 
 function commitStroke(strokes: Y.Map<string>, stroke: Stroke, mine: string[]): void {
   if (strokes.size >= MAX_STROKES) {
-    showBoardHint("This board is full.", "error");
+    showBoardHint("This board is full. Erase something or open a new room.", "error");
     return;
   }
   strokes.set(stroke.id, JSON.stringify(stroke));
@@ -464,35 +501,35 @@ function eraseAt(strokes: Y.Map<string>, x: number, y: number): void {
   for (const key of victims) strokes.delete(key);
 }
 
-function drawStroke(ctx: CanvasRenderingContext2D, stroke: Stroke, width: number, height: number): void {
+function drawStroke(ctx: CanvasRenderingContext2D, stroke: Stroke, layout: BoardLayout): void {
   const pts = stroke.points;
+  const xAt = (i: number) => layout.ox + ((pts[i] ?? 0) * layout.scale);
+  const yAt = (i: number) => layout.oy + ((pts[i + 1] ?? 0) * layout.scale);
   ctx.strokeStyle = stroke.color;
   ctx.fillStyle = stroke.color;
   ctx.lineWidth = stroke.size;
   if (pts.length < 4) {
     ctx.beginPath();
-    ctx.arc(((pts[0] ?? 0) / 10_000) * width, ((pts[1] ?? 0) / 10_000) * height, stroke.size / 2, 0, Math.PI * 2);
+    ctx.arc(xAt(0), yAt(0), stroke.size / 2, 0, Math.PI * 2);
     ctx.fill();
     return;
   }
   ctx.beginPath();
-  ctx.moveTo(((pts[0] ?? 0) / 10_000) * width, ((pts[1] ?? 0) / 10_000) * height);
+  ctx.moveTo(xAt(0), yAt(0));
   for (let i = 2; i < pts.length - 2; i += 2) {
-    const x1 = ((pts[i] ?? 0) / 10_000) * width;
-    const y1 = ((pts[i + 1] ?? 0) / 10_000) * height;
-    const x2 = ((pts[i + 2] ?? 0) / 10_000) * width;
-    const y2 = ((pts[i + 3] ?? 0) / 10_000) * height;
+    const x1 = xAt(i);
+    const y1 = yAt(i);
+    const x2 = xAt(i + 2);
+    const y2 = yAt(i + 2);
     ctx.quadraticCurveTo(x1, y1, (x1 + x2) / 2, (y1 + y2) / 2);
   }
-  const lastX = pts[pts.length - 2] ?? 0;
-  const lastY = pts[pts.length - 1] ?? 0;
-  ctx.lineTo((lastX / 10_000) * width, (lastY / 10_000) * height);
+  ctx.lineTo(xAt(pts.length - 2), yAt(pts.length - 2));
   ctx.stroke();
 }
 
-function drawCursor(ctx: CanvasRenderingContext2D, presence: Presence, width: number, height: number): void {
-  const x = presence.x * width;
-  const y = presence.y * height;
+function drawCursor(ctx: CanvasRenderingContext2D, presence: Presence, layout: BoardLayout): void {
+  const x = layout.ox + presence.x * BOARD_WIDTH * layout.scale;
+  const y = layout.oy + presence.y * BOARD_HEIGHT * layout.scale;
   ctx.save();
   ctx.fillStyle = presence.color;
   ctx.strokeStyle = presence.color;
@@ -501,7 +538,7 @@ function drawCursor(ctx: CanvasRenderingContext2D, presence: Presence, width: nu
   ctx.arc(x, y, 5, 0, Math.PI * 2);
   ctx.stroke();
   ctx.font = "600 12px Hanken Grotesk, sans-serif";
-  ctx.fillText(presence.name, x + 10, y - 8);
+  ctx.fillText(cleanName(presence.name), x + 10, y - 8);
   ctx.restore();
 }
 
@@ -515,7 +552,7 @@ function paintPeople(provider: YProvider, selfId: number): void {
     dot.className = "person-dot";
     dot.style.background = raw.color;
     const label = document.createElement("span");
-    label.textContent = clientId === selfId ? `${raw.name} (you)` : raw.name;
+    label.textContent = clientId === selfId ? `${cleanName(raw.name)} (you)` : cleanName(raw.name);
     item.append(dot, label);
     list.append(item);
   });
@@ -524,7 +561,14 @@ function paintPeople(provider: YProvider, selfId: number): void {
 function isPresence(value: unknown): value is Presence {
   if (!value || typeof value !== "object") return false;
   const rec = value as Record<string, unknown>;
-  return typeof rec.name === "string" && typeof rec.color === "string" && typeof rec.x === "number" && typeof rec.y === "number" && typeof rec.on === "boolean";
+  return (
+    typeof rec.name === "string" &&
+    typeof rec.color === "string" &&
+    isInk(rec.color) &&
+    typeof rec.x === "number" &&
+    typeof rec.y === "number" &&
+    typeof rec.on === "boolean"
+  );
 }
 
 function setStatus(state: string, text: string): void {

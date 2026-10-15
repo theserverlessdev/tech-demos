@@ -26,8 +26,9 @@ Distinct from edgechat (team chat transcript) and goodvibes (Three.js presence):
   - Create an anonymous room behind Turnstile and a rate-limit binding. Join link is an unguessable id.
   - Hibernating `BoardRoom`: Yjs strokes, live cursors, presence names.
   - Persist the Yjs snapshot in Durable Object storage. Reload shows the same ink.
-  - Caps: 8 connections, 240 strokes, 256 KB snapshot. Per-connection frame meter.
-  - DO alarm at 2 hours deletes storage and closes sockets.
+  - Caps: 8 connections, 240 strokes, 256 KB snapshot. Per-connection frame meter. Server `afterTransaction` guard; erasing reopens a full board.
+  - HMAC-tagged room ids verified before `getServerByName` / `onBeforeConnect`. `READ_LIMIT` on status GET. Party HTTP 404s.
+  - DO alarm at 2 hours runs `deleteAll` and closes sockets. A wake with no `meta` also `deleteAll`.
   - Works at `/demos/partyserver/` and at the demo subdomain.
   - Hub fallback redirect. `PLAN.md` / `README.md` / `CHANGELOG.md`.
 - Out: accounts, named workspaces, chat transcript, file uploads, Workers AI, D1/R2/KV, partysub, partywhen, Workers for Platforms.
@@ -75,13 +76,15 @@ Worker `tech-demos-partyserver`:
 ## Cost
 
 - One SQLite Durable Object class. No D1, R2, KV, AI, Containers, or Browser Rendering.
-- Room create is 8/minute per IP. WebSocket upgrades are 40/minute per IP.
-- Each room holds at most 8 sockets and 256 KB, then the alarm deletes it.
+- Room create is 8/minute per IP (`CREATE_LIMIT` 7500). WebSocket upgrades are 40/minute per IP (`CONNECT_LIMIT` 7501). Status GET is 40/minute per IP (`READ_LIMIT` 7502).
+- Each room holds at most 8 sockets and 256 KB, then the alarm runs `deleteAll`.
+- Forged ids never wake a Durable Object. Unknown wakes that still occur `deleteAll` so partyserver's `__ps_name` row is not billed.
 
 ## Testing
 
 - `bun run typecheck`
-- `scripts/smoke.ts` against `wrangler dev`: health under the path prefix, Turnstile create, Yjs sync across two providers, reload from storage, 9th socket refused, frame flood closed, stroke cap.
+- `bun test demos/partyserver`: HMAC ids, Turnstile host carve-out, parseStroke, byte-budget vs frame size.
+- `scripts/smoke.ts` against `wrangler dev`: health under the path prefix, Turnstile create, Yjs sync across two providers, reload from storage, 9th socket refused, frame flood closed, hard stroke cap, erase-after-cap, burst 400 trimmed to 240, party HTTP 404, malformed room id 404.
 - Browser screenshot and a short two-tab video.
 
 ## Deferred

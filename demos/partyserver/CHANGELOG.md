@@ -13,8 +13,8 @@ Prompt: [@_thebluebutter](https://x.com/_thebluebutter/status/210533168300023447
 | Shared state | App chooses the messages | Yjs map of ink strokes via `y-partyserver` |
 | Presence | App-defined | Yjs awareness (name, colour, cursor). Not written to storage |
 | Persistence | `onLoad` / `onSave` hooks, caller-supplied | Snapshot in DO storage. Flushed on save debounce and when a socket closes |
-| Expiry | None by default | Alarm two hours after create. `deleteAll`, then a `dead` flag so a late save cannot resurrect the room |
-| Admission | None by default | Turnstile + `CREATE_LIMIT` on create. `CONNECT_LIMIT` on upgrade. 8 sockets, 240 strokes, 256 KB, per-connection frame meter |
+| Expiry | None by default | Alarm two hours after create. `deleteAll` (compat date `2026-09-01` also clears the alarm). A wake with no `meta` also `deleteAll`. |
+| Admission | None by default | Turnstile + `CREATE_LIMIT` on create. HMAC room id + `CONNECT_LIMIT` on upgrade. `READ_LIMIT` on status GET. 8 sockets, 240 strokes, 256 KB, per-connection frame meter. Caps are a server `afterTransaction` guard, not `isReadOnly`. |
 | Client | `partysocket` / `YProvider` | `YProvider` with BroadcastChannel off, so two tabs only meet on the Durable Object |
 | UI | PartyKit marketing and fixtures | Graphite & Ember canvas. Contact links to the hub's site |
 
@@ -40,6 +40,16 @@ Hub Graphite & Ember. Ember accent `#c2410c`, background `#0e0e11`. LogoMark SVG
 ## Known library behaviour
 
 `y-partyserver` debounces `onSave` with `setTimeout`. A Durable Object cannot hibernate while that timer is pending. After the debounce settles (at most `debounceMaxWait`, 800 ms here) and the sockets are idle, hibernation can proceed. Local `wrangler dev` does not hibernate; the `hibernate: true` flag is what production uses.
+
+## 2026-10-15
+
+Audit fixes (B1–B3, S1–S7, N1–N11):
+
+- HMAC-tagged room ids, `READ_LIMIT` on status GET, party HTTP 404, `deleteAll` on unknown rooms and on the TTL alarm.
+- Caps stay writable: `isReadOnly` is always false. Invalid strokes, extra keys, and foreign root types are dropped in a GUARD transaction so erases sync. Rejected sockets cannot write.
+- Fatal closes (full, expired, unknown, rate/frame) keep their message instead of "Reconnecting…".
+- 4:3 logical board with a uniform scale. Phone canvas height is `62dvh` / `42dvh`, not the bitmap aspect. Long strokes commit a chunk and continue instead of dropping the head.
+- Copy, route patterns, Turnstile test-host carve-out, presence validation, and 44px phone fields match the code.
 
 ## 2026-10-09
 

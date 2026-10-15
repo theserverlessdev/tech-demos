@@ -9,9 +9,19 @@ export const MAX_STROKES = 240;
 export const MAX_DOC_BYTES = 256 * 1024;
 export const MAX_FRAME_BYTES = MAX_DOC_BYTES + 4096;
 export const MAX_FRAMES_PER_SEC = 120;
-export const MAX_BYTES_PER_SEC = MAX_DOC_BYTES;
+/** At least one full resync frame must fit in the sliding second, or reconnects close as "slow down". */
+export const MAX_BYTES_PER_SEC = MAX_FRAME_BYTES;
 export const ROOM_TTL_MS = 2 * 60 * 60 * 1000;
-export const ROOM_ID = /^[abcdefghjkmnpqrstuvwxyz23456789]{10}$/;
+
+/** Crockford-ish alphabet used for room ids and client ids. */
+export const ROOM_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
+export const ROOM_ID_RAND_LEN = 10;
+export const ROOM_ID_TAG_LEN = 7;
+export const ROOM_ID = new RegExp(`^[${ROOM_ALPHABET}]{${ROOM_ID_RAND_LEN + ROOM_ID_TAG_LEN}}$`);
+
+/** Logical board in ink units. Displayed at 4:3 with a uniform scale so circles stay circles. */
+export const BOARD_WIDTH = 10_000;
+export const BOARD_HEIGHT = 7_500;
 
 export const CLOSE_EXPIRED = 4001;
 export const CLOSE_FULL = 4002;
@@ -92,4 +102,9 @@ export function parseStroke(value: unknown): Stroke | null {
 
 export function isInk(value: string): value is Ink {
   return (INK as readonly string[]).includes(value);
+}
+
+export function cleanName(value: string): string {
+  const cleaned = value.replace(/[\u0000-\u001f]/g, "").replace(/\s+/g, " ").trim().slice(0, 24);
+  return cleaned || "Guest";
 }
