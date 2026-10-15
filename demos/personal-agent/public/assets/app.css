@@ -123,13 +123,19 @@ button { cursor: pointer; background: none; border: none; }
 #strip-text { flex: 1; }
 
 .gate {
-  display: flex; align-items: center; gap: 12px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
   padding: 8px 20px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
+  order: 3;
 }
-#turnstile { flex: 1; min-width: 0; max-width: 100%; overflow: auto; }
-#gate-hint { flex: 1; }
+#turnstile { flex: 1 1 auto; min-width: min(100%, 300px); max-width: 100%; }
+#gate-hint { flex: 1 1 100%; }
+#gate-hint:empty { display: none; }
+.shows { order: 1; }
+.strip { order: 2; }
+.layout { order: 4; }
+.foot { order: 5; }
 
 .layout {
   flex: 1;
@@ -247,7 +253,9 @@ textarea, input {
   .chat { min-height: 70dvh; }
   .strip { flex-wrap: wrap; }
   .composer { position: static; padding-bottom: 0; }
+  .layout { order: 3; }
   .gate {
+    order: 4;
     position: sticky;
     bottom: 0;
     z-index: 4;
@@ -255,6 +263,8 @@ textarea, input {
     border-top: 1px solid var(--border);
     padding: 8px 14px calc(8px + env(safe-area-inset-bottom));
   }
+  .chat,
+  .side { padding-bottom: 96px; }
 }
 
 /* Phone layout. Graphite and Ember stay; controls grow to a finger and fields stay at 16px so iOS does not zoom. */

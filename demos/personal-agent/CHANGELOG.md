@@ -42,12 +42,12 @@ Hub Graphite & Ember. Ember accent `#c2410c`, background `#0e0e11`. Contact link
 
 ## 2026-10-15
 
-Audit fixes for the docs catalog, Durable Object lifetime, recall floor, and phone layout.
+Audit fixes for the docs catalog, Durable Object lifetime, recall floor, and phone layout. Review follow-ups close the leftover Durable Object leak and the 390 px gate.
 
-- Research asks Cloudflare docs for markdown, truncates at 180 KB instead of failing, and keeps a single catalog match (padded with defaults). The UI placeholder question is a smoke check.
-- Page views and unsigned GETs no longer call `getAgentByName`. The first Turnstile-gated write mints an HMAC-signed `x-visitor-id`. `purgeExpired` deletes the R2 prefix and then `destroy()`s the Durable Object.
-- GLM-5.3 Flash uses `reasoning_effort: "low"` and `max_completion_tokens: 1500`. Recall needs cosine ≥ 0.58 or two keyword hits.
-- Phone: static topbar, per-panel status, a shared Turnstile gate, scrollable thread, and `overflow-wrap: anywhere` on long URLs.
+- Research asks Cloudflare docs for markdown, truncates at 180 KB instead of failing, and keeps a single catalog match (padded with defaults). Citation titles come from YAML `title:` or the first `#` heading; docs boilerplate is stripped from excerpts. The UI placeholder question is a smoke check.
+- Page views, unsigned GETs, and expired tokens do not call `getAgentByName`. The first Turnstile-gated write mints an HMAC-signed `id.exp.sig` token sent as `x-visitor-token`. Writes re-sign the token. `onStart` arms `purgeExpired` when no purge is scheduled. Chat and note bodies are validated in the Worker before the Durable Object is named.
+- GLM-5.3 Flash uses `reasoning_effort: "low"` and `max_completion_tokens: 1500`. Recall needs cosine ≥ 0.58 or two keyword hits. Local screenshots show the fallback path; a live paid Workers AI call was not run and would not by itself prove those settings.
+- Phone: static topbar, per-panel status, a wrapping Turnstile gate that sticks at the bottom, scrollable thread after chat only, and `overflow-wrap: anywhere` on long URLs.
 
 ## 2026-10-09
 

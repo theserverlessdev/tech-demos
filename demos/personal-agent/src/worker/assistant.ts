@@ -104,6 +104,7 @@ export class Assistant extends Agent<Env, AssistantState> {
       body_hash TEXT NOT NULL,
       created_at INTEGER NOT NULL
     )`);
+    if (!this.state.purgeScheduleId) await this.armPurge();
   }
 
   /** No browser socket is opened. State stays server-owned if one ever is. */

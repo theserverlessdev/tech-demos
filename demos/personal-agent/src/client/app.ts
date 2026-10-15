@@ -65,11 +65,23 @@ let openNote: NoteDetail | null = null;
 let deleteArmed = false;
 
 function storedToken(): string {
-  return localStorage.getItem(TOKEN_KEY) ?? "";
+  const token = localStorage.getItem(TOKEN_KEY) ?? "";
+  if (!token) return "";
+  const parts = token.split(".");
+  const exp = Number(parts[1]);
+  if (parts.length !== 3 || !Number.isFinite(exp) || exp <= Date.now()) {
+    localStorage.removeItem(TOKEN_KEY);
+    return "";
+  }
+  return token;
 }
 
 function rememberToken(token: string | undefined) {
-  if (token && token.includes(".")) localStorage.setItem(TOKEN_KEY, token);
+  if (!token) return;
+  const parts = token.split(".");
+  const exp = Number(parts[1]);
+  if (parts.length !== 3 || !Number.isFinite(exp) || exp <= Date.now()) return;
+  localStorage.setItem(TOKEN_KEY, token);
 }
 
 function status(id: string, text: string, tone: "ok" | "error" | "" = "") {
@@ -86,7 +98,7 @@ function hint(text: string, tone: "ok" | "error" | "" = "") {
 async function api<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
   const headers: Record<string, string> = {};
   const grant = storedToken();
-  if (grant) headers["x-visitor-id"] = grant;
+  if (grant) headers["x-visitor-token"] = grant;
   let body: string | undefined;
   if (init.body !== undefined) {
     headers["content-type"] = "application/json";
@@ -128,7 +140,7 @@ function scrollThread() {
   thread.scrollTop = thread.scrollHeight;
 }
 
-function renderMessages(messages: ThreadMessage[]) {
+function renderMessages(messages: ThreadMessage[], opts: { scroll?: boolean } = {}) {
   const list = $("messages");
   list.replaceChildren();
   $("empty").hidden = messages.length > 0;
@@ -150,7 +162,7 @@ function renderMessages(messages: ThreadMessage[]) {
     }
     list.append(item);
   }
-  scrollThread();
+  if (opts.scroll) scrollThread();
 }
 
 function renderNotes(notes: NoteSummary[]) {
@@ -189,7 +201,7 @@ function emptyStrip() {
     `Visitor ${visitor.slice(0, 6)}… · a Durable Object is created on the first write. Notes and chat expire ${ttlHours}h after that.`;
 }
 
-async function refresh() {
+async function refresh(opts: { scroll?: boolean } = {}) {
   if (!storedToken()) {
     emptyStrip();
     renderMessages([]);
@@ -204,7 +216,7 @@ async function refresh() {
   ]);
   const when = session.expiresAt ? new Date(session.expiresAt).toLocaleString() : "the first write";
   $("strip-text").textContent = `Visitor ${visitor.slice(0, 6)}… · notes and chat expire ${session.ttlHours}h after the last write (${when}).`;
-  renderMessages(thread.messages);
+  renderMessages(thread.messages, { scroll: opts.scroll });
   renderNotes(notes.notes);
   if (openNote && !notes.notes.some((note) => note.id === openNote?.id)) showNote(null);
 }
@@ -294,7 +306,7 @@ $("composer").addEventListener("submit", async (event) => {
     $<HTMLTextAreaElement>("message").value = "";
     hint(reply.source === "workers-ai" ? "Reply from Workers AI." : "Reply from the local fallback. Workers AI did not answer.", reply.source === "workers-ai" ? "ok" : "");
     resetCheck();
-    await refresh();
+    await refresh({ scroll: true });
   } catch (err) {
     hint(err instanceof ApiFailure ? err.message : "The send failed.", "error");
     resetCheck();

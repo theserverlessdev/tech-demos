@@ -4,13 +4,14 @@ import { Assistant, type Fail, type Ok } from "./assistant";
 import { enforceLimit } from "./limits";
 import { ALLOWED_HOSTS, validatePublicUrl } from "./research";
 import { turnstileConfigured, verifyTurnstile, type GateFailure } from "./turnstile";
-import { hmacSecret, parseVisitorId, signVisitor, verifyVisitorToken } from "./visitor";
+import { hmacSecret, parseVisitorId, signVisitor, tokenExpiryMs, verifyVisitorToken } from "./visitor";
 
 export { Assistant };
 
 const BASE_PATH = "/demos/personal-agent";
 const NOTE_ID = /^[a-z0-9]{8,32}$/;
 const MAX_BODY = 48_000;
+const VISITOR_TOKEN_HEADER = "x-visitor-token";
 
 const PAGE_CSP = [
   "default-src 'self'",
@@ -51,10 +52,10 @@ function emptySession(env: Env): SessionInfo {
   return { expiresAt: 0, noteCount: 0, messageCount: 0, ttlHours: ttlHours(env) };
 }
 
-async function fromAgent<T extends object>(env: Env, id: string, result: Ok<T> | Fail): Promise<Response> {
+async function fromAgent<T extends object>(env: Env, id: string, result: Ok<T> | Fail, mintToken = false): Promise<Response> {
   if (!result.ok) return failure(result);
   const secret = hmacSecret(env);
-  const visitorToken = secret ? await signVisitor(secret, id) : undefined;
+  const visitorToken = mintToken && secret ? await signVisitor(secret, id, tokenExpiryMs(ttlHours(env))) : undefined;
   return json(visitorToken ? { ...result.data, visitorToken } : result.data);
 }
 
@@ -103,6 +104,22 @@ async function readJson(request: Request, max = MAX_BODY): Promise<Record<string
 
 function asString(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function parseNoteInput(body: Record<string, unknown>): { title: string; body: string } | Response {
+  const title = asString(body.title).trim().slice(0, 120);
+  const noteBody = asString(body.body).trim();
+  if (!title || !noteBody) return json({ error: { code: "invalid", message: "A note needs a title and a body." } }, 400);
+  if (noteBody.length > 8_000) return json({ error: { code: "too_large", message: "Notes are limited to 8000 characters." } }, 413);
+  return { title, body: noteBody };
+}
+
+function parseChatMessage(body: Record<string, unknown>): string | Response {
+  const message = asString(body.message).trim();
+  if (!message || message.length > 2_000) {
+    return json({ error: { code: "invalid", message: "Messages must be 1 to 2000 characters." } }, 400);
+  }
+  return message;
 }
 
 function urlsFrom(value: unknown): string[] | Response {
@@ -192,7 +209,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
     const limited = await enforceLimit(env.READ_LIMIT, request);
     if (!limited.ok) return failure(limited);
     const secret = hmacSecret(env);
-    const id = secret ? await verifyVisitorToken(secret, request.headers.get("x-visitor-id")) : null;
+    const id = secret ? await verifyVisitorToken(secret, request.headers.get(VISITOR_TOKEN_HEADER)) : null;
     if (!id) {
       if (noteMatch) return json({ error: { code: "not_found", message: "That note is not in this visitor's notebook." } }, 404);
       if (path === "/api/session") return json(emptySession(env));
@@ -213,7 +230,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
     const gated = await gateWrite(request, env, body, "chat");
     if (gated instanceof Response) return gated;
     const agent = await assistantFor(env, gated);
-    return fromAgent(env, gated, await agent.deleteNote(noteMatch[1]!));
+    return fromAgent(env, gated, await agent.deleteNote(noteMatch[1]!), true);
   }
 
   if (request.method !== "POST") return json({ error: { code: "method", message: "Method not allowed." } }, 405);
@@ -222,17 +239,21 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
   if (body instanceof Response) return body;
 
   if (path === "/api/notes") {
+    const note = parseNoteInput(body);
+    if (note instanceof Response) return note;
     const gated = await gateWrite(request, env, body, "chat");
     if (gated instanceof Response) return gated;
     const agent = await assistantFor(env, gated);
-    return fromAgent(env, gated, await agent.saveNote({ title: asString(body.title), body: asString(body.body) }));
+    return fromAgent(env, gated, await agent.saveNote(note), true);
   }
 
   if (path === "/api/chat") {
+    const message = parseChatMessage(body);
+    if (message instanceof Response) return message;
     const gated = await gateWrite(request, env, body, "chat");
     if (gated instanceof Response) return gated;
     const agent = await assistantFor(env, gated);
-    return fromAgent(env, gated, await agent.chat({ message: asString(body.message) }));
+    return fromAgent(env, gated, await agent.chat({ message }), true);
   }
 
   if (path === "/api/research") {
@@ -245,7 +266,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
     const gated = await gateWrite(request, env, body, "research");
     if (gated instanceof Response) return gated;
     const agent = await assistantFor(env, gated);
-    return fromAgent(env, gated, await agent.research({ question, urls }));
+    return fromAgent(env, gated, await agent.research({ question, urls }), true);
   }
 
   return json({ error: { code: "not_found", message: "Unknown API path." } }, 404);

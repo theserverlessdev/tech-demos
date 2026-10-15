@@ -31,7 +31,7 @@ async function call<T>(path: string, init: { method?: string; body?: unknown; vi
     headers["content-type"] = "application/json";
     body = JSON.stringify(init.body);
   }
-  if (init.visitorToken) headers["x-visitor-id"] = init.visitorToken;
+  if (init.visitorToken) headers["x-visitor-token"] = init.visitorToken;
   const res = await fetch(`${base}${path}`, { method: init.method ?? "GET", headers, body });
   const text = await res.text();
   let data: T | null = null;
@@ -76,6 +76,18 @@ check("research rejects private and non-https targets before Turnstile", private
 const unsignedSession = await call<{ noteCount: number; messages?: unknown }>(`/api/session?visitorId=${id}`);
 check("unsigned GET session is empty and ignores the query string", unsignedSession.status === 200 && unsignedSession.data?.noteCount === 0, unsignedSession.data);
 
+const twoPart = await call<{ noteCount: number }>("/api/session", { visitorToken: `${id}.${"ab".repeat(32)}` });
+check("two-part token does not unlock a session", twoPart.status === 200 && twoPart.data?.noteCount === 0, twoPart.data);
+
+const expiredShaped = await call<{ noteCount: number }>("/api/session", { visitorToken: `${id}.100.${"ab".repeat(32)}` });
+check("expired-shaped token does not unlock a session", expiredShaped.status === 200 && expiredShaped.data?.noteCount === 0, expiredShaped.data);
+
+const emptyChat = await call("/api/chat", { method: "POST", body: { visitorId: id, message: "   ", turnstileToken: TOKEN } });
+check("empty chat is 400 before a Durable Object is touched", emptyChat.status === 400, emptyChat.data);
+
+const emptyNote = await call("/api/notes", { method: "POST", body: { visitorId: id, title: "", body: "no title", turnstileToken: TOKEN } });
+check("empty note title is 400 before a Durable Object is touched", emptyNote.status === 400, emptyNote.data);
+
 const saved = await call<NoteSaveReply>("/api/notes", {
   method: "POST",
   body: {
@@ -86,9 +98,10 @@ const saved = await call<NoteSaveReply>("/api/notes", {
   },
 });
 const grant = saved.data?.visitorToken;
-check("note is stored and returns a signed visitor token", saved.status === 200 && saved.data?.note.title === "Color palette" && Boolean(grant), {
+const grantParts = grant?.split(".") ?? [];
+check("note is stored and returns an id.exp.sig token", saved.status === 200 && saved.data?.note.title === "Color palette" && grantParts.length === 3 && /^\d{11,15}$/.test(grantParts[1] ?? ""), {
   title: saved.data?.note.title,
-  hasToken: Boolean(grant),
+  tokenParts: grantParts.length,
 });
 const noteId = saved.data?.note?.id;
 
@@ -129,12 +142,15 @@ const catalog = await call<ResearchReply>("/api/research", {
   },
 });
 const catalogCited = catalog.data?.citations.filter((item) => item.ok).length ?? 0;
+const catalogTitles = catalog.data?.citations.filter((item) => item.ok).map((item) => item.title) ?? [];
+const catalogHasPageTitles = catalogTitles.length >= 2 && catalogTitles.every((title) => title.length > 0 && title !== "developers.cloudflare.com");
 check("docs catalog answers the placeholder question", catalog.status === 200 && catalogCited >= 2 && (catalog.data?.summary.length ?? 0) > 40, {
   status: catalog.status,
   source: catalog.data?.source,
   citations: catalog.data?.citations,
   preview: catalog.data?.summary.slice(0, 140),
 });
+check("catalog citations use page titles, not the hostname", catalogHasPageTitles, catalogTitles);
 
 const research = await call<ResearchReply>("/api/research", {
   method: "POST",

@@ -1,11 +1,39 @@
 const VISITOR_ID = /^[a-z0-9]{16,32}$/;
 const SIG = /^[a-f0-9]{64}$/;
+const EXP = /^\d{11,15}$/;
 
 /** Local-only HMAC key from `.dev.vars.example`. Production must set a different secret. */
 export const DEV_HMAC_SECRET = "local-personal-agent-hmac-dev-only";
 
+export type VisitorGrant = {
+  id: string;
+  expiresAt: number;
+  sig: string;
+};
+
 export function parseVisitorId(value: unknown): string | null {
   return typeof value === "string" && VISITOR_ID.test(value) ? value : null;
+}
+
+export function tokenExpiryMs(ttlHours: number, now = Date.now()): number {
+  const hours = Number.isFinite(ttlHours) ? Math.min(168, Math.max(1, Math.floor(ttlHours))) : 24;
+  return now + hours * 3600 * 1000;
+}
+
+export function parseVisitorToken(token: string | null | undefined): VisitorGrant | null {
+  if (!token) return null;
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  const [id, expRaw, sig] = parts;
+  if (!id || !expRaw || !sig) return null;
+  if (!VISITOR_ID.test(id) || !EXP.test(expRaw) || !SIG.test(sig)) return null;
+  const expiresAt = Number(expRaw);
+  if (!Number.isFinite(expiresAt)) return null;
+  return { id, expiresAt, sig };
+}
+
+export function tokenExpired(expiresAt: number, now = Date.now()): boolean {
+  return expiresAt <= now;
 }
 
 function hex(buffer: ArrayBuffer): string {
@@ -25,21 +53,19 @@ async function hmacKey(secret: string): Promise<CryptoKey> {
   ]);
 }
 
-export async function signVisitor(secret: string, id: string): Promise<string> {
+export async function signVisitor(secret: string, id: string, expiresAt: number): Promise<string> {
+  const payload = `${id}.${expiresAt}`;
   const key = await hmacKey(secret);
-  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(id));
-  return `${id}.${hex(sig)}`;
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload));
+  return `${payload}.${hex(sig)}`;
 }
 
-export async function verifyVisitorToken(secret: string, token: string | null | undefined): Promise<string | null> {
+export async function verifyVisitorToken(secret: string, token: string | null | undefined, now = Date.now()): Promise<string | null> {
   if (!secret || !token) return null;
-  const dot = token.indexOf(".");
-  if (dot < 0) return null;
-  const id = token.slice(0, dot);
-  const sig = token.slice(dot + 1);
-  if (!VISITOR_ID.test(id) || !SIG.test(sig)) return null;
-  const expected = await signVisitor(secret, id);
-  return timingEqual(token, expected) ? id : null;
+  const parsed = parseVisitorToken(token);
+  if (!parsed || tokenExpired(parsed.expiresAt, now)) return null;
+  const expected = await signVisitor(secret, parsed.id, parsed.expiresAt);
+  return timingEqual(token, expected) ? parsed.id : null;
 }
 
 export function hmacSecret(env: { VISITOR_HMAC_SECRET?: string; ENVIRONMENT?: string }): string | null {

@@ -114,6 +114,39 @@ function htmlToText(html: string): { title: string; text: string } {
   return { title, text: text.slice(0, MAX_TEXT) };
 }
 
+const BOILERPLATE = /^(skip to content|documentation index|fetch the complete documentation)\b/i;
+
+function yamlTitle(frontmatter: string): string {
+  const match = frontmatter.match(/^(?:title|Title):\s*(?:["']?)(.+?)(?:["']?)\s*$/m);
+  return (match?.[1] ?? "").replace(/\s+/g, " ").trim();
+}
+
+function headingTitle(markdown: string): string {
+  const match = markdown.match(/^#\s+(.+)$/m);
+  return (match?.[1] ?? "").replace(/[*_`[\]]/g, "").replace(/\s+/g, " ").trim();
+}
+
+/** Title from YAML `title:` or the first `#` heading. Strips frontmatter and docs chrome. */
+export function markdownToText(markdown: string, fallbackTitle: string): { title: string; text: string } {
+  let src = markdown.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n");
+  let title = "";
+  const fm = src.match(/^---\n([\s\S]*?)\n---\n?/);
+  if (fm) {
+    title = yamlTitle(fm[1] ?? "");
+    src = src.slice(fm[0].length);
+  }
+  if (!title) title = headingTitle(src);
+  src = src.replace(/^#\s+.+\n?/, "");
+  const text = src
+    .split("\n")
+    .filter((line) => !BOILERPLATE.test(line.trim()))
+    .join("\n")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, MAX_TEXT);
+  return { title: (title || fallbackTitle).slice(0, 180), text };
+}
+
 async function readCapped(res: Response): Promise<string> {
   if (!res.body) return "";
   const reader = res.body.getReader();
@@ -189,9 +222,7 @@ async function fetchOne(raw: string, hops = 0): Promise<Page | { url: string; er
     return { url: target, error: "Unsupported content type." };
   }
   const body = await readCapped(res);
-  const extracted = /html/.test(type)
-    ? htmlToText(body)
-    : { title: checked.url.hostname, text: body.replace(/\s+/g, " ").trim().slice(0, MAX_TEXT) };
+  const extracted = /html/.test(type) ? htmlToText(body) : markdownToText(body, checked.url.hostname);
   if (extracted.text.length < 40) return { url: target, error: "The page had too little text." };
   return { url: target, title: extracted.title || checked.url.hostname, text: extracted.text };
 }
