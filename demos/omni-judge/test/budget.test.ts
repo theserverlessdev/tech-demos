@@ -42,7 +42,7 @@ function row(i: number, visitor: string, ipKey: string, now: number) {
     id: i.toString(16).padStart(32, "a"),
     visitorId: visitor,
     mediaId: null,
-    sampleId: "package",
+    sampleId: "receipt-legible",
     pairId: "pair",
     kind: "omni" as const,
     modality: "image" as const,

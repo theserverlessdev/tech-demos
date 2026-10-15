@@ -69,4 +69,17 @@ export type SessionPayload = {
   retentionHours: number;
 };
 
-export type SampleId = "voicemail" | "machine" | "gallery" | "package" | "clip";
+export const SAMPLE_IDS = [
+  "receipt-legible",
+  "receipt-blurry",
+  "phone-cracked",
+  "phone-intact",
+  "parcel-damaged",
+  "parcel-intact",
+  "voice-urgent",
+  "voice-routine",
+  "safety-fall",
+  "safety-walk",
+] as const;
+
+export type SampleId = (typeof SAMPLE_IDS)[number];

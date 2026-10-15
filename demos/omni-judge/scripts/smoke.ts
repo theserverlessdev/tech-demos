@@ -16,7 +16,9 @@ check(healthRes.status === 200 && health.ok === true && health.ai === "stub", "h
 const denied = await fetch(`${base}/api/judge`, {
   method: "POST",
   headers: { "content-type": "application/json" },
-  body: JSON.stringify({ questions: [{ instructions: "Is this a photo of a damaged package?", options: ["Damaged", "Intact", "Not a package"] }] }),
+  body: JSON.stringify({
+    questions: [{ instructions: "Can this expense receipt be read well enough to file?", options: ["Readable — merchant, date, and total are clear", "Too blurry to read", "Not a receipt"] }],
+  }),
 });
 const deniedBody = (await denied.json()) as { error?: { code?: string } };
 check(denied.status === 400 && deniedBody.error?.code === "turnstile_required", "judge without Turnstile is rejected", deniedBody);
@@ -26,9 +28,9 @@ const judged = await fetch(`${base}/api/judge`, {
   headers: { "content-type": "application/json", cookie: "__Host-oj_vid=" + "ab".repeat(16) },
   body: JSON.stringify({
     turnstileToken: "XXXX.DUMMY.TOKEN.XXXX",
-    sampleId: "package",
+    sampleId: "receipt-legible",
     compare: true,
-    questions: [{ instructions: "Is this a photo of a damaged package?", options: ["Damaged", "Intact", "Not a package"] }],
+    questions: [{ instructions: "Can this expense receipt be read well enough to file?", options: ["Readable — merchant, date, and total are clear", "Too blurry to read", "Not a receipt"] }],
   }),
 });
 const judgedBody = (await judged.json()) as {
@@ -45,4 +47,14 @@ const list = (await media.json()) as { judgments?: unknown[] };
 check(media.status === 200 && (list.judgments?.length ?? 0) >= 1, "history lists the judgment", list);
 
 if (process.exitCode) process.exit(process.exitCode);
+
+const score = Bun.spawnSync({
+  cmd: ["bun", "run", "scripts/score-presets.ts"],
+  cwd: new URL("..", import.meta.url).pathname,
+  stdout: "inherit",
+  stderr: "inherit",
+  env: process.env,
+});
+if (score.exitCode !== 0) process.exit(score.exitCode);
+
 console.log("smoke passed");

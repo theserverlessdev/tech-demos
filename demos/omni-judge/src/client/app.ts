@@ -1,4 +1,4 @@
-import { PRESETS, SAMPLES, validateQuestions } from "../shared/questions";
+import { PRESETS, PRESET_GROUPS, SAMPLES, presetForSample, validateQuestions } from "../shared/questions";
 import type { AnswerBar, JudgmentResult, JudgmentView, SampleId, SessionPayload } from "../shared/types";
 
 type Draft = { instructions: string; options: string[] };
@@ -17,6 +17,7 @@ const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as 
 
 const questionsEl = $("questions");
 const presetsEl = $("presets");
+const samplesEl = $("samples");
 const previewEl = $("preview");
 const mediaNote = $("media-note");
 const permEl = $("perm");
@@ -28,6 +29,9 @@ const overlay = $("overlay");
 const countEl = $("count");
 const countHint = $("count-hint");
 const testNote = $("test-note");
+const presetHint = $("preset-hint");
+const expectedEl = $("expected");
+let activePresetId: string | null = PRESETS[0]?.id ?? null;
 
 let draft: Draft[] = fromPreset(PRESETS[0]!);
 let picked: Picked | null = null;
@@ -106,16 +110,16 @@ function selectSample(id: SampleId): void {
   picked = { source: "sample", sampleId: id };
   enableJudge();
   const sample = SAMPLES[id];
-  const kind = id === "clip" ? "video" : id === "gallery" || id === "package" ? "image" : "audio";
-  showPreview(api(`samples/${sample.file}`), kind);
+  showPreview(api(`samples/${sample.file}`), sample.kind);
   setText(mediaNote, `${sample.label}. ${sample.note}`);
   permEl.hidden = true;
   markSamples(id);
-  const preset = PRESETS.find((item) => item.sample === id);
+  const preset = presetForSample(id);
   if (preset) {
     draft = fromPreset(preset);
     renderQuestions();
     markPresets(preset.id);
+    showPresetCopy(preset);
   }
 }
 
@@ -200,9 +204,21 @@ function markSamples(id: SampleId | null): void {
 }
 
 function markPresets(id: string | null): void {
-  for (const button of presetsEl.querySelectorAll<HTMLButtonElement>("[data-preset]")) {
+  activePresetId = id;
+  for (const button of document.querySelectorAll<HTMLButtonElement>("[data-preset]")) {
     button.classList.toggle("is-on", button.dataset.preset === id);
   }
+}
+
+function showPresetCopy(preset: (typeof PRESETS)[number] | null): void {
+  if (!preset) {
+    setText(presetHint, "");
+    expectedEl.hidden = true;
+    return;
+  }
+  setText(presetHint, `${preset.proves} ${preset.tryHint}`);
+  expectedEl.hidden = false;
+  setText(expectedEl, `Expected: ${preset.expected}`);
 }
 
 function readDraftFromDom(): Draft[] {
@@ -289,23 +305,50 @@ function renderQuestions(): void {
   });
 }
 
-function renderPresets(): void {
-  presetsEl.replaceChildren();
-  for (const preset of PRESETS) {
-    const button = document.createElement("button");
-    button.className = "chip";
-    button.type = "button";
-    button.dataset.preset = preset.id;
-    setText(button, preset.title);
-    button.addEventListener("click", () => {
-      draft = fromPreset(preset);
-      renderQuestions();
-      markPresets(preset.id);
-      if (preset.sample) selectSample(preset.sample);
-    });
-    presetsEl.append(button);
+function renderChipGroups(host: HTMLElement, kind: "sample" | "preset"): void {
+  host.replaceChildren();
+  for (const group of PRESET_GROUPS) {
+    const block = document.createElement("div");
+    block.className = "preset-group";
+    const name = document.createElement("p");
+    name.className = "preset-group__name";
+    setText(name, group);
+    const row = document.createElement("div");
+    row.className = "samples";
+    row.setAttribute("role", "group");
+    row.setAttribute("aria-label", group);
+    for (const preset of PRESETS.filter((item) => item.group === group)) {
+      const button = document.createElement("button");
+      button.className = "chip";
+      button.type = "button";
+      if (kind === "preset") {
+        button.dataset.preset = preset.id;
+        setText(button, preset.title);
+        button.addEventListener("click", () => {
+          draft = fromPreset(preset);
+          renderQuestions();
+          markPresets(preset.id);
+          showPresetCopy(preset);
+          selectSample(preset.sample);
+        });
+      } else {
+        button.dataset.sample = preset.sample;
+        setText(button, SAMPLES[preset.sample].label);
+        button.addEventListener("click", () => selectSample(preset.sample));
+      }
+      row.append(button);
+    }
+    block.append(name, row);
+    host.append(block);
   }
-  markPresets(PRESETS[0]!.id);
+}
+
+function renderPresets(): void {
+  renderChipGroups(presetsEl, "preset");
+  renderChipGroups(samplesEl, "sample");
+  const first = PRESETS[0]!;
+  markPresets(first.id);
+  showPresetCopy(first);
 }
 
 function bars(list: AnswerBar[], topId: string): HTMLUListElement {
@@ -397,12 +440,25 @@ function metaLine(result: JudgmentResult): HTMLElement {
   return p;
 }
 
+function expectedNote(view: JudgmentView): HTMLElement | null {
+  const preset = activePresetId ? PRESETS.find((item) => item.id === activePresetId) : view.sampleId ? presetForSample(view.sampleId as SampleId) : undefined;
+  const top = view.result?.answers[0]?.topLabel;
+  if (!preset || !top) return null;
+  const note = document.createElement("p");
+  note.className = top === preset.expected ? "match match--ok" : "match match--miss";
+  setText(note, top === preset.expected ? `Landed on the expected answer: ${preset.expected}` : `Expected ${preset.expected}. Top answer was ${top}.`);
+  return note;
+}
+
 function renderOutcome(judgment: JudgmentView, comparison: unknown): void {
   resultsEl.hidden = false;
   resultsEl.replaceChildren();
   const pair = document.createElement("div");
   pair.className = "pair";
-  pair.append(renderOne(judgment));
+  const card = renderOne(judgment);
+  const match = expectedNote(judgment);
+  if (match) card.prepend(match);
+  pair.append(card);
   if (comparison && typeof comparison === "object") {
     const row = comparison as { available?: boolean; reason?: string; error?: { message?: string }; id?: string };
     if (row.available === false && row.reason) {
@@ -920,7 +976,7 @@ async function judge(): Promise<void> {
 function bind(): void {
   renderPresets();
   renderQuestions();
-  selectSample("package");
+  selectSample("receipt-legible");
   $<HTMLButtonElement>("snap").addEventListener("click", () => void startCapture("photo"));
   $<HTMLButtonElement>("voice").addEventListener("click", () => void startCapture("audio"));
   $<HTMLButtonElement>("film").addEventListener("click", () => void startCapture("video"));
@@ -948,23 +1004,19 @@ function bind(): void {
     const file = $<HTMLInputElement>("snap-cam").files?.[0];
     if (file) void selectFile(file);
   });
-  for (const button of document.querySelectorAll<HTMLButtonElement>("[data-sample]")) {
-    button.addEventListener("click", () => {
-      const id = button.dataset.sample ?? "";
-      if (Object.hasOwn(SAMPLES, id)) selectSample(id as SampleId);
-    });
-  }
   $<HTMLButtonElement>("add-question").addEventListener("click", () => {
     draft = readDraftFromDom();
     if (draft.length >= 5) return;
     draft.push({ instructions: "", options: ["", ""] });
     renderQuestions();
     markPresets(null);
+    showPresetCopy(null);
   });
   $<HTMLButtonElement>("own").addEventListener("click", () => {
     draft = [{ instructions: "", options: ["", ""] }];
     renderQuestions();
     markPresets(null);
+    showPresetCopy(null);
   });
   $<HTMLButtonElement>("judge").addEventListener("click", () => void judge());
   $<HTMLButtonElement>("theme").addEventListener("click", () => {

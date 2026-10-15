@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.0
+
+- Presets are paired intake tasks: readable vs blurry receipt, cracked vs intact phone screen, damaged vs intact parcel, urgent vs routine support voice, falling vs walking.
+- Each preset has a question, labelled options, and an expected answer. The page says what it proves and what to try.
+- Bundled media is CC0, public domain, or generated here. Credits live in `LICENSES/CREDITS`.
+- `bun run score` records Clef-omni probabilities when Workers AI is available.
+
 ## 0.1.7
 
 - A `sidx` inside any box outside `mdat` counts toward the presentation span, including a top-level `stbl`, `minf`, `mdia`, or `sinf`. The box walk that looks for it shares the 50,000 box cap.

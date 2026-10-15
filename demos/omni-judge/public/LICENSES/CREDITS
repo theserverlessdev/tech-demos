@@ -1,0 +1,49 @@
+Omni Judge sample credits
+=========================
+
+Only CC0, public-domain, or files generated for this demo are bundled.
+
+Generated here (no third-party media)
+-------------------------------------
+receipt-legible.jpg
+  Self-made cafe receipt used for the expense-intake preset.
+
+receipt-blurry.jpg
+  The same receipt, motion-blurred so merchant, date, and total cannot be read.
+
+parcel-damaged.jpg
+  Self-made delivery still: crushed corner, torn flap, label marked through.
+
+parcel-intact.jpg
+  Self-made delivery still: closed, taped cardboard box with a shipping label.
+
+voice-urgent.wav
+  Self-made spoken support note (espeak-ng). Angry billing complaint.
+
+voice-routine.wav
+  Self-made spoken support note (espeak-ng). Calm address change, no rush.
+
+safety-fall.mp4
+  Self-made four-second workplace clip of a figure falling.
+
+safety-walk.mp4
+  Self-made four-second workplace clip of a figure walking.
+
+CC0 photographs
+---------------
+phone-cracked.jpg
+  Derived from "Shattered phone screen" by Grandmaster Huon.
+  Wikimedia Commons, CC0 1.0.
+  https://commons.wikimedia.org/wiki/File:Shattered_phone_screen.jpg
+  Cropped and resized for the demo. No attribution required; credited anyway.
+
+phone-intact.jpg
+  Derived from "Smartphone display screen" by Skitterphoto, via Pixabay / Wikimedia Commons, CC0 1.0.
+  https://commons.wikimedia.org/wiki/File:Smartphone_display_screen.jpg
+  Resized for the demo. No attribution required; credited anyway.
+
+Licenses
+--------
+CC0 1.0 Universal: https://creativecommons.org/publicdomain/zero/1.0/
+espeak-ng is GPL-3.0; the spoken audio here is a new recording, not a copy of
+espeak-ng sources.

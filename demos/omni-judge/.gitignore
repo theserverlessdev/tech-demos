@@ -3,3 +3,4 @@ public/assets/app.js.map
 worker-configuration.d.ts
 .dev.vars
 .wrangler/
+test/preset-scores.json
