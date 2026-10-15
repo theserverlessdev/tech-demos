@@ -17,6 +17,7 @@ export const GATE_TTL_SECONDS = 600;
 export const GATE_SIMILAR_USES = 30;
 export const GATE_CREATE_USES = 1;
 export const SEED_VOTE_TTL_MS = VISITOR_TTL_MS;
+export const MAX_PENDING_DELETE_ATTEMPTS = 8;
 
 export const EMBED_MODEL_ID = "@cf/baai/bge-small-en-v1.5";
 

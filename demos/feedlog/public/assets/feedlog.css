@@ -105,7 +105,7 @@ button { cursor: pointer; background: none; border: none; }
   backdrop-filter: blur(10px);
 }
 .compose-toggle { display: none; }
-.brand { display: inline-flex; align-items: center; gap: 8px; color: var(--accent-text); font: 600 13px/1 var(--font-body); }
+.brand { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; color: var(--accent-text); font: 600 13px/1 var(--font-body); }
 .brand span { color: var(--text); }
 .brand__mark { display: block; color: var(--accent-text); }
 .topbar__title { display: flex; align-items: baseline; gap: 14px; min-width: 0; }
@@ -271,15 +271,15 @@ button { cursor: pointer; background: none; border: none; }
   .topbar__actions { justify-content: flex-end; }
   .board { display: flex; flex-direction: column; }
   .roadmap { grid-template-columns: 1fr; }
-  .list-col { order: -1; }
   .compose-toggle {
     display: inline-flex;
-    order: 1;
+    order: -2;
     min-height: 44px;
     width: 100%;
-    margin-top: 8px;
+    margin: 0 0 8px;
   }
-  .compose-col { display: none; order: 2; position: static; }
+  .compose-col { display: none; order: -1; position: static; }
+  .list-col { order: 0; }
   .compose-open:checked ~ .compose-col { display: grid; }
   .column { min-height: 0; }
   .page { width: min(1120px, calc(100% - 20px)); }

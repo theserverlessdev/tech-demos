@@ -1,7 +1,7 @@
 import type { ChangelogEntry, Post, PostStatus } from "../shared/types";
 import { isStatus } from "../shared/types";
 import { HttpError } from "./http";
-import { GATE_CREATE_USES, GATE_SIMILAR_USES, GATE_TTL_SECONDS, MAX_POSTS, SEED_VOTE_TTL_MS } from "./limits";
+import { GATE_CREATE_USES, GATE_SIMILAR_USES, GATE_TTL_SECONDS, MAX_PENDING_DELETE_ATTEMPTS, MAX_POSTS, SEED_VOTE_TTL_MS } from "./limits";
 
 type PostRow = {
   id: string;
@@ -147,7 +147,6 @@ export async function insertPost(env: Env, post: NewPost): Promise<void> {
   )
     .bind(post.id, post.title, post.body, post.displayName, post.visitorId, post.imageKey, post.imageType, post.now, post.expiresAt)
     .run();
-  await evictOverflow(env, post.now);
 }
 
 async function rememberFailedDelete(env: Env, kind: "r2" | "vector", key: string): Promise<void> {
@@ -186,20 +185,57 @@ export async function deletePost(env: Env, id: string): Promise<boolean> {
   return true;
 }
 
-/** After insert, drop the oldest visitor posts until the board is back at the cap. */
+/**
+ * After insert, drop the oldest visitor posts until the board is back at the cap.
+ * Count and delete live in one statement so two concurrent inserts cannot each
+ * subtract the same `extra` after the other already did.
+ */
 export async function evictOverflow(env: Env, now: number): Promise<void> {
-  const n = await countVisiblePosts(env, now);
-  if (n <= MAX_POSTS) return;
-  const extra = n - MAX_POSTS;
-  const rows = await env.DB.prepare(`SELECT id, image_key FROM posts WHERE seeded = 0 AND ${VISIBLE} ORDER BY created_at ASC LIMIT ?`)
-    .bind(now, extra)
+  const deleted = await env.DB.prepare(
+    `DELETE FROM posts WHERE id IN (
+       SELECT id FROM (
+         SELECT id FROM posts
+         WHERE seeded = 0 AND ${VISIBLE}
+         ORDER BY created_at ASC
+         LIMIT (
+           SELECT CASE WHEN cnt > ? THEN cnt - ? ELSE 0 END FROM (
+             SELECT COUNT(*) AS cnt FROM posts WHERE ${VISIBLE}
+           )
+         )
+       )
+     )
+     RETURNING id, image_key`,
+  )
+    .bind(now, MAX_POSTS, MAX_POSTS, now)
     .all<{ id: string; image_key: string | null }>();
-  if (rows.results.length === 0) throw new HttpError(409, "board_full", "The board is full. Try again after older posts expire.");
-  for (const row of rows.results) await deleteOne(env, row.id, row.image_key);
+  for (const row of deleted.results) {
+    await env.DB.prepare("DELETE FROM votes WHERE post_id = ?").bind(row.id).run();
+    if (row.image_key) {
+      try {
+        await env.IMAGES.delete(row.image_key);
+      } catch (err) {
+        console.error(JSON.stringify({ event: "image_delete_failed", postId: row.id, error: String(err) }));
+        await rememberFailedDelete(env, "r2", row.image_key);
+      }
+    }
+    try {
+      await env.VECTORS.deleteByIds([row.id]);
+    } catch (err) {
+      console.error(JSON.stringify({ event: "vector_delete_failed", postId: row.id, error: String(err) }));
+      await rememberFailedDelete(env, "vector", row.id);
+    }
+  }
+  if (deleted.results.length === 0 && (await countVisiblePosts(env, now)) > MAX_POSTS) {
+    throw new HttpError(409, "board_full", "The board is full. Try again after older posts expire.");
+  }
 }
 
 export async function retryPendingDeletes(env: Env): Promise<number> {
-  const rows = await env.DB.prepare("SELECT kind, key FROM pending_deletes LIMIT 40").all<{ kind: string; key: string }>();
+  const rows = await env.DB.prepare(
+    "SELECT kind, key FROM pending_deletes WHERE attempts < ? ORDER BY created_at ASC LIMIT 40",
+  )
+    .bind(MAX_PENDING_DELETE_ATTEMPTS)
+    .all<{ kind: string; key: string }>();
   let cleared = 0;
   for (const row of rows.results) {
     try {
@@ -210,6 +246,9 @@ export async function retryPendingDeletes(env: Env): Promise<number> {
       cleared++;
     } catch (err) {
       console.error(JSON.stringify({ event: "pending_delete_retry_failed", kind: row.kind, key: row.key, error: String(err) }));
+      await env.DB.prepare("UPDATE pending_deletes SET attempts = attempts + 1 WHERE kind = ? AND key = ?")
+        .bind(row.kind, row.key)
+        .run();
     }
   }
   return cleared;
@@ -217,21 +256,15 @@ export async function retryPendingDeletes(env: Env): Promise<number> {
 
 export async function sweepSeedVotes(env: Env, now: number): Promise<number> {
   const cutoff = now - SEED_VOTE_TTL_MS;
-  const stale = await env.DB.prepare(
-    "SELECT post_id, COUNT(*) AS n FROM votes WHERE created_at < ? AND post_id IN (SELECT id FROM posts WHERE seeded = 1) GROUP BY post_id",
-  )
-    .bind(cutoff)
-    .all<{ post_id: string; n: number }>();
-  let deleted = 0;
-  for (const row of stale.results) {
-    const n = Number(row.n);
-    await env.DB.batch([
-      env.DB.prepare("DELETE FROM votes WHERE post_id = ? AND created_at < ?").bind(row.post_id, cutoff),
-      env.DB.prepare("UPDATE posts SET votes = MAX(votes - ?, 0) WHERE id = ? AND seeded = 1").bind(n, row.post_id),
-    ]);
-    deleted += n;
-  }
-  return deleted;
+  // COUNT lives in the UPDATE so an unvote between a pre-count and the DELETE cannot over-decrement.
+  const result = await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE posts SET votes = MAX(votes - (SELECT COUNT(*) FROM votes WHERE votes.post_id = posts.id AND created_at < ?), 0)
+       WHERE seeded = 1`,
+    ).bind(cutoff),
+    env.DB.prepare("DELETE FROM votes WHERE created_at < ? AND post_id IN (SELECT id FROM posts WHERE seeded = 1)").bind(cutoff),
+  ]);
+  return result[1]?.meta.changes ?? 0;
 }
 
 export async function sweepUsedGates(env: Env, now: number): Promise<number> {
@@ -345,4 +378,21 @@ export async function consumeGateUse(env: Env, nonce: string, visitorId: string,
     .bind(nonce, visitorId, now)
     .run();
   return (result.meta.changes ?? 0) > 0;
+}
+
+export async function peekCreateCredit(env: Env, nonce: string, visitorId: string, now: number): Promise<boolean> {
+  const row = await env.DB.prepare(
+    "SELECT 1 AS ok FROM used_gates WHERE nonce = ? AND visitor_id = ? AND remaining_create > 0 AND exp > ?",
+  )
+    .bind(nonce, visitorId, now)
+    .first();
+  return Boolean(row);
+}
+
+export async function refundCreateUse(env: Env, nonce: string, visitorId: string, now: number): Promise<void> {
+  await env.DB.prepare(
+    "UPDATE used_gates SET remaining_create = remaining_create + 1 WHERE nonce = ? AND visitor_id = ? AND exp > ?",
+  )
+    .bind(nonce, visitorId, now)
+    .run();
 }

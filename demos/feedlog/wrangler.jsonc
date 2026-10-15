@@ -33,12 +33,14 @@
       "index_name": "tech-demos-feedlog"
     }
   ],
-  // Feedlog keeps 7341–7344. Other demos are moving off this range.
+  // Writes stay on 7341–7344. Image GETs and board reads use 7470–7471 (free across the repo).
   "ratelimits": [
     { "name": "POST_LIMIT", "namespace_id": "7341", "simple": { "limit": 20, "period": 60 } },
     { "name": "VOTE_LIMIT", "namespace_id": "7342", "simple": { "limit": 40, "period": 60 } },
     { "name": "AI_LIMIT", "namespace_id": "7343", "simple": { "limit": 20, "period": 60 } },
-    { "name": "ADMIN_LIMIT", "namespace_id": "7344", "simple": { "limit": 30, "period": 60 } }
+    { "name": "ADMIN_LIMIT", "namespace_id": "7344", "simple": { "limit": 30, "period": 60 } },
+    { "name": "IMAGE_LIMIT", "namespace_id": "7470", "simple": { "limit": 120, "period": 60 } },
+    { "name": "READ_LIMIT", "namespace_id": "7471", "simple": { "limit": 120, "period": 60 } }
   ],
   "triggers": { "crons": ["17 * * * *"] },
   "vars": {
@@ -47,7 +49,8 @@
   },
   // Secrets, never commit: TURNSTILE_SECRET, ADMIN_TOKEN, GATE_SECRET (set on the Worker; the owner holds them).
   // Local `bun run dev` writes .dev.vars with Cloudflare's always-pass test pair, which overrides these
-  // vars on your machine. wrangler dev often binds 127.0.0.1, so loopback fallbacks apply too.
+  // vars on your machine. wrangler dev advertises the zone-route host, so URL loopback is not enough;
+  // local writes also match the test secret pair (see turnstile.ts).
   "routes": [
     { "pattern": "tech-demos.theserverless.dev/demos/feedlog*", "zone_name": "theserverless.dev" },
     { "pattern": "feedlog.tech-demos.theserverless.dev/*", "zone_name": "theserverless.dev" }

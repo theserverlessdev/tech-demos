@@ -24,6 +24,7 @@ const state = {
   admin: "",
   gated: false,
   turnstileId: null as string | null,
+  turnstileMounting: false,
   similarTimer: 0,
   similarSeq: 0,
   detailId: "",
@@ -163,7 +164,7 @@ function adminActions(post: Post): HTMLElement | null {
   return wrap;
 }
 
-function attachImage(body: HTMLElement, post: Post, heading: string): void {
+function attachImage(body: HTMLElement, post: Post, heading: string, previewPending = false): void {
   if (post.hasImage) {
     const img = document.createElement("img");
     img.className = "post__image";
@@ -179,7 +180,29 @@ function attachImage(body: HTMLElement, post: Post, heading: string): void {
     pending.className = "hint";
     pending.textContent = state.admin ? "Image waiting for review." : `${heading} is waiting for review.`;
     body.append(pending);
+    if (previewPending && state.admin) {
+      const img = document.createElement("img");
+      img.className = "post__image";
+      img.alt = "Pending image preview";
+      body.append(img);
+      void loadAdminPreview(img, post.id);
+    }
   }
+}
+
+async function loadAdminPreview(img: HTMLImageElement, id: string): Promise<void> {
+  const headers = new Headers();
+  if (state.admin) headers.set("authorization", `Bearer ${state.admin}`);
+  const res = await fetch(imageUrl(id), { headers, credentials: "same-origin" });
+  if (!res.ok) return;
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  if (!img.isConnected) {
+    URL.revokeObjectURL(url);
+    return;
+  }
+  img.src = url;
+  img.addEventListener("load", () => URL.revokeObjectURL(url), { once: true });
 }
 
 function postCard(post: Post, clamp: boolean): HTMLElement {
@@ -335,7 +358,7 @@ function renderDetail(post: Post | null): void {
   const actions = adminActions(post);
   if (actions) meta.append(actions);
   body.append(title, copy, meta);
-  attachImage(body, post, "This image");
+  attachImage(body, post, "This image", true);
   row.append(body);
   root.append(row);
 }
@@ -494,23 +517,48 @@ async function mountTurnstile(siteKey: string): Promise<void> {
   });
 }
 
+async function ensureTurnstile(): Promise<void> {
+  if (state.turnstileId || state.turnstileMounting) return;
+  const siteKey = state.config?.turnstileSiteKey;
+  if (!state.config?.writesOpen || !siteKey) return;
+  state.turnstileMounting = true;
+  try {
+    await mountTurnstile(siteKey);
+  } finally {
+    state.turnstileMounting = false;
+  }
+}
+
+function rearmTurnstile(): void {
+  const widget = turnstileApi();
+  if (state.turnstileId && widget) widget.reset(state.turnstileId);
+  state.gated = false;
+  ($("submit") as HTMLButtonElement).disabled = true;
+}
+
 async function onSubmit(event: Event): Promise<void> {
   event.preventDefault();
   const button = $("submit") as HTMLButtonElement;
   button.disabled = true;
+  const file = ($("image") as HTMLInputElement).files?.[0];
+  if (file && file.size > 1_500_000) {
+    hint("form-hint", "Images must be 1.5 MB or smaller.", "error");
+    ($("image") as HTMLInputElement).value = "";
+    button.disabled = !state.gated;
+    return;
+  }
   const form = new FormData();
   form.set("title", ($("title") as HTMLInputElement).value);
   form.set("body", ($("body") as HTMLTextAreaElement).value);
   form.set("displayName", ($("display-name") as HTMLInputElement).value);
-  const file = ($("image") as HTMLInputElement).files?.[0];
   if (file) form.set("image", file);
   const widget = turnstileApi();
   const token = state.turnstileId && widget ? widget.getResponse(state.turnstileId) : "";
-  if (token) form.set("turnstileToken", token);
+  if (token && !state.gated) form.set("turnstileToken", token);
   const res = await call<{ post: Post }>("/posts", { method: "POST", form });
-  button.disabled = !state.gated;
   if (!res.data) {
     hint("form-hint", res.error ?? "The post was not saved.", "error");
+    rearmTurnstile();
     return;
   }
   ($("title") as HTMLInputElement).value = "";
@@ -523,9 +571,7 @@ async function onSubmit(event: Event): Promise<void> {
   if (state.sort === "top") state.posts.sort((a, b) => b.votes - a.votes || b.createdAt - a.createdAt);
   renderBoard();
   renderRoadmap();
-  if (state.turnstileId && widget) widget.reset(state.turnstileId);
-  state.gated = false;
-  button.disabled = true;
+  rearmTurnstile();
 }
 
 async function onVote(id: string): Promise<void> {
@@ -628,8 +674,19 @@ function bind(): void {
   });
   window.addEventListener("hashchange", route);
   $("compose").addEventListener("submit", (event) => void onSubmit(event));
+  $("compose").addEventListener("focusin", () => void ensureTurnstile());
+  $("compose-open").addEventListener("change", () => {
+    if (($("compose-open") as HTMLInputElement).checked) void ensureTurnstile();
+  });
   $("title").addEventListener("input", scheduleSimilar);
   $("body").addEventListener("input", scheduleSimilar);
+  $("image").addEventListener("change", () => {
+    const picked = ($("image") as HTMLInputElement).files?.[0];
+    if (picked && picked.size > 1_500_000) {
+      hint("form-hint", "Images must be 1.5 MB or smaller.", "error");
+      ($("image") as HTMLInputElement).value = "";
+    }
+  });
   document.addEventListener("click", (event) => {
     const target = event.target as HTMLElement;
     const vote = target.closest<HTMLButtonElement>("[data-vote]");
@@ -705,8 +762,6 @@ async function main(): Promise<void> {
   state.config = config.data;
   if (!config.data?.writesOpen || !config.data.turnstileSiteKey) {
     hint("form-hint", "Posting is off until Turnstile is configured.", "error");
-  } else {
-    void mountTurnstile(config.data.turnstileSiteKey);
   }
   await Promise.all([loadPosts(), loadChangelog()]);
   if (!location.hash) location.hash = "#/board";

@@ -50,6 +50,8 @@ Vectorize has no local simulation, and Workers AI needs an account. When either 
 
 ## 2026-10-14
 
+Audit follow-ups. A rejected create refunds the create credit; the client resets Turnstile instead of resending a spent token. Admins see a pending-image preview before approving. “New post” sits at the top on phones. Turnstile and the D1 gate row mint on the first compose action. Overflow eviction and the seed-vote sweep are single-statement. Image GETs use `IMAGE_LIMIT` `7470`; list, detail, and health use `READ_LIMIT` `7471`. Root `bun test` includes this demo.
+
 Audit fixes. Images stay hidden until an admin approves them. `DELETE /api/posts/:id` takes a post down (row, votes, R2, vector). Votes are atomic. The Turnstile gate is bound to the visitor cookie with 30 similar uses and one create credit. Bodies need Content-Length and a streamed size cap. Seed vectors are flagged only after every upsert. Votes are indexed and old seed votes expire. Cross-site and cookieless votes are rejected. The 80-post cap evicts after insert. Admin status and delete work on the detail view. On a 390px screen the board is first and the header is static. Smoke against a remote Worker is read-only.
 
 ## 2026-10-09

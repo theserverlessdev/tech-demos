@@ -36,7 +36,7 @@ Framework subagents were not used. The brief already rules out Nuxt and names th
   - Similar posts while typing: Workers AI embed + Vectorize query, debounced, rate-limited, Turnstile-gated. Index on create. Delete vectors when the post expires.
   - If those bindings throw (no local Vectorize simulation, and this environment has no Cloudflare login), the same endpoint falls back to word overlap and says so.
   - `ADMIN_TOKEN` (constant-time compare) for status changes, changelog writes, and cleanup.
-  - Rate limits on post, vote, similar, and admin.
+  - Rate limits on post, vote, similar, admin, image GETs, and board reads.
   - Turnstile on gate, create, and similar. Loopback uses Cloudflare’s always-pass test keys when the secret is unset. Any other host fails closed.
   - Hub registry redirect. Graphite & Ember UI. Contact CTA to theserverless.dev.
 - Out: everything in the research “Cut” list.
@@ -57,7 +57,7 @@ Framework subagents were not used. The brief already rules out Nuxt and names th
 - **D1** for the board. Relational votes fit SQL, and the demo stays inside Paid.
 - **R2** for image bytes. D1 stores the key and the sniffed content type.
 - **Workers AI + Vectorize** for duplicate spotting. bge-small is 384 dimensions, which keeps the index small. The index metric is cosine and cannot be changed later.
-- **Rate limiting bindings** (`7341`–`7344`, after the ids already used in this repo: 7301–7331). kmem had no note on namespace ids.
+- **Rate limiting bindings** (`7341`–`7344` for writes; `7470` images and `7471` reads). kmem had no note on namespace ids.
 - **Turnstile** because create and embed are the costly public writes.
 - **Cron** for TTL. No Durable Object: expiry is a sweep, not per-post coordination.
 - **No Hono, no Nuxt, no Zod, no OpenAI, no Postgres.** Guards are hand-written, as in resolve-hq.
@@ -104,11 +104,11 @@ The client uses hash routes (`#/board`, `#/roadmap`, `#/changelog`, `#/p/…`) s
 
 ## Audit fixes (2026-10-14)
 
-Opus audit at `/cursor/stores/bot/audits/feedlog-audit.md` (`279668d`). This slice stays one public board (seeds + visitor text, votes, similar, roadmap). It does **not** switch to per-visitor sandbox boards — that would hide the public loop the demo exists to show.
+Opus audit of this demo (`279668d`, 2026-10-14). This slice stays one public board (seeds + visitor text, votes, similar, roadmap). It does **not** switch to per-visitor sandbox boards — that would hide the public loop the demo exists to show.
 
 **Safety choice (B1).** Hidden-until-approved images + admin takedown. Visitor text still lands on the board (capped at 3 live posts per cookie, 80 total). Images stay off the public board and return 404 until an admin approves them. `DELETE /api/posts/:id` removes the row, votes, R2 object, and vector. Image cache is `private, max-age=300`.
 
-Other fixes in this slice: atomic votes, session-bound `fl_gate` with separate similar/create remaining counts, Content-Length + streamed body cap before Turnstile, seed-vector flag only after every upsert, votes index + 14-day seed-vote sweep, same-site + existing-cookie votes, insert-then-evict at the 80-post cap, live admin controls on the detail view, board-first 390px layout, accurate README/hub copy, and a read-only remote smoke path.
+Other fixes in this slice: atomic votes, session-bound `fl_gate` with separate similar/create remaining counts (validate then spend, refund on insert failure), Content-Length + streamed body cap before Turnstile, seed-vector flag only after every upsert, votes index + 14-day seed-vote sweep with a COUNT subquery, same-site + existing-cookie votes, insert then a single-statement overflow delete at the 80-post cap, live admin controls and pending-image preview on the detail view, board-first 390px layout with “New post” at the top, lazy Turnstile on first compose action, `IMAGE_LIMIT`/`READ_LIMIT`, accurate README/hub copy, and a read-only remote smoke path. Root `bun test` includes `demos/feedlog`.
 
 **Owner (not this environment).** Set Worker secret `GATE_SECRET`. Confirm Vectorize `getByIds` for the five seed ids; if missing, delete the `vectors_seeded` meta row. Redeploy. No Cloudflare API calls from this environment.
 

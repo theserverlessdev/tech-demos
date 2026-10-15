@@ -42,7 +42,7 @@ const personalAgentFallbackSource = standalone("personal-agent");
 // pattern as resolve-hq: the zone route wins, and this source only redirects if that route is missing.
 const partyserverFallbackSource = standalone("partyserver");
 
-// feedlog is a standalone Worker (ASSETS, AI, DB, IMAGES, VECTORS, POST_LIMIT, VOTE_LIMIT, AI_LIMIT, ADMIN_LIMIT, cron, Turnstile).
+// feedlog is a standalone Worker (ASSETS, AI, DB, IMAGES, VECTORS, POST_LIMIT, VOTE_LIMIT, AI_LIMIT, ADMIN_LIMIT, IMAGE_LIMIT, READ_LIMIT, cron, Turnstile).
 // Same pattern as resolve-hq: the zone route wins, and this source only redirects if that route is missing.
 const feedlogFallbackSource = standalone("feedlog");
 

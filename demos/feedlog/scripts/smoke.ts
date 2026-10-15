@@ -154,6 +154,12 @@ check("similar finds the seeded dark-mode post", similar.status === 200 && hit =
 const gate = await call<{ ok: boolean }>("/api/gate", { method: "POST", body: { turnstileToken: dummy } });
 check("gate accepts a loopback Turnstile token", gate.status === 200, gate.status);
 
+const tooShort = await call("/api/posts", {
+  method: "POST",
+  body: { title: "ab", body: "This must not spend the create credit." },
+});
+check("short title is rejected without spending the gate", tooShort.status === 400, tooShort.status);
+
 const created = await call<{ post: Post }>("/api/posts", {
   method: "POST",
   body: {
@@ -162,7 +168,7 @@ const created = await call<{ post: Post }>("/api/posts", {
     displayName: "Smoke",
   },
 });
-check("create consumes the single-use gate credit", created.status === 201 && created.data?.post.title === "Smoke post from the script", created.data);
+check("create still works after a rejected short title on the same gate", created.status === 201 && created.data?.post.title === "Smoke post from the script", created.data);
 
 const replay = await call("/api/posts", {
   method: "POST",
@@ -194,6 +200,8 @@ const createdIds = [created.data?.post.id, second.data?.post.id, imaged.data?.po
 if (imaged.data?.post.id) {
   const hidden = await fetch(`${base}/api/posts/${imaged.data.post.id}/image`);
   check("unapproved image is not public", hidden.status === 404, hidden.status);
+  const preview = await fetch(`${base}/api/posts/${imaged.data.post.id}/image`, { headers: { authorization: `Bearer ${admin}` } });
+  check("admin can read a pending image before approving", preview.status === 200, preview.status);
   const approved = await call<{ post: Post }>(`/api/posts/${imaged.data.post.id}`, { method: "PATCH", admin: true, body: { imageApproved: true } });
   check("admin can approve an image", approved.status === 200 && approved.data?.post.hasImage === true, approved.status);
   const file = await fetch(`${base}/api/posts/${imaged.data.post.id}/image`);

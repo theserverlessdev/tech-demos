@@ -59,7 +59,7 @@
             <h2>Ask for something</h2>
             <label class="field">
               <span>Title</span>
-              <input id="title" name="title" data-testid="compose-title" maxlength="120" required placeholder="Dark mode on the public roadmap" />
+              <input id="title" name="title" data-testid="compose-title" minlength="4" maxlength="120" required placeholder="Dark mode on the public roadmap" />
             </label>
             <label class="field">
               <span>Details</span>
@@ -70,7 +70,7 @@
               <input id="display-name" name="displayName" maxlength="40" placeholder="Visitor" />
             </label>
             <label class="field">
-              <span>Image <em>JPEG, PNG, GIF, or WebP, up to 1.5 MB. Hidden until approved. JPEG EXIF is stripped.</em></span>
+              <span>Image <em>JPEG, PNG, GIF, or WebP, up to 1.5 MB. Hidden until approved. JPEG EXIF is stripped, including orientation, so phone portraits may render sideways.</em></span>
               <input id="image" name="image" type="file" accept="image/jpeg,image/png,image/gif,image/webp" />
             </label>
             <div id="turnstile" class="turnstile"></div>

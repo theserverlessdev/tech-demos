@@ -8,6 +8,7 @@ import {
   countVisiblePosts,
   countVisitorLivePosts,
   deletePost,
+  evictOverflow,
   getImage,
   getPost,
   insertChangelog,
@@ -15,6 +16,8 @@ import {
   insertPost,
   listChangelog,
   listPosts,
+  peekCreateCredit,
+  refundCreateUse,
   setImageApproved,
   setStatus,
   toggleVote,
@@ -105,6 +108,7 @@ async function route(
   if (method === "POST" || method === "PATCH" || method === "DELETE") requireSameSite(request);
 
   if (path === "/api/health" && method === "GET") {
+    await enforceLimit(env.READ_LIMIT, request, "Too many reads from this network. Wait a minute.");
     return json({
       ok: true,
       posts: await countVisiblePosts(env, now),
@@ -125,6 +129,7 @@ async function route(
   }
 
   if (path === "/api/posts" && method === "GET") {
+    await enforceLimit(env.READ_LIMIT, request, "Too many reads from this network. Wait a minute.");
     const url = new URL(request.url);
     const statusRaw = url.searchParams.get("status") ?? "";
     const status = statusRaw && isStatus(statusRaw) ? statusRaw : null;
@@ -198,6 +203,7 @@ async function route(
   const id = requireId(match.id);
 
   if (match.rest === "" && method === "GET") {
+    await enforceLimit(env.READ_LIMIT, request, "Too many reads from this network. Wait a minute.");
     const post = await getPost(env, id, visitorId, now, await peekAdmin(env, request));
     if (!post) throw new HttpError(404, "not_found", "That post is gone.");
     return json({ post });
@@ -243,6 +249,7 @@ async function route(
   }
 
   if (match.rest === "image" && method === "GET") {
+    await enforceLimit(env.IMAGE_LIMIT, request, "Too many image reads from this network. Wait a minute.");
     const image = await getImage(env, id, now, await peekAdmin(env, request));
     if (!image) throw new HttpError(404, "not_found", "That post has no image.");
     const object = await env.IMAGES.get(image.key);
@@ -258,15 +265,13 @@ async function route(
 }
 
 async function createPost(request: Request, env: Env, ctx: ExecutionContext, visitorId: string, now: number): Promise<Post> {
-  const gated = await consumeGate(env, request, visitorId, "create", now);
-
   const type = request.headers.get("content-type") ?? "";
   let title = "";
   let body = "";
   let name = "Visitor";
   let token = "";
   let expiresAt = now + VISITOR_TTL_MS;
-  let image: { bytes: ArrayBuffer; type: string } | null = null;
+  let file: File | null = null;
 
   if (type.includes("multipart/form-data")) {
     const form = await readForm(request, MAX_CREATE_BYTES);
@@ -275,8 +280,8 @@ async function createPost(request: Request, env: Env, ctx: ExecutionContext, vis
     name = displayName(form.get("displayName"));
     token = str(form.get("turnstileToken")).trim();
     expiresAt = expiresOverride(request, env, form.get("expiresInSeconds"), now) ?? expiresAt;
-    const file = form.get("image");
-    if (file instanceof File && file.size > 0) image = await readImage(file);
+    const maybe = form.get("image");
+    if (maybe instanceof File && maybe.size > 0) file = maybe;
   } else {
     const payload = await readJson(request, MAX_CREATE_BYTES);
     title = str(payload.title);
@@ -286,17 +291,37 @@ async function createPost(request: Request, env: Env, ctx: ExecutionContext, vis
     expiresAt = expiresOverride(request, env, payload.expiresInSeconds, now) ?? expiresAt;
   }
 
-  if (!gated) {
-    const allowed = await verifyTurnstile(env, request, token);
-    if (!allowed) throw new HttpError(403, "turnstile_failed", "Complete the check before posting.");
-  }
+  const cleanTitle = cleanLine(title, MIN_TITLE, MAX_TITLE, "Title");
+  const cleanBody = cleanLine(body, MIN_BODY, MAX_BODY, "Body");
 
   if ((await countVisitorLivePosts(env, visitorId, now)) >= MAX_VISITOR_POSTS) {
     throw new HttpError(409, "visitor_cap", "This browser already has three live posts. Delete one or wait for expiry.");
   }
 
-  const cleanTitle = cleanLine(title, MIN_TITLE, MAX_TITLE, "Title");
-  const cleanBody = cleanLine(body, MIN_BODY, MAX_BODY, "Body");
+  const secret = gateSecret(env, request);
+  const gate = secret ? await readGate(secret, readCookie(request, "fl_gate"), visitorId, now) : null;
+  const gateReady = gate ? await peekCreateCredit(env, gate.nonce, visitorId, now) : false;
+  if (!gateReady) {
+    const allowed = await verifyTurnstile(env, request, token);
+    if (!allowed) throw new HttpError(403, "turnstile_failed", "Complete the check before posting.");
+  }
+
+  const image = file ? await readImage(file) : null;
+
+  let spentNonce: string | null = null;
+  if (gateReady && gate) {
+    const spent = await consumeGateUse(env, gate.nonce, visitorId, "create", now);
+    if (spent) spentNonce = gate.nonce;
+    else {
+      const allowed = await verifyTurnstile(env, request, token);
+      if (!allowed) throw new HttpError(403, "turnstile_failed", "Complete the check before posting.");
+    }
+  }
+
+  const refund = async () => {
+    if (!spentNonce) return;
+    await refundCreateUse(env, spentNonce, visitorId, now).catch(() => undefined);
+  };
 
   const id = `post_${randomHex(8)}`;
   const imageKey = image ? `posts/${id}` : null;
@@ -317,6 +342,17 @@ async function createPost(request: Request, env: Env, ctx: ExecutionContext, vis
     });
   } catch (err) {
     if (imageKey) await env.IMAGES.delete(imageKey).catch(() => undefined);
+    await refund();
+    throw err;
+  }
+  try {
+    await evictOverflow(env, now);
+  } catch (err) {
+    // Other evict errors leave the new row in place (N-h). board_full undoes the insert.
+    if (err instanceof HttpError && err.code === "board_full") {
+      await deletePost(env, id).catch(() => undefined);
+      await refund();
+    }
     throw err;
   }
 
