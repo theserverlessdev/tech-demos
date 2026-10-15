@@ -1,10 +1,11 @@
 # Local secrets for wrangler dev. Copy to .dev.vars (gitignored).
 # Dummy Turnstile keys always pass. Production keys reject dummy tokens.
-# These vars override wrangler.jsonc so local `bun run dev` matches the hosted demo.
+# These vars override wrangler.jsonc. HOSTED_MODE=false so local smoke is not
+# bound by the hosted web-create limit. MAIL_DOMAIN stays email.lomvic.com.
 
 AGENT_API_KEY=dev-agent-key-change-me
 TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA
 TURNSTILE_SITE_KEY=1x00000000000000000000AA
 MAIL_DOMAIN=email.lomvic.com
 PUBLIC_ORIGIN=http://127.0.0.1:8797
-HOSTED_MODE=true
+HOSTED_MODE=false

@@ -163,8 +163,10 @@ const CODE_ALONE_ON_LINE = /^[ \t>*]*(\d{4,8}|[A-Z0-9]{3,4}-[A-Z0-9]{3,4})[ \t.*
 export function extractCodes(subject: string, text: string): string[] {
   const found = new Set<string>();
   for (const source of [subject, text]) {
-    for (const m of source.matchAll(CODE_NEAR_KEYWORD)) found.add(m[1]);
-    for (const m of source.matchAll(CODE_ALONE_ON_LINE)) {
+    // Drop URLs so a port like :8797 next to "confirm" is not treated as a code.
+    const plain = source.replace(/https?:\/\/\S+/gi, " ");
+    for (const m of plain.matchAll(CODE_NEAR_KEYWORD)) found.add(m[1]);
+    for (const m of plain.matchAll(CODE_ALONE_ON_LINE)) {
       if (/\d/.test(m[1])) found.add(m[1]);
     }
     if (found.size >= MAX_CODES) break;

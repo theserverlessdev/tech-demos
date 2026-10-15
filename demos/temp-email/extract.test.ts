@@ -34,3 +34,8 @@ test("replaceTags does not scan past a nested <", () => {
 test("stripBlockTags drops an unclosed remainder", () => {
   expect(stripBlockTags("keep<style>secret")).toBe("keep");
 });
+
+test("extractCodes ignores a URL port next to confirm", () => {
+  const text = "Or confirm your address here: http://127.0.0.1:8797/?verified=abc\nYour verification code is 404697";
+  expect(extractCodes("Your Ember Cloud code is 404697", text)).toEqual(["404697"]);
+});
