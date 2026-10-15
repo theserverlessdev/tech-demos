@@ -47,7 +47,7 @@ export const SAMPLES: Record<SampleId, SampleMeta> = {
   "parcel-damaged": {
     file: "parcel-damaged.jpg",
     label: "Damaged parcel",
-    note: "Self-made delivery still. Corner crushed, flap torn, label marked through.",
+    note: "Self-made delivery still. Same lighting as the sealed carton; corner crushed, flap torn, tape split. No caption.",
     kind: "image",
   },
   "parcel-intact": {
@@ -229,6 +229,17 @@ export function presetById(id: string): Preset | undefined {
 
 export function presetForSample(id: SampleId): Preset | undefined {
   return PRESETS.find((preset) => preset.sample === id);
+}
+
+export function questionsMatchPreset(questions: ChoiceQuestion[], preset: Preset): boolean {
+  if (questions.length !== preset.questions.length) return false;
+  return questions.every((question, index) => {
+    const expected = preset.questions[index];
+    if (!expected) return false;
+    if (question.instructions !== expected.instructions) return false;
+    if (question.options.length !== expected.options.length) return false;
+    return question.options.every((option, optionIndex) => option.label === expected.options[optionIndex]);
+  });
 }
 
 export function validateQuestions(input: unknown): { ok: true; questions: ChoiceQuestion[] } | { ok: false; message: string } {

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.2
+
+- `bun run dev` is the labelled stub again. Zone routes on `wrangler.jsonc` 503 local health and bounce `/` to production. `bun run dev:live` uses a route-less config with the AI binding.
+- `.dev.vars.example` no longer sets `ENVIRONMENT=`, which overrode the stub and made a local judge 502.
+- Smoke fails on a 502 unless `--allow-ai-miss` is passed. It does not run `score` or write `preset-scores.json`.
+- `bun run score` is file-only. `bun run score --live` is the only path that calls Clef-omni or overwrites the committed scores.
+- The Expected banner is tied to the judged sample and its question text, not the last selected preset. Uploads and history rows no longer inherit it.
+- Damaged parcel uses the same front-facing scene as the sealed carton. The “CRUSHED” caption is gone.
+- Sample MP4s answer `Range` with 206 so iPhone Safari can play them.
+
 ## 0.2.1
 
 - Intact parcel is a sealed front-facing carton on a plain field. Live Clef-omni had called the isometric still damaged 47% vs intact 44%.

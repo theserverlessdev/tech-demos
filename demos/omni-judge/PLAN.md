@@ -6,7 +6,7 @@ One Workers AI call to `@cf/cloudflare/clef-omni` returns a probability for ever
 
 ## MVP
 
-Ships: phone-first capture, openly licensed or self-made samples, preset checklists with an expected answer, Turnstile, R2 media owned by a visitor cookie, D1 judgments, hourly visitor and network caps plus a rolling daily cap, a 24-hour cron delete, Clef-omni by default (labelled stub only when `ENVIRONMENT=local`), and a smoke script that scores every preset against real Workers AI when credentials are present.
+Ships: phone-first capture, openly licensed or self-made samples, preset checklists with an expected answer, Turnstile, R2 media owned by a visitor cookie, D1 judgments, hourly visitor and network caps plus a rolling daily cap, a 24-hour cron delete, Clef-omni by default (labelled stub only when `ENVIRONMENT=local`), and a score script that calls real Workers AI only with `--live`.
 
 Out of scope: accounts, Durable Objects, a classic-chain pass over video frames, identity or biometric liveness checks, a live deploy, and any new Cloudflare API resource.
 
@@ -27,7 +27,7 @@ Each preset has one question, labelled options, and an expected top answer. Medi
 1. Source or generate the ten sample files and credit them.
 2. Replace the preset and sample tables; group them in the Graphite & Ember UI.
 3. Update hub card copy: what it proves, what to try, what you could build.
-4. Add a smoke/score script that records Clef-omni probabilities when Workers AI is available, and keep the local stub path.
+4. Add a score script that records Clef-omni probabilities only with `--live`, and keep the local stub path.
 5. Tune question wording until each preset lands on the expected answer with a clear margin.
 6. Verify the page at 390px and capture a screenshot of each preset result.
 
@@ -35,7 +35,7 @@ Each preset has one question, labelled options, and an expected top answer. Medi
 
 - Workers + static assets, D1, R2, Workers AI, cron. No Durable Object.
 - Bun, TypeScript, the Graphite & Ember page the other demos use.
-- `bun run dev` uses `wrangler.jsonc` and calls Clef-omni. `bun run dev:stub` uses `wrangler.local.jsonc` (no AI binding, labelled stub).
+- `bun run dev` and `bun run dev:stub` use `wrangler.local.jsonc` (no routes, labelled stub). `bun run dev:live` uses `wrangler.live.jsonc` (AI binding, no routes).
 
 ## Deferred
 

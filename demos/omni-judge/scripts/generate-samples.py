@@ -134,10 +134,19 @@ def shipping_label(damaged: bool) -> Image.Image:
     return label
 
 
-def make_parcel_intact() -> Image.Image:
-    """Front-facing sealed carton on a plain field. No isometric side that can read as a tear."""
+def paste_carton(face: Image.Image) -> Image.Image:
+    """Same light field and front-facing placement for both parcel stills."""
     w, h = 1000, 800
     canvas = Image.new("RGB", (w, h), (242, 242, 238))
+    shadow = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    ImageDraw.Draw(shadow).rounded_rectangle((178, 198, 822, 632), radius=6, fill=(0, 0, 0, 28))
+    canvas = Image.alpha_composite(canvas.convert("RGBA"), shadow).convert("RGB")
+    canvas.paste(face, (180, 186))
+    return canvas.filter(ImageFilter.SMOOTH)
+
+
+def make_parcel_intact() -> Image.Image:
+    """Front-facing sealed carton on a plain field. No isometric side that can read as a tear."""
     face = kraft((640, 430), 11, (198, 156, 98))
     d = ImageDraw.Draw(face)
     d.rectangle((2, 2, 637, 427), outline=(138, 102, 58), width=5)
@@ -147,61 +156,37 @@ def make_parcel_intact() -> Image.Image:
     d.rectangle((292, 196, 348, 244), fill=(238, 214, 120))
     d.rectangle((0, 196, 18, 244), fill=tape)
     d.rectangle((621, 196, 639, 244), fill=tape)
-    label = shipping_label(False)
-    face.paste(label, (36, 28))
-    shadow = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-    ImageDraw.Draw(shadow).rounded_rectangle((178, 198, 822, 632), radius=6, fill=(0, 0, 0, 28))
-    canvas = Image.alpha_composite(canvas.convert("RGBA"), shadow).convert("RGB")
-    canvas.paste(face, (180, 186))
-    return canvas.filter(ImageFilter.SMOOTH)
+    face.paste(shipping_label(False), (36, 28))
+    return paste_carton(face)
+
+
+def make_parcel_damaged() -> Image.Image:
+    """Same scene as the sealed carton, crushed and torn. No answer painted on the box."""
+    face = kraft((640, 430), 11, (198, 156, 98))
+    d = ImageDraw.Draw(face)
+    d.rectangle((2, 2, 637, 427), outline=(138, 102, 58), width=5)
+    tape = (232, 204, 108)
+    d.rectangle((0, 196, 248, 244), fill=tape)
+    d.rectangle((392, 196, 639, 244), fill=tape)
+    d.rectangle((292, 0, 348, 168), fill=tape)
+    d.rectangle((292, 276, 348, 429), fill=tape)
+    d.polygon([(248, 196), (286, 176), (274, 260), (246, 244)], fill=(214, 176, 86))
+    d.polygon([(392, 196), (354, 214), (404, 260), (392, 244)], fill=(214, 176, 86))
+    d.polygon([(80, 0), (230, 0), (248, 78), (62, 58)], fill=(164, 120, 70))
+    d.line([(80, 0), (62, 58)], fill=(86, 56, 28), width=5)
+    d.polygon([(400, 8), (639, 0), (639, 290), (508, 334), (388, 168)], fill=(118, 80, 44))
+    d.line([(418, 36), (606, 96), (576, 236), (438, 268)], fill=(48, 32, 18), width=11)
+    for hole in ((498, 68), (566, 138), (522, 204), (470, 118)):
+        d.ellipse((hole[0], hole[1], hole[0] + 46, hole[1] + 30), fill=(40, 42, 46))
+    d.line([(318, 0), (334, 429)], fill=(70, 48, 24), width=7)
+    d.polygon([(560, 300), (639, 270), (639, 429), (500, 429)], fill=(86, 60, 34))
+    face.paste(shipping_label(True), (36, 28))
+    warped = face.transform(face.size, Image.Transform.AFFINE, (1, 0.05, 0, 0.035, 1, 8), resample=Image.Resampling.BICUBIC)
+    return paste_carton(warped)
 
 
 def make_parcel(damaged: bool) -> Image.Image:
-    if not damaged:
-        return make_parcel_intact()
-    w, h = 1100, 820
-    canvas = Image.new("RGB", (w, h), (54, 56, 60))
-    d = ImageDraw.Draw(canvas)
-    for y in range(470, h):
-        tone = 78 + (y - 470) // 8
-        d.line((0, y, w, y), fill=(tone, tone - 2, tone - 6))
-    d.rectangle((0, 0, 70, h), fill=(168, 92, 58))
-    d.rectangle((w - 90, 0, w, h), fill=(46, 48, 52))
-    d.rectangle((70, 120, 86, h), fill=(92, 64, 40))
-    shade = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-    ImageDraw.Draw(shade).ellipse((250, 620, 920, 760), fill=(0, 0, 0, 70))
-    canvas = Image.alpha_composite(canvas.convert("RGBA"), shade).convert("RGB")
-
-    face = kraft((560, 360), 3, (188, 142, 84))
-    top = kraft((560, 150), 4, (214, 172, 108))
-    side = kraft((150, 360), 5, (150, 108, 62))
-    df, dt, ds = ImageDraw.Draw(face), ImageDraw.Draw(top), ImageDraw.Draw(side)
-    tape = (214, 176, 64)
-    df.rectangle((0, 164, 559, 196), fill=tape)
-    dt.rectangle((0, 62, 559, 94), fill=tape)
-    ds.rectangle((0, 164, 149, 196), fill=tape)
-    df.rectangle((8, 8, 551, 351), outline=(120, 86, 48), width=3)
-    label = shipping_label(damaged)
-    face.paste(label, (42, 118))
-
-    if damaged:
-        df.polygon([(330, 10), (559, 0), (559, 250), (390, 300), (310, 150)], fill=(118, 80, 44))
-        df.line([(350, 30), (540, 90), (510, 220), (370, 250)], fill=(48, 32, 18), width=8)
-        for hole in ((430, 70), (500, 130), (455, 180)):
-            df.ellipse((hole[0], hole[1], hole[0] + 36, hole[1] + 22), fill=(40, 42, 46))
-        dt.polygon([(280, 0), (559, 0), (559, 149), (250, 110)], fill=(54, 56, 60))
-        dt.line([(250, 110), (400, 20), (540, 90)], fill=(70, 48, 24), width=7)
-        ds.polygon([(20, 230), (149, 190), (149, 359), (0, 359)], fill=(40, 42, 46))
-        df.text((360, 40), "CRUSHED", fill=(250, 236, 210), font=font(FONT_BOLD, 28))
-
-    box = Image.new("RGBA", (760, 560), (0, 0, 0, 0))
-    box.paste(top, (150, 0))
-    box.paste(side, (0, 150))
-    box.paste(face, (150, 150))
-    if damaged:
-        box = box.transform(box.size, Image.Transform.AFFINE, (1, 0.05, 0, 0.04, 1, 10), resample=Image.Resampling.BICUBIC)
-    canvas.paste(box.convert("RGB"), (160, 140), box)
-    return canvas.filter(ImageFilter.SMOOTH)
+    return make_parcel_damaged() if damaged else make_parcel_intact()
 
 
 def write_wav(path: Path, samples: list[float], rate: int = 16_000) -> None:

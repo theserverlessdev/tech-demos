@@ -4,8 +4,9 @@
   "type": "module",
   "scripts": {
     "build": "bun build src/client/app.ts --outdir public/assets --target browser --minify",
-    "dev": "bun run build && wrangler d1 migrations apply DB --local && wrangler dev",
+    "dev": "bun run build && wrangler d1 migrations apply DB --local -c wrangler.local.jsonc && wrangler dev -c wrangler.local.jsonc",
     "dev:stub": "bun run build && wrangler d1 migrations apply DB --local -c wrangler.local.jsonc && wrangler dev -c wrangler.local.jsonc",
+    "dev:live": "bun run build && wrangler d1 migrations apply DB --local -c wrangler.live.jsonc && wrangler dev -c wrangler.live.jsonc",
     "deploy": "bun run build && wrangler d1 migrations apply DB --remote && wrangler deploy",
     "typecheck": "wrangler types --env-file /dev/null && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
     "cf-typegen": "wrangler types --env-file /dev/null",

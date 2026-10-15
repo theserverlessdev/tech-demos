@@ -1,4 +1,4 @@
-import { PRESETS, PRESET_GROUPS, SAMPLES, presetForSample, validateQuestions } from "../shared/questions";
+import { PRESETS, PRESET_GROUPS, SAMPLES, presetForSample, questionsMatchPreset, validateQuestions } from "../shared/questions";
 import type { AnswerBar, JudgmentResult, JudgmentView, SampleId, SessionPayload } from "../shared/types";
 
 type Draft = { instructions: string; options: string[] };
@@ -194,6 +194,8 @@ async function selectFile(file: File): Promise<void> {
   setText(mediaNote, `${chosen.name || "Upload"} · ${(chosen.size / 1024).toFixed(0)} KB. The server checks the bytes.`);
   permEl.hidden = true;
   markSamples(null);
+  markPresets(null);
+  showPresetCopy(null);
   showError("");
 }
 
@@ -298,6 +300,7 @@ function renderQuestions(): void {
         draft.splice(index, 1);
         renderQuestions();
         markPresets(null);
+        showPresetCopy(null);
       });
       block.append(removeQ);
     }
@@ -441,9 +444,10 @@ function metaLine(result: JudgmentResult): HTMLElement {
 }
 
 function expectedNote(view: JudgmentView): HTMLElement | null {
-  const preset = activePresetId ? PRESETS.find((item) => item.id === activePresetId) : view.sampleId ? presetForSample(view.sampleId as SampleId) : undefined;
+  if (!view.sampleId || !Object.hasOwn(SAMPLES, view.sampleId)) return null;
+  const preset = presetForSample(view.sampleId as SampleId);
   const top = view.result?.answers[0]?.topLabel;
-  if (!preset || !top) return null;
+  if (!preset || !top || !questionsMatchPreset(view.questions, preset)) return null;
   const note = document.createElement("p");
   note.className = top === preset.expected ? "match match--ok" : "match match--miss";
   setText(note, top === preset.expected ? `Landed on the expected answer: ${preset.expected}` : `Expected ${preset.expected}. Top answer was ${top}.`);
@@ -532,6 +536,8 @@ async function restoreHistoryPick(item: JudgmentView, token: number): Promise<vo
     showPreview(URL.createObjectURL(file), item.modality);
     setText(mediaNote, `${item.label}. The server checks the bytes.`);
     markSamples(null);
+    markPresets(null);
+    showPresetCopy(null);
     showError("");
   } catch {
     if (token !== historyPick) return;

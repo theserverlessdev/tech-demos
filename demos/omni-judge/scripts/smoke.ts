@@ -1,4 +1,5 @@
 const base = process.env.BASE ?? "http://127.0.0.1:8787";
+const allowAiMiss = process.argv.includes("--allow-ai-miss");
 
 function check(ok: boolean, message: string, detail?: unknown): void {
   if (!ok) {
@@ -39,7 +40,11 @@ const judgedBody = (await judged.json()) as {
 };
 const judgedSource = judgedBody.judgment?.result?.source;
 if (judged.status === 502) {
-  console.log("skip live judge; Workers AI did not answer");
+  if (!allowAiMiss) {
+    check(false, "judge returned 502; Workers AI did not answer. Pass --allow-ai-miss only when that miss is expected.", judgedBody);
+  } else {
+    console.log("skip live judge; Workers AI did not answer");
+  }
 } else {
   const judgedOk = judged.status === 201 && (judgedSource === "clef-omni" || judgedSource === "local-stub");
   check(judgedOk, "sample judgment returned", judgedBody);
@@ -55,14 +60,5 @@ const list = (await media.json()) as { judgments?: unknown[] };
 check(media.status === 200 && (list.judgments?.length ?? 0) >= 1, "history lists the judgment", list);
 
 if (process.exitCode) process.exit(process.exitCode);
-
-const score = Bun.spawnSync({
-  cmd: ["bun", "run", "scripts/score-presets.ts"],
-  cwd: new URL("..", import.meta.url).pathname,
-  stdout: "inherit",
-  stderr: "inherit",
-  env: process.env,
-});
-if (score.exitCode !== 0) process.exit(score.exitCode);
 
 console.log("smoke passed");

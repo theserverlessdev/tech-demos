@@ -57,9 +57,9 @@ bun install
 bun run dev
 ```
 
-`bun run dev` uses `wrangler.jsonc` and calls Clef-omni. Wrangler must be logged in. Leave `ENVIRONMENT` empty. The Turnstile widget uses Cloudflare’s [always-pass test keys](https://developers.cloudflare.com/turnstile/troubleshooting/testing/) from `.dev.vars`. The dummy token is `XXXX.DUMMY.TOKEN.XXXX`. `bun run dev:stub` uses `wrangler.local.jsonc` and the labelled stub.
+`bun run dev` and `bun run dev:stub` use `wrangler.local.jsonc` (no zone routes, labelled stub). Do not put `ENVIRONMENT` in `.dev.vars`; that file would override the stub. The Turnstile widget uses Cloudflare’s [always-pass test keys](https://developers.cloudflare.com/turnstile/troubleshooting/testing/) from `.dev.vars`. The dummy token is `XXXX.DUMMY.TOKEN.XXXX`. `bun run dev:live` uses `wrangler.live.jsonc` (AI binding, no routes) and calls Clef-omni. Wrangler must be logged in.
 
-This PR does not deploy. `bun run score` calls Clef-omni over the Workers AI REST API when `CLOUDFLARE_API_TOKEN` is set, records probabilities in `test/preset-scores.json`, and fails if a preset misses the expected answer or the margin is thin. Without a token it only checks the bundled files. Live scores from the owner’s last run are committed in that file.
+This PR does not deploy. `bun run score` only checks the bundled files and does not write `test/preset-scores.json`. `bun run score --live` calls Clef-omni over the Workers AI REST API (`CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`), records probabilities and a per-file `sha256`, and fails if a preset misses the expected answer or the margin is thin. Live scores from the owner’s last run stay committed until someone passes `--live`.
 
 `bun run typecheck` runs `wrangler types` before `tsc`. `bun test` covers sniffing, the budget insert, owner-only reads, the Clef-omni request and response fixture, and the preset files.
 
@@ -68,7 +68,7 @@ Sample credits are in `LICENSES/CREDITS`. Media is CC0, public domain, or genera
 ### Smoke checklist
 
 - `bun test` and `bun run typecheck`.
-- `bun run dev` (Clef-omni) or `bun run dev:stub`, then `bun run smoke`. Smoke also runs `bun run score` (live Clef-omni only when a token is present).
+- `bun run dev` (labelled stub) or `bun run dev:live` (Clef-omni), then `bun run smoke`. Smoke does not call Clef-omni over REST and does not write `test/preset-scores.json`. A 502 from the judge endpoint fails smoke unless you pass `--allow-ai-miss`.
 - A judge POST with no `Content-Length` returns 411, and the judge rate limit runs before the body is parsed or Turnstile is checked.
 - Uploads are base64-encoded once with `Buffer.from(bytes.buffer, bytes.byteOffset, bytes.length)`, and that string is reused if comparison also needs it. A 6 MB video should not encode the bytes twice.
 - The Llama 3.2 11B Vision `image` field in the model schema is an integer array or a binary string. Both forms are deprecated in favor of `messages`. This demo still sends the integer array. Comparison images are also capped at 512 KB and 2 megapixels, which is tighter than the omni image cap.

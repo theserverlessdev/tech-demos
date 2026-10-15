@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,13 +12,14 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
 const samplesDir = join(root, "public/samples");
 const outFile = join(root, "test/preset-scores.json");
-const requireAi = process.argv.includes("--require-ai");
+const live = process.argv.includes("--live");
 const minMargin = Number(process.env.PRESET_MARGIN ?? "0.15");
 
 export type PresetScore = {
   id: string;
   sample: string;
   file: string;
+  sha256: string;
   question: string;
   expected: string;
   topLabel: string | null;
@@ -37,11 +39,15 @@ function fail(message: string): never {
 }
 
 function accountId(): string {
-  return process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || "3f847e2fadeef3e583701e8fa25657b5";
+  return process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || "";
 }
 
 function apiToken(): string {
-  return process.env.CLOUDFLARE_API_TOKEN?.trim() || process.env.CF_API_TOKEN?.trim() || "";
+  return process.env.CLOUDFLARE_API_TOKEN?.trim() || "";
+}
+
+function fileHash(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
 }
 
 async function runOmni(bytes: Uint8Array, contentType: string, kind: "image" | "audio" | "video", questions: ReturnType<typeof validateQuestions> & { ok: true }): Promise<{ answers: JudgmentAnswer[]; latencyMs: number }> {
@@ -67,10 +73,12 @@ async function runOmni(bytes: Uint8Array, contentType: string, kind: "image" | "
   return { answers: parsed.answers, latencyMs: Date.now() - started };
 }
 
-const token = apiToken();
-const live = token.length > 0;
-if (!live && requireAi) fail("Workers AI token missing. Set CLOUDFLARE_API_TOKEN.");
-if (!live) console.log("Workers AI is not available. Checking bundled files only.");
+if (live) {
+  if (!apiToken()) fail("Workers AI token missing. Set CLOUDFLARE_API_TOKEN and pass --live.");
+  if (!accountId()) fail("Set CLOUDFLARE_ACCOUNT_ID and pass --live.");
+} else {
+  console.log("Checking bundled files only. Pass --live to call Clef-omni and write test/preset-scores.json.");
+}
 
 const scores: PresetScore[] = [];
 let failed = 0;
@@ -95,6 +103,7 @@ for (const preset of PRESETS) {
     id: preset.id,
     sample: preset.sample,
     file: sample.file,
+    sha256: fileHash(bytes),
     question: preset.questions[0]!.instructions,
     expected: preset.expected,
     topLabel: null,
@@ -129,7 +138,7 @@ for (const preset of PRESETS) {
       ? marginOk
         ? `top ${answer.topLabel} ${Math.round(expectedP * 100)}% margin ${row.margin.toFixed(3)}`
         : `landed but margin ${row.margin.toFixed(3)} < ${minMargin}`
-        : `wanted ${preset.expected}, got ${answer.topLabel}`;
+      : `wanted ${preset.expected}, got ${answer.topLabel}`;
   }
 
   scores.push(row);
@@ -141,12 +150,13 @@ for (const preset of PRESETS) {
   }
 }
 
-mkdirSync(dirname(outFile), { recursive: true });
-writeFileSync(
-  outFile,
-  `${JSON.stringify({ when: new Date().toISOString(), live, minMargin, scores }, null, 2)}\n`,
-);
-console.log(`wrote ${outFile}`);
+if (live) {
+  mkdirSync(dirname(outFile), { recursive: true });
+  writeFileSync(outFile, `${JSON.stringify({ when: new Date().toISOString(), live: true, minMargin, scores }, null, 2)}\n`);
+  console.log(`wrote ${outFile}`);
+} else {
+  console.log("left test/preset-scores.json unchanged");
+}
 
 if (failed) process.exit(1);
 if (!live) console.log("preset files ok; live Clef-omni scores skipped");
