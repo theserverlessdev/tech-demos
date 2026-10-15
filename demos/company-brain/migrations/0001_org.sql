@@ -1,4 +1,4 @@
--- Durable Object SQLite for one Org agent. Org.onStart applies these statements.
+-- Mirror of the schema Org.onStart applies inline. Edit both if the tables change.
 -- This folder is not a D1 migrations directory.
 
 CREATE TABLE IF NOT EXISTS facts (

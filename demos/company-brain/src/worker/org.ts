@@ -1,8 +1,10 @@
 import { Agent, type Connection } from "agents";
 import { z } from "zod";
 import type { ChatMessage, Citation, MemoryItem, MemoryKind, OrgView } from "../shared/types";
-import { askModel, retrieve, settleAnswer, type MemoryRow } from "./ground";
+import { BodyTooLargeError, readBounded } from "./body";
+import { askModel, retrieve, settleAnswer, snippet, type MemoryRow } from "./ground";
 import { matchesHash, newId, sha256Hex } from "./secret";
+import { orgTtlMs } from "./ttl";
 
 const MAX_FACTS = 80;
 const MAX_DECISIONS = 40;
@@ -65,11 +67,6 @@ function oneLine(value: string, max: number): string {
     .slice(0, max);
 }
 
-function ttlMs(env: Env): number {
-  const hours = Number(env.ORG_TTL_HOURS);
-  const safe = Number.isFinite(hours) && hours >= 1 && hours <= 168 ? hours : 24;
-  return safe * 60 * 60 * 1000;
-}
 
 function parseSources(raw: string): Citation[] {
   try {
@@ -95,8 +92,13 @@ function parseSources(raw: string): Citation[] {
 }
 
 async function readJson(request: Request): Promise<unknown> {
-  const text = await request.text();
-  if (text.length > MAX_BODY) throw new OrgError(413, "too_large", "The request body is too large.");
+  let text: string;
+  try {
+    text = await readBounded(request, MAX_BODY);
+  } catch (err) {
+    if (err instanceof BodyTooLargeError) throw new OrgError(err.status, err.code, err.message);
+    throw err;
+  }
   if (!text.trim()) return {};
   try {
     return JSON.parse(text) as unknown;
@@ -106,8 +108,10 @@ async function readJson(request: Request): Promise<unknown> {
 }
 
 /**
- * One sandbox org. The Agents SDK alarm (`schedule`) wakes `wipeExpired` and deletes the SQLite rows.
- * Callers reach this object only through the Worker, which checks Turnstile and rate limits first.
+ * One sandbox org. The Agents SDK alarm (`schedule`) wakes `wipeExpired`, which calls `destroy()`
+ * so SQLite, `cf_agents_*` tables, and the alarm are deleted (not just the row data).
+ * Callers reach this object only through the Worker, which checks the HMAC org id, session
+ * or ingest token, Turnstile, and rate limits first.
  */
 export class Org extends Agent<Env, OrgState> {
   initialState: OrgState = { createdAt: 0, expiresAt: 0, wiped: false };
@@ -117,6 +121,7 @@ export class Org extends Agent<Env, OrgState> {
   }
 
   async onStart() {
+    // Schema source of truth. migrations/0001_org.sql mirrors these statements for reading.
     this.sql`CREATE TABLE IF NOT EXISTS facts (
       id TEXT PRIMARY KEY, text TEXT NOT NULL, author TEXT NOT NULL, source TEXT NOT NULL, created_at INTEGER NOT NULL)`;
     this.sql`CREATE TABLE IF NOT EXISTS decisions (
@@ -127,14 +132,10 @@ export class Org extends Agent<Env, OrgState> {
       id INTEGER PRIMARY KEY CHECK (id = 1), session_hash TEXT NOT NULL, ingest_hash TEXT NOT NULL)`;
   }
 
-  /** Durable Object alarm callback. Wipes memory and credentials so the sandbox cannot be read later. */
+  /** Durable Object alarm callback. `destroy()` runs `deleteAll()` and drops the alarm. */
   async wipeExpired(): Promise<void> {
-    if (!this.state.wiped) this.setState({ ...this.state, wiped: true });
-    this.sql`DELETE FROM facts`;
-    this.sql`DELETE FROM decisions`;
-    this.sql`DELETE FROM messages`;
-    this.sql`DELETE FROM auth`;
     console.log(JSON.stringify({ event: "org_wiped" }));
+    await this.destroy();
   }
 
   async onRequest(request: Request): Promise<Response> {
@@ -188,9 +189,10 @@ export class Org extends Agent<Env, OrgState> {
   private async provision(orgId: string, sessionToken: string, ingestToken: string): Promise<OrgView> {
     if (this.state.wiped || this.auth()) throw new OrgError(409, "exists", "This org is already provisioned.");
     const now = Date.now();
-    const expiresAt = now + ttlMs(this.env);
+    const expiresAt = now + orgTtlMs(this.env);
     this.sql`INSERT INTO auth (id, session_hash, ingest_hash) VALUES (1, ${await sha256Hex(sessionToken)}, ${await sha256Hex(ingestToken)})`;
     for (const item of SEED) this.insertItem(item.kind, item.text, item.author, item.source, now);
+    this.seedCitedExample(now);
     this.setState({ createdAt: now, expiresAt, wiped: false });
     try {
       // Agents SDK persists this on the Durable Object alarm and calls wipeExpired when it fires.
@@ -198,6 +200,7 @@ export class Org extends Agent<Env, OrgState> {
     } catch (err) {
       this.sql`DELETE FROM facts`;
       this.sql`DELETE FROM decisions`;
+      this.sql`DELETE FROM messages`;
       this.sql`DELETE FROM auth`;
       this.setState({ createdAt: 0, expiresAt: 0, wiped: false });
       throw err;
@@ -264,7 +267,26 @@ export class Org extends Agent<Env, OrgState> {
 
     const settled = settleAnswer(raw, hits);
     this.rememberTurn(question, settled.answer, settled.sources, now);
-    return json({ answer: settled.answer, sources: settled.sources, model: this.env.AI_MODEL, grounded: settled.sources.length > 0 });
+    return json({ answer: settled.answer, sources: settled.sources, model: this.env.AI_MODEL, grounded: settled.grounded });
+  }
+
+  /** A cited seed turn so the workspace shows the grounding contract without a paid model call. */
+  private seedCitedExample(now: number): void {
+    const warehouse = this.items("fact").find((item) => item.text.includes("Thursdays"));
+    if (!warehouse) return;
+    const sources: Citation[] = [{
+      kind: "fact",
+      id: warehouse.id,
+      snippet: snippet(warehouse.text),
+      author: warehouse.author,
+      source: warehouse.source,
+    }];
+    this.rememberTurn(
+      "When does the warehouse ship?",
+      `Northline ships weekly on Thursdays from the Austin warehouse. [fact:${warehouse.id}]`,
+      sources,
+      now,
+    );
   }
 
   private rememberTurn(question: string, answer: string, sources: Citation[], now: number): void {

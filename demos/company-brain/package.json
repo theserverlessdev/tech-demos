@@ -9,6 +9,7 @@
     "deploy": "bun run build && wrangler deploy",
     "typecheck": "wrangler types --env-file /dev/null && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
     "cf-typegen": "wrangler types --env-file /dev/null",
+    "test": "bun test test",
     "smoke": "bun run scripts/smoke.ts"
   },
   "dependencies": {
