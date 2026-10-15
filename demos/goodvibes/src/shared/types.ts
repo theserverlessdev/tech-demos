@@ -31,6 +31,7 @@ export type RoundState = {
   phase: Phase;
   round: number;
   endsAt: number;
+  serverNow: number;
   orbs: Orb[];
   scores: ScoreRow[];
   winner: ScoreRow | null;
@@ -41,15 +42,27 @@ export type RoomInfo = {
   name: string;
 };
 
-export type ClientEvent = { type: "move"; x: number; z: number } | { type: "start" } | { type: "ping" };
+export type PublicConfig = {
+  siteKey: string | null;
+  createOpen: boolean;
+  maxPlayers: number;
+};
+
+export type JoinTicket = {
+  room: RoomInfo;
+  ticket: string;
+  expiresAt: number;
+};
+
+export type ClientEvent = { type: "move"; x: number; z: number } | { type: "start" };
 
 export type ServerEvent =
-  | { type: "hello"; room: string; you: Player; players: Player[]; round: RoundState }
+  | { type: "hello"; room: string; you: Player; players: Player[]; round: RoundState; serverNow: number }
   | { type: "join"; player: Player }
   | { type: "leave"; id: string }
   | { type: "move"; id: string; x: number; z: number }
   | { type: "presence"; players: Player[] }
-  | { type: "round"; round: RoundState; players: Player[] }
+  | { type: "round"; round: RoundState; players: Player[]; serverNow: number }
   | { type: "collect"; playerId: string; orbId: string; kind: OrbKind; score: number; orbs: Orb[]; scores: ScoreRow[] }
   | { type: "pong" }
   | { type: "error"; message: string };
@@ -70,6 +83,15 @@ export const ORB_COUNT = 7;
 export const COLLECT_RADIUS = 0.95;
 export const HOT_POINTS = 3;
 export const EMBER_POINTS = 1;
+/** Units per second. Client and server share this so a honest pad cannot be rejected. */
+export const SPEED = 8.4;
+export const MAX_SPEED = SPEED * 1.3;
+export const JOIN_TICKET_TTL_MS = 120_000;
+export const MAX_SOCKETS_PER_IP = 2;
+export const IDLE_MS = 10 * 60 * 1000;
+export const FRAME_MAX_BYTES = 512;
+export const FRAME_RATE = 30;
+export const FRAME_BURST = 60;
 
 export function slugifyRoom(raw: string): string {
   const slug = raw
@@ -83,7 +105,8 @@ export function slugifyRoom(raw: string): string {
 
 export function sanitizeName(raw: unknown): string {
   const text = String(raw ?? "")
-    .replace(/[^\w .'\-]/g, "")
+    .normalize("NFC")
+    .replace(/[^\p{L}\p{M}\p{N} .'\-]/gu, "")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 24);
@@ -112,4 +135,9 @@ export function colorForId(id: string): string {
 
 export function pointsFor(kind: OrbKind): number {
   return kind === "hot" ? HOT_POINTS : EMBER_POINTS;
+}
+
+export function formatClock(totalSeconds: number): string {
+  const s = Math.max(0, Math.floor(totalSeconds));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }

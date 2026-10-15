@@ -78,8 +78,8 @@ const memoryRepoFallbackSource = standalone("memory-repo");
 // resolve-hq: the zone route wins, and this source only redirects if that route is missing.
 const edgechatFallbackSource = standalone("edgechat");
 
-// goodvibes is a standalone Worker (ASSETS, ROOM, CREATE_LIMIT). Same pattern as resolve-hq: the zone
-// route wins, and this source only redirects if that route is missing.
+// goodvibes is a standalone Worker (ASSETS, ROOM, CONNECT_LIMIT, Turnstile). Same pattern as resolve-hq:
+// the zone route wins, and this source only redirects if that route is missing.
 const goodvibesFallbackSource = standalone("goodvibes");
 
 // byok-playground is a standalone Worker (D1 budget, Workers AI, Turnstile). Same pattern as resolve-hq:
@@ -110,21 +110,21 @@ export const demos: DemoEntry[] = [
   },
   {
     slug: "goodvibes",
-    title: "GoodVibes",
+    title: "Ember Rush",
     description: "A 75-second multiplayer orb hunt. Highest score in the room wins.",
     demonstrates:
-      "One Durable Object per room is the coordinator: hibernating WebSockets carry poses and scores, and an alarm runs the 75-second round. The room owns the orbs and the clock, so a second tab is another player, not another copy of the game.",
+      "One Durable Object per room is the coordinator: hibernating WebSockets carry poses and scores, and an alarm runs the 75-second round. The room owns pickups, scores and the clock, and validates movement speed. A second tab is another player, not another copy of the game.",
     capabilities: [
-      "Join or create a named room and open it in a second tab",
+      "Join a named room and open the link in a new tab or another browser",
       "Start a 75-second round and move with the keyboard, a click, or the pad",
       "Collect ember orbs (+1) and gold orbs (+3); the highest score wins",
       "Play again without leaving the room",
       "Play the same round on a 2D floor when WebGL cannot start",
     ],
     useCases: [
-      "A realtime game where the server owns positions, pickups, and the round clock",
+      "A realtime game where the server owns pickups, scores and the round clock, and validates movement speed",
       "A classroom activity with a shared timer and a scoreboard",
-      "Any room that should hibernate when the last player leaves",
+      "A room that hibernates while players idle and wipes itself when the last one leaves",
     ],
     tags: ["durable-objects", "websockets", "threejs", "game"],
     kind: "standalone",

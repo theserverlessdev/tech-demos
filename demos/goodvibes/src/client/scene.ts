@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { ARENA, clampPos, type Orb, type Player } from "../shared/types";
+import { ARENA, SPEED, clampPos, type Orb, type Player } from "../shared/types";
 
 type Marker3 = {
   group: THREE.Group;
@@ -12,7 +12,6 @@ type Orb3 = { mesh: THREE.Mesh; kind: Orb["kind"] };
 type Flat = { x: number; z: number; color: string; name: string; self: boolean; tx: number; tz: number; score: number };
 type Spark = { x: number; z: number; vx: number; vz: number; life: number; color: string };
 
-const SPEED = 8.4;
 const REMOTE_LERP = 12;
 
 function nameSprite(text: string): THREE.Sprite {
@@ -42,6 +41,22 @@ function nameSprite(text: string): THREE.Sprite {
   sprite.position.y = 2.15;
   sprite.renderOrder = 2;
   return sprite;
+}
+
+function disposeMaterial(mat: THREE.Material): void {
+  const mapped = mat as THREE.Material & { map?: THREE.Texture | null };
+  mapped.map?.dispose();
+  mat.dispose();
+}
+
+function disposeObject(root: THREE.Object3D): void {
+  root.traverse((child) => {
+    const mesh = child as THREE.Mesh;
+    if (mesh.geometry) mesh.geometry.dispose();
+    const material = (child as THREE.Mesh).material;
+    if (Array.isArray(material)) material.forEach(disposeMaterial);
+    else if (material) disposeMaterial(material);
+  });
 }
 
 function makeMarker(player: Player, self: boolean): Marker3 {
@@ -97,13 +112,18 @@ function tryWebGL(canvas: HTMLCanvasElement): WebGLRenderingContext | WebGL2Rend
     depth: true,
     failIfMajorPerformanceCaveat: false,
     powerPreference: "default",
-    preserveDrawingBuffer: true,
+    preserveDrawingBuffer: false,
   };
   try {
     return canvas.getContext("webgl2", opts) || canvas.getContext("webgl", opts);
   } catch {
     return null;
   }
+}
+
+function loseContext(canvas: HTMLCanvasElement): void {
+  const gl = canvas.getContext("webgl2") || canvas.getContext("webgl");
+  gl?.getExtension("WEBGL_lose_context")?.loseContext();
 }
 
 export class ArenaScene {
@@ -132,11 +152,16 @@ export class ArenaScene {
   private lastZ = 0;
   private disposed = false;
   private t = 0;
+  private emberGeo: THREE.SphereGeometry | null = null;
+  private hotGeo: THREE.SphereGeometry | null = null;
+  private emberMat: THREE.MeshStandardMaterial | null = null;
+  private hotMat: THREE.MeshStandardMaterial | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
     const probe = document.createElement("canvas");
     const glOk = Boolean(tryWebGL(probe));
+    loseContext(probe);
     this.webgl = false;
     if (glOk) {
       try {
@@ -193,10 +218,12 @@ export class ArenaScene {
   }
 
   remove(id: string): void {
+    if (id === this.localId) return;
     this.flats.delete(id);
     const marker = this.markers.get(id);
     if (!marker || !this.scene) return;
     this.scene.remove(marker.group);
+    disposeObject(marker.group);
     this.markers.delete(id);
   }
 
@@ -218,15 +245,7 @@ export class ArenaScene {
       let row = this.orbMeshes.get(orb.id);
       if (!row) {
         const hot = orb.kind === "hot";
-        const mesh = new THREE.Mesh(
-          new THREE.SphereGeometry(hot ? 0.42 : 0.28, 16, 12),
-          new THREE.MeshStandardMaterial({
-            color: hot ? "#fbbf24" : "#c2410c",
-            emissive: hot ? "#e2622e" : "#c2410c",
-            emissiveIntensity: hot ? 1.1 : 0.7,
-            roughness: 0.25,
-          }),
-        );
+        const mesh = new THREE.Mesh(hot ? this.hotGeo! : this.emberGeo!, hot ? this.hotMat! : this.emberMat!);
         this.scene.add(mesh);
         row = { mesh, kind: orb.kind };
         this.orbMeshes.set(orb.id, row);
@@ -268,6 +287,15 @@ export class ArenaScene {
     window.removeEventListener("keydown", this.onKeyDown);
     window.removeEventListener("keyup", this.onKeyUp);
     this.canvas.removeEventListener("pointerdown", this.onPointer);
+    for (const marker of this.markers.values()) {
+      this.scene?.remove(marker.group);
+      disposeObject(marker.group);
+    }
+    for (const row of this.orbMeshes.values()) this.scene?.remove(row.mesh);
+    this.emberGeo?.dispose();
+    this.hotGeo?.dispose();
+    if (this.emberMat) disposeMaterial(this.emberMat);
+    if (this.hotMat) disposeMaterial(this.hotMat);
     this.renderer?.dispose();
     this.markers.clear();
     this.flats.clear();
@@ -296,6 +324,21 @@ export class ArenaScene {
     camera.position.set(0, 16.5, 17.5);
     camera.lookAt(0, 0, 0);
     this.camera = camera;
+
+    this.emberGeo = new THREE.SphereGeometry(0.28, 16, 12);
+    this.hotGeo = new THREE.SphereGeometry(0.42, 16, 12);
+    this.emberMat = new THREE.MeshStandardMaterial({
+      color: "#c2410c",
+      emissive: "#c2410c",
+      emissiveIntensity: 0.7,
+      roughness: 0.25,
+    });
+    this.hotMat = new THREE.MeshStandardMaterial({
+      color: "#fbbf24",
+      emissive: "#e2622e",
+      emissiveIntensity: 1.1,
+      roughness: 0.25,
+    });
 
     scene.add(new THREE.HemisphereLight(0xf5efe6, 0x1a1512, 1.05));
     const key = new THREE.DirectionalLight(0xe8e8e4, 0.85);
@@ -337,7 +380,16 @@ export class ArenaScene {
     const h = Math.max(parent?.clientHeight || window.innerHeight, 1);
     if (this.renderer && this.camera) {
       this.camera.aspect = w / h;
+      const half = Math.atan(Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2)) * this.camera.aspect);
+      const len = Math.max(24, ((ARENA + 1.5) / Math.tan(half)) * 1.05);
+      this.camera.position.set(0, 16.5, 17.5).setLength(len);
+      this.camera.far = len * 3;
+      this.camera.lookAt(0, 0, 0);
       this.camera.updateProjectionMatrix();
+      if (this.scene?.fog instanceof THREE.Fog) {
+        this.scene.fog.near = len * 0.75;
+        this.scene.fog.far = len * 1.8;
+      }
       this.renderer.setSize(w, h, false);
     } else {
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -360,9 +412,8 @@ export class ArenaScene {
       return { x: clampPos(hit.point.x), z: clampPos(hit.point.z) };
     }
     const { originX, originY, scale } = this.flatMap();
-    const dpr = this.canvas.width / Math.max(rect.width, 1);
-    const px = (ev.clientX - rect.left) * dpr;
-    const py = (ev.clientY - rect.top) * dpr;
+    const px = ev.clientX - rect.left;
+    const py = ev.clientY - rect.top;
     return { x: clampPos((px - originX) / scale), z: clampPos((py - originY) / scale) };
   }
 
@@ -460,18 +511,23 @@ export class ArenaScene {
 
   private flatMap(): { originX: number; originY: number; scale: number } {
     const pad = 48;
-    const size = Math.min(this.canvas.width, this.canvas.height) - pad * 2;
+    const w = this.canvas.clientWidth || 1;
+    const h = this.canvas.clientHeight || 1;
+    const size = Math.min(w, h) - pad * 2;
     const scale = size / (ARENA * 2 + 2);
-    return { originX: this.canvas.width / 2, originY: this.canvas.height / 2, scale };
+    return { originX: w / 2, originY: h / 2, scale };
   }
 
   private drawFlat(dt: number): void {
     const ctx = this.ctx2d;
     if (!ctx) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const cssW = this.canvas.clientWidth || 1;
+    const cssH = this.canvas.clientHeight || 1;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const { originX, originY, scale } = this.flatMap();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = "#0e0e11";
-    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    ctx.fillRect(0, 0, cssW, cssH);
 
     ctx.save();
     ctx.translate(originX, originY);
@@ -553,8 +609,11 @@ export class ArenaScene {
     ctx.textAlign = "left";
     const pad = document.getElementById("pad");
     const padOn = !!pad && getComputedStyle(pad).display !== "none";
-    const hintY = padOn ? this.canvas.height - pad.getBoundingClientRect().height - 28 : this.canvas.height - 18;
-    ctx.fillText("WASD / click · grab ember orbs · hot orb is +3", 16, hintY);
+    const padH = padOn && pad ? pad.getBoundingClientRect().height : 0;
+    const hintY = cssH - (padOn ? padH + 16 : 18);
+    const coarse = window.matchMedia("(pointer: coarse)").matches;
+    const hint = coarse ? "tap or use the pad · grab ember orbs · hot orb is +3" : "WASD / click · grab ember orbs · hot orb is +3";
+    ctx.fillText(hint, 16, hintY);
   }
 
   private tick = (): void => {

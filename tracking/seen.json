@@ -10,13 +10,6 @@
       "approvedAt": "2026-09-15T10:53:55Z",
       "licenseNote": "GPL-3.0 inspired-by only \u2014 do not vendor",
       "liveUrl": "https://tech-demos.theserverless.dev/demos/edgechat/"
-    },
-    {
-      "slug": "goodvibes",
-      "status": "live-pending-merge",
-      "pr": "https://github.com/theserverlessdev/tech-demos/pull/8",
-      "buildVia": "cloud-agent",
-      "liveUrl": "https://tech-demos.theserverless.dev/demos/goodvibes/"
     }
   ],
   "built": [
@@ -94,7 +87,7 @@
     {
       "slug": "goodvibes",
       "repo": "https://github.com/benallfree/goodvibes",
-      "title": "GoodVibes",
+      "title": "Ember Rush",
       "source": "approved-slice",
       "approved_at": "2026-09-18",
       "why": "Playable multiplayer Ember Rush on Workers + Durable Object WebSocket hibernation; orbs, scores, round clock \u2014 not a walking simulator",
@@ -104,7 +97,7 @@
       "subdomain": "https://goodvibes.tech-demos.theserverless.dev/",
       "worker": "tech-demos-goodvibes",
       "branch": "demo/goodvibes",
-      "notes": "Ember Rush: 75s orb hunt, server-authoritative round on a hibernatable VibeRoom. Not a vendor of upstream. Room create is rate-limited."
+      "notes": "Ember Rush: 75s orb hunt on a hibernatable VibeRoom. Server owns pickups, scores and the clock, and validates movement speed. Last leave deleteAlls. Turnstile join ticket + CONNECT_LIMIT 7480. Not a vendor of upstream."
     },
     {
       "slug": "memory-repo",

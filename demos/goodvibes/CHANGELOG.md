@@ -13,7 +13,7 @@ We did not copy the upstream `src/game`, `src/ui`, `src/controls`, or `vibescale
 | Multiplayer | `vibescale` + commented DO stub | `VibeRoom` hibernation WS, **server-authoritative round** |
 | Loop | Starter sandbox | Ember Rush: countdown, 75s collect, scoreboard, rematch |
 | UI | Tailwind, DaisyUI, vanjs | Graphite & Ember HUD |
-| Rate limits | Not the point | `CREATE_LIMIT` on room create |
+| Rate limits | Not the point | Turnstile + HMAC join ticket; `CONNECT_LIMIT` on the WebSocket |
 
 ## What we cut
 
@@ -32,6 +32,14 @@ We did not copy the upstream `src/game`, `src/ui`, `src/controls`, or `vibescale
 ## Branding
 
 Hub Graphite & Ember. Ember `#c2410c`, background `#0e0e11`. LogoMark SVG. No purple-to-cyan logo.
+
+## 2026-10-15
+
+PR #33 re-review. A 1008 or idle-kicked socket is marked closed and broadcast as a leave immediately, even if the client ignores Close — it no longer counts toward the room or the 2-per-IP cap. Deep links mint a ticket at most three times with bounded backoff, then strip `?room=` and show an error. A Turnstile re-solve does not overwrite a join warning. Every incoming frame is charged to the token bucket before any other return; later frames on a 1008'd socket are ignored. Join is a single form submit plus an in-flight guard.
+
+## 2026-10-14
+
+Opus audit of `279668d`. Disconnects no longer leave ghosts; an empty room `deleteAll`s. The no-op `CREATE_LIMIT` is gone. Joining is Turnstile-gated and mints an HMAC ticket; `/ws` checks the ticket, `CONNECT_LIMIT` (7480), a per-socket frame budget, and two sockets per IP. Player ids are server-assigned. Movement is speed-clamped. Exactly one gold orb. 390px camera, scoreboard dots, and 2D hint are readable. Copy matches what the demo does.
 
 ## 2026-10-09
 

@@ -1,15 +1,34 @@
 import {
   ROUND_MS,
+  formatClock,
   sanitizeName,
   slugifyRoom,
+  type JoinTicket,
   type Player,
+  type PublicConfig,
   type RoundState,
   type ServerEvent,
 } from "../shared/types";
 import { ArenaScene } from "./scene";
+import { DEEP_JOIN_MAX, deepBackoffMs, shouldKeepJoinError } from "./join-gate";
 
 const NAME_KEY = "goodvibes-name";
-const ID_KEY = "goodvibes-id";
+
+type TurnstileApi = {
+  render: (
+    el: HTMLElement,
+    opts: {
+      sitekey: string;
+      action?: string;
+      theme?: "dark" | "light";
+      callback?: (token: string) => void;
+      "error-callback"?: () => void;
+      "expired-callback"?: () => void;
+    },
+  ) => string;
+  reset: (id?: string) => void;
+  getResponse: (id?: string) => string | undefined;
+};
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -24,18 +43,6 @@ function randomName(): string {
   const a = ["Ember", "Graphite", "Cedar", "Flint", "Moss", "Quartz", "Amber", "Slate"];
   const b = ["Fox", "Kite", "Wren", "Pike", "Fern", "Moth", "Lynx", "Jay"];
   return `${a[Math.floor(Math.random() * a.length)]} ${b[Math.floor(Math.random() * b.length)]}`;
-}
-
-function sessionId(): string {
-  try {
-    const existing = sessionStorage.getItem(ID_KEY);
-    if (existing) return existing;
-    const id = crypto.randomUUID();
-    sessionStorage.setItem(ID_KEY, id);
-    return id;
-  } catch {
-    return crypto.randomUUID();
-  }
 }
 
 function storedName(): string {
@@ -54,10 +61,14 @@ function rememberName(name: string): void {
   }
 }
 
-function wsUrl(room: string, name: string, id: string): string {
+function wsUrl(room: string, name: string, ticket: string): string {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  const params = new URLSearchParams({ name, id });
+  const params = new URLSearchParams({ name, ticket });
   return `${proto}//${location.host}${appBase()}/ws/${encodeURIComponent(room)}?${params}`;
+}
+
+function turnstileApi(): TurnstileApi | null {
+  return (window as Window & { turnstile?: TurnstileApi }).turnstile ?? null;
 }
 
 let audio: AudioContext | null = null;
@@ -86,9 +97,24 @@ const state = {
   scene: null as ArenaScene | null,
   you: null as Player | null,
   room: "",
+  ticket: "",
   players: new Map<string, Player>(),
   round: null as RoundState | null,
+  clockOffset: 0,
+  widget: null as TurnstileApi | null,
+  config: null as PublicConfig | null,
+  joining: false,
+  deepJoin: "idle" as "idle" | "pending" | "done",
+  deepAttempts: 0,
 };
+
+function serverNow(): number {
+  return Date.now() + state.clockOffset;
+}
+
+function syncClock(from: number): void {
+  state.clockOffset = from - Date.now();
+}
 
 function setStatus(text: string, kind: "ok" | "warn" | "idle" = "idle"): void {
   const el = $("status");
@@ -152,10 +178,10 @@ function applyRound(round: RoundState, players?: Player[]): void {
     setStatus(`In ${state.room} · waiting to start`, "idle");
   } else if (round.phase === "countdown") {
     banner.hidden = false;
-    const n = Math.max(1, Math.ceil((round.endsAt - Date.now()) / 1000));
+    const n = Math.max(1, Math.ceil((round.endsAt - serverNow()) / 1000));
     countEl.textContent = String(n);
     title.textContent = "Get ready";
-    sub.textContent = "WASD or click the floor. First orb is free points.";
+    sub.textContent = "WASD, tap the floor, or use the pad. First orb is free points.";
     setStatus("Round starting…", "ok");
     beep(220 + n * 110, 90);
   } else if (round.phase === "playing") {
@@ -188,21 +214,21 @@ function tickHud(): void {
   const clock = $("clock");
   const round = state.round;
   if (!round || round.phase === "waiting") {
-    clock.textContent = "0:75";
+    clock.textContent = formatClock(75);
     clock.dataset.phase = "wait";
   } else if (round.phase === "countdown") {
-    const n = Math.max(0, Math.ceil((round.endsAt - Date.now()) / 1000));
-    clock.textContent = String(n || "GO");
+    const n = Math.max(0, Math.ceil((round.endsAt - serverNow()) / 1000));
+    clock.textContent = n ? String(n) : "GO";
     clock.dataset.phase = "cd";
     const countEl = $("banner-count");
     if (countEl && $("banner").hidden === false) countEl.textContent = n ? String(n) : "GO";
   } else if (round.phase === "playing") {
-    const left = Math.max(0, round.endsAt - Date.now());
+    const left = Math.max(0, round.endsAt - serverNow());
     const s = Math.ceil(left / 1000);
-    clock.textContent = `0:${String(s).padStart(2, "0")}`;
+    clock.textContent = formatClock(s);
     clock.dataset.phase = s <= 10 ? "low" : "play";
   } else {
-    clock.textContent = "0:00";
+    clock.textContent = formatClock(0);
     clock.dataset.phase = "over";
   }
   requestAnimationFrame(tickHud);
@@ -210,6 +236,7 @@ function tickHud(): void {
 
 function applyServer(event: ServerEvent): void {
   if (event.type === "hello") {
+    syncClock(event.serverNow);
     state.you = event.you;
     state.room = event.room;
     state.players.clear();
@@ -225,12 +252,14 @@ function applyServer(event: ServerEvent): void {
     return;
   }
   if (event.type === "join") {
+    if (event.player.id === state.you?.id) return;
     state.players.set(event.player.id, event.player);
-    if (event.player.id !== state.you?.id) state.scene?.upsert(event.player, true);
+    state.scene?.upsert(event.player, true);
     renderBoard();
     return;
   }
   if (event.type === "leave") {
+    if (event.id === state.you?.id) return;
     state.players.delete(event.id);
     state.scene?.remove(event.id);
     renderBoard();
@@ -258,13 +287,19 @@ function applyServer(event: ServerEvent): void {
       }
     }
     for (const p of event.players) {
+      if (p.id === state.you?.id) {
+        state.you = { ...state.you, ...p, id: state.you.id };
+        state.players.set(state.you.id, state.you);
+        continue;
+      }
       state.players.set(p.id, p);
-      if (p.id !== state.you?.id) state.scene?.upsert(p);
+      state.scene?.upsert(p);
     }
     renderBoard();
     return;
   }
   if (event.type === "round") {
+    syncClock(event.serverNow);
     applyRound(event.round, event.players);
     return;
   }
@@ -295,6 +330,7 @@ function leave(): void {
   state.scene = null;
   state.you = null;
   state.round = null;
+  state.ticket = "";
   state.players.clear();
   $("stage").hidden = true;
   $("lobby").hidden = false;
@@ -302,9 +338,10 @@ function leave(): void {
   const url = new URL(location.href);
   url.searchParams.delete("room");
   history.replaceState(null, "", url);
+  state.widget?.reset();
 }
 
-function enterStage(room: string): void {
+function enterStage(room: string, ticket: string): void {
   $("lobby").hidden = true;
   $("stage").hidden = false;
   const canvas = $("view") as HTMLCanvasElement;
@@ -315,15 +352,15 @@ function enterStage(room: string): void {
       state.ws.send(JSON.stringify({ type: "move", x, z }));
     }
   });
-  connect(room);
+  connect(room, ticket);
 }
 
-function connect(room: string): void {
+function connect(room: string, ticket: string): void {
   state.ws?.close();
   const name = sanitizeName(($("name") as HTMLInputElement).value || storedName());
   rememberName(name);
-  const id = sessionId();
-  const ws = new WebSocket(wsUrl(room, name, id));
+  state.ticket = ticket;
+  const ws = new WebSocket(wsUrl(room, name, ticket));
   state.ws = ws;
   setStatus("Connecting…", "idle");
   ws.addEventListener("open", () => setStatus("Connected. Waiting for hello…", "ok"));
@@ -335,35 +372,190 @@ function connect(room: string): void {
       /* ignore */
     }
   });
-  ws.addEventListener("close", () => {
-    if (state.ws === ws) setStatus("Disconnected. Rejoin from the lobby.", "warn");
+  ws.addEventListener("close", (ev) => {
+    if (state.ws !== ws) return;
+    if (ev.code >= 4000 && ev.reason) {
+      setStatus(ev.reason === "full" ? "This room is full (8). Try another name." : ev.reason, "warn");
+    } else {
+      setStatus("Disconnected. Rejoin from the lobby.", "warn");
+    }
   });
-  ws.addEventListener("error", () => setStatus("The socket failed.", "warn"));
+  ws.addEventListener("error", () => {
+    if (state.ws === ws) setStatus("The socket failed.", "warn");
+  });
 }
 
-async function createRoom(): Promise<void> {
-  const name = slugifyRoom(($("room") as HTMLInputElement).value);
-  setStatus("Creating room…", "idle");
-  const res = await fetch(`${appBase()}/api/rooms`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ name }),
+async function mintTicket(room: string): Promise<JoinTicket | null> {
+  const token = state.widget?.getResponse() ?? "";
+  if (!token) {
+    setStatus("Finish the Turnstile check first.", "warn");
+    return null;
+  }
+  setStatus("Getting a join ticket…", "idle");
+  let res: Response;
+  try {
+    res = await fetch(`${appBase()}/api/rooms`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: room, turnstileToken: token }),
+    });
+  } catch {
+    setStatus("Could not reach the Worker.", "warn");
+    return null;
+  }
+  let data: { room?: { id: string; name?: string }; ticket?: string; expiresAt?: number; error?: { message: string } };
+  try {
+    data = (await res.json()) as typeof data;
+  } catch {
+    setStatus(`Join failed (${res.status})`, "warn");
+    state.widget?.reset();
+    return null;
+  }
+  if (!res.ok || !data.ticket || !data.room?.id) {
+    setStatus(data.error?.message || `Join failed (${res.status})`, "warn");
+    state.widget?.reset();
+    return null;
+  }
+  return { room: { id: data.room.id, name: data.room.name ?? data.room.id }, ticket: data.ticket, expiresAt: data.expiresAt ?? 0 };
+}
+
+async function joinRoom(raw?: string): Promise<void> {
+  if (state.joining) return;
+  state.joining = true;
+  try {
+    const room = slugifyRoom(raw || ($("room") as HTMLInputElement).value);
+    ($("room") as HTMLInputElement).value = room;
+    const minted = await mintTicket(room);
+    if (!minted) return;
+    const url = new URL(location.href);
+    url.searchParams.set("room", minted.room.id);
+    history.replaceState(null, "", url);
+    enterStage(minted.room.id, minted.ticket);
+  } finally {
+    state.joining = false;
+  }
+}
+
+function clearDeepLink(): void {
+  const url = new URL(location.href);
+  if (!url.searchParams.has("room")) return;
+  url.searchParams.delete("room");
+  history.replaceState(null, "", url);
+}
+
+function finishDeepFail(): void {
+  state.deepJoin = "done";
+  clearDeepLink();
+  setStatus("Could not get a join ticket for this link. Join from the lobby instead.", "warn");
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function waitForTurnstileToken(ms: number): Promise<boolean> {
+  const started = Date.now();
+  while (Date.now() - started < ms) {
+    if (!$("stage").hidden || state.deepJoin === "done") return false;
+    if (state.widget?.getResponse()) return true;
+    await sleep(50);
+  }
+  return Boolean(state.widget?.getResponse());
+}
+
+function deepJoinStopped(): boolean {
+  return !$("stage").hidden || state.deepJoin === "done";
+}
+
+async function tryDeepJoin(room: string): Promise<void> {
+  if (state.deepJoin !== "idle" || !$("stage").hidden) return;
+  state.deepJoin = "pending";
+  try {
+    for (let attempt = 0; attempt < DEEP_JOIN_MAX; attempt++) {
+      if (deepJoinStopped()) return;
+      if (attempt > 0) {
+        const delay = deepBackoffMs(attempt);
+        setStatus(`Could not join that room. Retrying (${attempt + 1}/${DEEP_JOIN_MAX})…`, "warn");
+        await sleep(delay);
+        if (deepJoinStopped()) return;
+        const tokenReady = await waitForTurnstileToken(8_000);
+        if (!tokenReady) continue;
+      }
+      state.deepAttempts = attempt + 1;
+      await joinRoom(room);
+      if (!$("stage").hidden) {
+        state.deepJoin = "done";
+        return;
+      }
+    }
+    finishDeepFail();
+  } finally {
+    if (state.deepJoin === "pending") {
+      if ($("stage").hidden) finishDeepFail();
+      else state.deepJoin = "done";
+    }
+  }
+}
+
+function renderTurnstile(siteKey: string): Promise<TurnstileApi | null> {
+  const slot = $("turnstile");
+  return new Promise((resolve) => {
+    const started = Date.now();
+    const timer = window.setInterval(() => {
+      const apiRef = turnstileApi();
+      if (apiRef) {
+        window.clearInterval(timer);
+        apiRef.render(slot, {
+          sitekey: siteKey,
+          action: "join-room",
+          theme: document.documentElement.dataset.theme === "light" ? "light" : "dark",
+          callback: () => {
+            ($("join") as HTMLButtonElement).disabled = false;
+            ($("create") as HTMLButtonElement).disabled = false;
+            if (!$("stage").hidden) return;
+            if (!shouldKeepJoinError($("status").dataset.kind)) {
+              setStatus("Check passed. Join a room when you are ready.", "ok");
+            }
+            const deep = new URLSearchParams(location.search).get("room");
+            if (deep) void tryDeepJoin(deep);
+          },
+          "error-callback": () => setStatus("Turnstile could not check this browser.", "warn"),
+        });
+        resolve(apiRef);
+        return;
+      }
+      if (Date.now() - started > 8000) {
+        window.clearInterval(timer);
+        resolve(null);
+      }
+    }, 50);
   });
-  const data = (await res.json()) as { room?: { id: string }; error?: { message: string } };
-  if (!res.ok) {
-    setStatus(data.error?.message || `Create failed (${res.status})`, "warn");
+}
+
+async function bootGate(): Promise<void> {
+  const join = $("join") as HTMLButtonElement;
+  const create = $("create") as HTMLButtonElement;
+  join.disabled = true;
+  create.disabled = true;
+  let config: PublicConfig;
+  try {
+    const res = await fetch(`${appBase()}/api/config`);
+    config = (await res.json()) as PublicConfig;
+  } catch {
+    setStatus("The Worker could not be reached.", "warn");
     return;
   }
-  joinRoom(data.room?.id || name);
-}
-
-function joinRoom(raw?: string): void {
-  const room = slugifyRoom(raw || ($("room") as HTMLInputElement).value);
-  ($("room") as HTMLInputElement).value = room;
-  const url = new URL(location.href);
-  url.searchParams.set("room", room);
-  history.replaceState(null, "", url);
-  enterStage(room);
+  state.config = config;
+  if (!config.createOpen || !config.siteKey) {
+    setStatus("Joining is off until Turnstile is configured for this host.", "warn");
+    return;
+  }
+  const widget = await renderTurnstile(config.siteKey);
+  state.widget = widget;
+  if (!widget) {
+    setStatus("Turnstile did not load. Refresh and try again.", "warn");
+    return;
+  }
 }
 
 function boot(): void {
@@ -375,14 +567,13 @@ function boot(): void {
   roomInput.value = slugifyRoom(params.get("room") || "arena");
 
   $("create").addEventListener("click", () => {
-    void createRoom();
+    void joinRoom();
   });
-  $("join").addEventListener("click", () => joinRoom());
   $("leave").addEventListener("click", () => leave());
   $("start").addEventListener("click", () => sendStart());
   $("lobby-form").addEventListener("submit", (ev) => {
     ev.preventDefault();
-    joinRoom();
+    void joinRoom();
   });
   for (const button of document.querySelectorAll<HTMLButtonElement>("#pad button")) {
     const key = button.dataset.key || "";
@@ -409,7 +600,7 @@ function boot(): void {
 
   tickHud();
   void ROUND_MS;
-  if (params.get("room")) joinRoom(params.get("room") || "arena");
+  void bootGate();
 }
 
 boot();

@@ -15,8 +15,15 @@
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["VibeRoom"] }],
   "ratelimits": [
-    { "name": "CREATE_LIMIT", "namespace_id": "7371", "simple": { "limit": 8, "period": 60 } }
+    { "name": "CONNECT_LIMIT", "namespace_id": "7480", "simple": { "limit": 30, "period": 60 } }
   ],
+  "vars": {
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFRgpxXI2NOgPsDG",
+    "TURNSTILE_LOCAL": "0"
+  },
+  "secrets": {
+    "required": ["TURNSTILE_SECRET", "JOIN_SECRET"]
+  },
   "routes": [
     { "pattern": "tech-demos.theserverless.dev/demos/goodvibes*", "zone_name": "theserverless.dev" },
     { "pattern": "goodvibes.tech-demos.theserverless.dev/*", "zone_name": "theserverless.dev" }
