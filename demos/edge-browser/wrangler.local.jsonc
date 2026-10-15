@@ -1,0 +1,46 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tech-demos-edge-browser",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-10-08",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "tech-demos-edge-browser",
+      "database_id": "00000000-0000-4000-8000-000000007441",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "BUCKET",
+      "bucket_name": "tech-demos-edge-browser"
+    }
+  ],
+  "workflows": [
+    {
+      "name": "tech-demos-edge-browser-capture",
+      "binding": "CAPTURE",
+      "class_name": "CaptureWorkflow"
+    }
+  ],
+  "ratelimits": [
+    { "name": "CAPTURE_LIMIT", "namespace_id": "7441", "simple": { "limit": 4, "period": 60 } },
+    { "name": "READ_LIMIT", "namespace_id": "7442", "simple": { "limit": 120, "period": 60 } },
+    { "name": "SESSION_LIMIT", "namespace_id": "7443", "simple": { "limit": 40, "period": 60 } }
+  ],
+  "vars": {
+    "AI_MODEL": "@cf/zai-org/glm-5.3-flash",
+    "ENVIRONMENT": "local",
+    "TURNSTILE_SITE_KEY": "1x00000000000000000000AA"
+  },
+  "secrets": { "required": ["TURNSTILE_SECRET", "IP_HASH_SECRET"] },
+  "workers_dev": false
+}
