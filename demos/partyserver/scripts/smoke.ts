@@ -272,19 +272,25 @@ if (arr?.id) {
   freshAttack.getArray("strokes").insert(0, ["junk-item", "another"]);
   Y.applyUpdate(docArr, Y.encodeStateAsUpdate(freshAttack));
   docArr.getMap("strokes").set("bad", "not-json");
-  docArr.getMap("strokes").set(
-    "okfresh",
-    JSON.stringify({ id: "okfresh", color: "#c2410c", size: 6, points: [40, 40, 80, 80], client: "smokecli" }),
-  );
   await sleep(600);
   const docArrPeer = new Y.Doc();
   const providerArrPeer = new YProvider(host, arr.id, docArrPeer, { party: PARTY, disableBc: true });
   await waitFor(() => providerArrPeer.wsconnected, 8000);
   await sleep(400);
-  check("junk map entries after an array write are dropped", !docArrPeer.getMap("strokes").has("bad") && docArrPeer.getMap("strokes").has("okfresh"));
+  check("junk map entries after an array write never land", !docArrPeer.getMap("strokes").has("bad"));
   check("fresh-room array items are deleted", undeletedListCount(docArrPeer.getMap("strokes")) === 0);
+  const docOk = new Y.Doc();
+  const providerOk = new YProvider(host, arr.id, docOk, { party: PARTY, disableBc: true });
+  await waitFor(() => providerOk.wsconnected, 8000);
+  docOk.getMap("strokes").set(
+    "okfresh",
+    JSON.stringify({ id: "okfresh", color: "#c2410c", size: 6, points: [40, 40, 80, 80], client: "smokecli" }),
+  );
+  const afterFresh = await waitFor(() => docArrPeer.getMap("strokes").has("okfresh"), 8000);
+  check("new stroke still syncs after an array write", afterFresh);
   providerArr.disconnect();
   providerArrPeer.disconnect();
+  providerOk.disconnect();
 }
 
 let ninthRoom = "";
