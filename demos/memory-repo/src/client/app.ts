@@ -395,7 +395,7 @@ dreamButton.addEventListener("click", async () => {
       return;
     }
     renderDream(result.data);
-    hint(dreamHint, result.data.status === "committed" ? "Dream committed." : "Nothing was committed.");
+    hint(dreamHint, result.data.status === "committed" ? "Dream committed." : "");
     await refresh({ keepDiff: true });
     const commitHash = result.data.commitHash;
     if (commitHash) {
