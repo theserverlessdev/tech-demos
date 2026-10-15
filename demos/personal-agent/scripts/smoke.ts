@@ -151,6 +151,11 @@ check("docs catalog answers the placeholder question", catalog.status === 200 &&
   preview: catalog.data?.summary.slice(0, 140),
 });
 check("catalog citations use page titles, not the hostname", catalogHasPageTitles, catalogTitles);
+check(
+  "catalog excerpts drop docs chrome",
+  !/skip to content|documentation index|fetch the complete documentation/i.test(catalog.data?.summary ?? ""),
+  catalog.data?.summary.slice(0, 220),
+);
 
 const research = await call<ResearchReply>("/api/research", {
   method: "POST",

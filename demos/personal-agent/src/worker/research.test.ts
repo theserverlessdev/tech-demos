@@ -25,27 +25,29 @@ test("pickCatalog pads when nothing matches", () => {
 test("markdownToText reads YAML title and drops docs boilerplate", () => {
   const page = markdownToText(
     `---
-title: Durable Objects
-pcx_content_type: overview
+title: Cloudflare Durable Objects
 ---
 
-# Durable Objects
+[Skip to content](#main-content)
 
-Skip to content
+> Documentation Index
+> Fetch the complete documentation index at: https://developers.cloudflare.com/durable-objects/llms.txt
+> Use this file to discover all available pages before exploring further.
 
-Documentation Index
+# Cloudflare Durable Objects
 
-Fetch the complete documentation index as a Markdown file.
+Last updated Jul 15, 2026|Copy as Markdown| [View as Markdown](https://developers.cloudflare.com/durable-objects/index.md)
 
 Durable Objects keep state close to the Worker that uses them.
 `,
     "developers.cloudflare.com",
   );
-  expect(page.title).toBe("Durable Objects");
+  expect(page.title).toBe("Cloudflare Durable Objects");
   expect(page.text).toContain("keep state close");
-  expect(page.text).not.toContain("Skip to content");
-  expect(page.text).not.toContain("Documentation Index");
-  expect(page.text).not.toContain("Fetch the complete documentation");
+  expect(page.text).not.toMatch(/skip to content/i);
+  expect(page.text).not.toMatch(/documentation index/i);
+  expect(page.text).not.toMatch(/fetch the complete documentation/i);
+  expect(page.text).not.toMatch(/last updated/i);
 });
 
 test("markdownToText falls back to the first heading", () => {

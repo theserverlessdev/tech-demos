@@ -114,7 +114,8 @@ function htmlToText(html: string): { title: string; text: string } {
   return { title, text: text.slice(0, MAX_TEXT) };
 }
 
-const BOILERPLATE = /^(skip to content|documentation index|fetch the complete documentation)\b/i;
+const BOILERPLATE =
+  /^(skip to content|documentation index|fetch the complete documentation|use this file to discover)\b/i;
 
 function yamlTitle(frontmatter: string): string {
   const match = frontmatter.match(/^(?:title|Title):\s*(?:["']?)(.+?)(?:["']?)\s*$/m);
@@ -136,10 +137,18 @@ export function markdownToText(markdown: string, fallbackTitle: string): { title
     src = src.slice(fm[0].length);
   }
   if (!title) title = headingTitle(src);
-  src = src.replace(/^#\s+.+\n?/, "");
   const text = src
+    .replace(/\[skip to content\]\([^)]*\)/gi, "")
+    .replace(/^#\s+.+\n?/m, "")
     .split("\n")
-    .filter((line) => !BOILERPLATE.test(line.trim()))
+    .filter((line) => {
+      const trimmed = line.trim().replace(/^>\s*/, "");
+      if (!trimmed) return true;
+      if (BOILERPLATE.test(trimmed)) return false;
+      if (/^last updated\b/i.test(trimmed)) return false;
+      if (/copy as markdown/i.test(trimmed) && /view as markdown/i.test(trimmed)) return false;
+      return true;
+    })
     .join("\n")
     .replace(/\s+/g, " ")
     .trim()
