@@ -122,6 +122,16 @@ button { cursor: pointer; background: none; border: none; }
 .strip__dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); flex-shrink: 0; }
 #strip-text { flex: 1; }
 
+.gate {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+#turnstile { flex: 1 1 auto; min-width: min(100%, 300px); max-width: 100%; }
+#gate-hint { flex: 1 1 100%; }
+#gate-hint:empty { display: none; }
+
 .layout {
   flex: 1;
   display: grid;
@@ -145,7 +155,7 @@ button { cursor: pointer; background: none; border: none; }
 }
 .message[data-role="user"] { background: var(--user-bg); align-self: flex-end; }
 .message[data-role="assistant"] { background: var(--agent-bg); align-self: flex-start; }
-.message p { white-space: pre-wrap; color: var(--text-strong); }
+.message p { white-space: pre-wrap; color: var(--text-strong); overflow-wrap: anywhere; }
 .recalls { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .recall {
   font-family: var(--font-mono); font-size: 11px;
@@ -163,8 +173,8 @@ textarea, input {
   padding: 8px 10px;
   resize: vertical;
 }
-.composer__row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-#turnstile-widget { min-height: 0; }
+.composer__row, .panel-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.panel-actions .hint { flex: 1; min-width: 0; }
 
 .side {
   border-left: 1px solid var(--border);
@@ -194,12 +204,13 @@ textarea, input {
   white-space: pre-wrap; font-family: var(--font-body); font-size: 14px;
   background: var(--bg); border-radius: var(--radius-sm); padding: 10px;
   border: 1px solid var(--border); color: var(--text);
+  overflow-wrap: anywhere;
 }
 .report { display: grid; gap: 8px; }
-#report-summary { white-space: pre-wrap; color: var(--text-strong); }
+#report-summary { white-space: pre-wrap; color: var(--text-strong); overflow-wrap: anywhere; }
 #report-cites { list-style: none; display: grid; gap: 4px; font-size: 13px; }
 #report-cites a { word-break: break-all; }
-.cite-bad { color: var(--danger); }
+.cite-bad { color: var(--danger); overflow-wrap: anywhere; }
 
 .foot {
   border-top: 1px solid var(--border);
@@ -207,14 +218,51 @@ textarea, input {
   font-size: 13px; color: var(--muted);
 }
 
+@media (min-width: 901px) {
+  html, body { height: 100%; }
+  body { height: 100dvh; overflow: hidden; }
+  .layout { min-height: 0; overflow: hidden; }
+  .side { overflow: auto; }
+}
+
 @media (max-width: 900px) {
-  .topbar { grid-template-columns: 1fr auto; height: auto; padding: 10px 14px; gap: 8px; }
-  .topbar__title { grid-column: 1 / -1; flex-direction: column; align-items: flex-start; gap: 2px; }
-  .topbar__title p { white-space: normal; }
+  .topbar {
+    position: static;
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    height: auto;
+    padding: 8px 14px;
+    padding-top: max(8px, env(safe-area-inset-top));
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+    gap: 8px;
+  }
+  .brand span { display: none; }
+  .topbar__title { flex: 1; min-width: 0; }
+  .topbar__title h1 { font-size: 16px; }
+  .topbar__title p { display: none; }
+  .topbar__actions { flex-shrink: 0; }
   .layout { grid-template-columns: 1fr; }
   .side { border-left: 0; border-top: 1px solid var(--border); }
   .chat { min-height: 70dvh; }
   .strip { flex-wrap: wrap; }
+  .composer { position: static; padding-bottom: 0; }
+  html { scroll-padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
+  .message { scroll-margin-bottom: calc(96px + env(safe-area-inset-bottom)); }
+  .layout { order: 3; }
+  .gate {
+    order: 4;
+    position: sticky;
+    bottom: 0;
+    z-index: 4;
+    border-bottom: 0;
+    border-top: 1px solid var(--border);
+    padding: 8px 14px calc(8px + env(safe-area-inset-bottom));
+  }
+  .foot { order: 5; }
+  .chat,
+  .side { padding-bottom: 96px; }
 }
 
 /* Phone layout. Graphite and Ember stay; controls grow to a finger and fields stay at 16px so iOS does not zoom. */
@@ -223,55 +271,30 @@ textarea,
 select {
   font-size: 16px;
 }
-.turnstile { max-width: 100%; overflow: auto; }
 @media (max-width: 900px) {
   .btn,
   a.btn,
   .btn-primary,
   .btn-ghost,
-  .filter,
-  button.chip,
-  .size,
-  .swatch,
-  .n,
-  .toggle__btn,
-  .room-btn,
-  .tabs a,
   .note {
     min-height: 44px;
   }
-  .btn-icon,
-  .swatch,
-  .filter,
-  .n,
-  .size {
+  .btn-icon {
     min-width: 44px;
-  }
-  .btn-icon,
-  .swatch {
     width: 44px;
     height: 44px;
   }
-  .topbar {
-    padding-top: max(10px, env(safe-area-inset-top));
-    padding-left: max(12px, env(safe-area-inset-left));
-    padding-right: max(12px, env(safe-area-inset-right));
-  }
-  .topbar__actions { flex-wrap: wrap; justify-content: flex-end; max-width: 100%; }
-  .composer { padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
-  .title-input, .composer input, .join input { min-width: 0; max-width: 100%; }
+  .topbar__actions { justify-content: flex-end; max-width: 100%; }
+  .composer input { min-width: 0; max-width: 100%; }
 }
-@media (max-width: 900px) and (max-height: 520px) {
-  .canvas-wrap { min-height: 42dvh; }
+@media (max-height: 520px) {
   .chat { min-height: 0; }
-  .lobby { min-height: 0; padding-top: 0.5rem; padding-bottom: 0.5rem; }
+  .composer { position: static; }
+  .layout { order: 4; }
+  .gate { position: static; order: 3; }
+  .chat,
+  .side { padding-bottom: 12px; }
 }
-
-@media (max-width: 900px) {
-  .composer { position: sticky; bottom: 0; background: var(--bg); z-index: 2; }
-  .note { min-height: 44px; }
-}
-
 
 .shows {
   margin: 0 0 0.85rem;

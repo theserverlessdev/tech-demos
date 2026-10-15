@@ -82,7 +82,7 @@ export async function verifyTurnstile(env: Env, request: Request, token: string)
 
   const host = result.hostname ?? "";
   const dummyHost = TEST_SECRETS.has(secret) && (localHost(host) || host === "example.com");
-  const hostOk = dummyHost || ALLOWED_HOSTS.has(host) || host.endsWith(".workers.dev");
+  const hostOk = dummyHost || ALLOWED_HOSTS.has(host);
   if (!hostOk) return { ok: false, status: 403, code: "turnstile_failed", message: "Turnstile was solved for a different site." };
   if (!TEST_SECRETS.has(secret) && result.action && result.action !== ACTION) {
     return { ok: false, status: 403, code: "turnstile_failed", message: "Turnstile was solved for a different action." };

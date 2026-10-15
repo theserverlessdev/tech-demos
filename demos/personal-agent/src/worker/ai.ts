@@ -1,8 +1,9 @@
 import { normalize } from "./memory";
 
 type ChatOutput = {
-  choices?: { message?: { content?: string | null } }[];
+  choices?: { message?: { content?: string | null }; finish_reason?: string | null }[];
   response?: string;
+  finish_reason?: string | null;
 };
 
 function stripThinking(text: string): string {
@@ -48,11 +49,22 @@ export async function complete(env: Env, system: string, user: string): Promise<
         { role: "system", content: system },
         { role: "user", content: user.slice(0, 12_000) },
       ],
-      max_tokens: 500,
+      // GLM-5.3 Flash cannot disable reasoning. low + a larger completion budget
+      // leaves room after thinking tokens. max_tokens is deprecated on this model.
+      max_completion_tokens: 1500,
       temperature: 0.2,
-      chat_template_kwargs: { enable_thinking: false },
+      reasoning_effort: "low",
     })) as ChatOutput;
     const text = modelText(out);
+    const finish = out.choices?.[0]?.finish_reason ?? out.finish_reason ?? null;
+    console.info(
+      JSON.stringify({
+        event: "chat_complete",
+        finish_reason: finish,
+        empty_content: text.length < 2,
+        length: text.length,
+      }),
+    );
     if (text.length < 2 || text.length > 4_000) return null;
     return text;
   } catch (err) {

@@ -264,7 +264,7 @@ export const demos: DemoEntry[] = [
     title: "Personal agent",
     description: "An anonymous assistant with notes, recall, and a short research pass.",
     demonstrates:
-      "One Agents SDK Durable Object per anonymous visitor holds the thread and embedding vectors. Markdown notes live in R2 under that visitor's prefix, and research fetches 2–4 allowlisted pages. An alarm deletes that visitor's rows and objects 24 hours after the last write.",
+      "One Agents SDK Durable Object per anonymous visitor holds the thread and embedding vectors. Page views and expired or unsigned reads do not create one. Markdown notes live in R2 under that visitor's prefix, and research fetches 2–4 allowlisted pages. An alarm deletes that visitor's R2 files and Durable Object storage 24 hours after the last write.",
     capabilities: [
       "Chat with the assistant bound to this browser's visitor id",
       "Create, open, and delete markdown notes in R2",
