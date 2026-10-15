@@ -1,7 +1,7 @@
 import { routePartykitRequest } from "partyserver";
 import { BASE_PATH, ROOM_ID } from "../shared/protocol";
 import { HttpError, handleApi } from "./api";
-import { verifyRoomId } from "./ids";
+import { roomIdSecret, verifyRoomId } from "./ids";
 import { BoardRoom } from "./room";
 
 export { BoardRoom };
@@ -89,7 +89,7 @@ export default {
             if (lobby.className !== "BoardRoom" || !ROOM_ID.test(lobby.name)) {
               return new Response("Not found", { status: 404 });
             }
-            if (!(await verifyRoomId(env.TURNSTILE_SECRET ?? "", lobby.name))) {
+            if (!(await verifyRoomId(roomIdSecret(env), lobby.name))) {
               return new Response("Not found", { status: 404 });
             }
             const { success } = await env.CONNECT_LIMIT.limit({ key: clientIp(request) });

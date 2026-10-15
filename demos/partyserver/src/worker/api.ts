@@ -1,18 +1,12 @@
 import { getServerByName } from "partyserver";
 import { BASE_PATH, MAX_CONNECTIONS, MAX_DOC_BYTES, MAX_STROKES, ROOM_ID, ROOM_TTL_MS, type CreatedRoom, type PublicConfig, type RoomStatus } from "../shared/protocol";
-import { mintRoomId, verifyRoomId } from "./ids";
+import { HttpError } from "./api-error";
+import { readCappedText } from "./body";
+import { mintRoomId, roomIdSecret, verifyRoomId } from "./ids";
 import { internalHeader, type BoardRoom } from "./room";
 import { assessTurnstile, verifyTurnstile } from "./turnstile";
 
-export class HttpError extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: string,
-    message: string,
-  ) {
-    super(message);
-  }
-}
+export { HttpError } from "./api-error";
 
 function clientIp(request: Request): string {
   return request.headers.get("cf-connecting-ip") || request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "local";
@@ -23,13 +17,7 @@ function json(data: unknown, status = 200): Response {
 }
 
 async function readJson(request: Request): Promise<Record<string, unknown>> {
-  const declared = request.headers.get("content-length");
-  if (declared !== null) {
-    const n = Number(declared);
-    if (!Number.isFinite(n) || n < 0 || n > 8_000) throw new HttpError(413, "too_large", "The request body is too large.");
-  }
-  const text = await request.text();
-  if (text.length > 8_000) throw new HttpError(413, "too_large", "The request body is too large.");
+  const text = await readCappedText(request);
   if (!text.trim()) return {};
   try {
     const parsed = JSON.parse(text) as unknown;
@@ -87,7 +75,7 @@ export async function handleApi(request: Request, env: Env, pathname: string): P
     if (!/^[A-Za-z0-9._-]{20,2048}$/.test(token)) throw new HttpError(400, "invalid", "Missing Turnstile token.");
     const ok = await verifyTurnstile(secret, token, clientIp(request), host, testCredentialsAllowed(env));
     if (!ok) throw new HttpError(403, "turnstile", "Turnstile could not verify this browser.");
-    const id = await mintRoomId(secret);
+    const id = await mintRoomId(roomIdSecret(env));
     const stub = await roomStub(env, id);
     const created = await callRoom(stub, "/init", "POST");
     if (!created.ok) throw new HttpError(502, "room", "The room did not start.");
@@ -99,7 +87,7 @@ export async function handleApi(request: Request, env: Env, pathname: string): P
   if (match && method === "GET") {
     const id = match[1] ?? "";
     if (!ROOM_ID.test(id)) throw new HttpError(404, "not_found", "Unknown room.");
-    if (!(await verifyRoomId(env.TURNSTILE_SECRET ?? "", id))) throw new HttpError(404, "not_found", "Unknown room.");
+    if (!(await verifyRoomId(roomIdSecret(env), id))) throw new HttpError(404, "not_found", "Unknown room.");
     const { success } = await env.READ_LIMIT.limit({ key: clientIp(request) });
     if (!success) throw new HttpError(429, "rate_limited", "Too many room lookups from this address. Wait a minute.");
     const stub = await roomStub(env, id);

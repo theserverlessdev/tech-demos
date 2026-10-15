@@ -6,6 +6,8 @@ import { TEST_TURNSTILE_SECRET, TEST_TURNSTILE_SITE_KEY, assessTurnstile } from 
 import { verifyRoomId } from "../src/worker/ids";
 import { probeNinth } from "./ninth";
 
+const LOCAL_ROOM_SECRET = "partyserver-local-room-secret";
+
 const base = (process.argv.find((arg) => arg.startsWith("http")) ?? "http://127.0.0.1:8787").replace(/\/$/, "");
 const DUMMY = "XXXX.DUMMY.TOKEN.XXXX";
 
@@ -92,7 +94,8 @@ check("malformed percent-encoding is 404 not 500", malformed.status === 404, mal
 const partyHttp = await fetch(`${base}/parties/board-room/abcdefghjkmnpqrst`);
 check("party HTTP is 404", partyHttp.status === 404, partyHttp.status);
 
-check("created id verifies against the local test secret", await verifyRoomId(TEST_TURNSTILE_SECRET, room.id));
+check("created id verifies against ROOM_SECRET", await verifyRoomId(LOCAL_ROOM_SECRET, room.id));
+check("Turnstile secret does not verify when ROOM_SECRET is set", !(await verifyRoomId(TEST_TURNSTILE_SECRET, room.id)));
 
 const host = base.replace(/^https?:\/\//, "");
 const docA = new Y.Doc();
@@ -164,6 +167,18 @@ docD.getMap("strokes").set(
 await sleep(600);
 check("on-board stroke is kept", peer.getMap("strokes").has("okstroke"));
 check("stroke at y=9000 is dropped", !peer.getMap("strokes").has("offboard"));
+const arrayAttack = new Y.Doc();
+arrayAttack.getArray("strokes").insert(0, ["wipe"]);
+Y.applyUpdate(docD, Y.encodeStateAsUpdate(arrayAttack));
+await sleep(600);
+check("existing strokes survive an array insert", peer.getMap("strokes").has("okstroke") && peer.getMap("strokes").has("aftercap"));
+docD.getMap("strokes").set(
+  "afterarr",
+  JSON.stringify({ id: "afterarr", color: "#c2410c", size: 6, points: [30, 30, 90, 90], client: "smokecli" }),
+);
+const afterArr = await waitFor(() => peer.getMap("strokes").has("afterarr"), 8000);
+check("new stroke still syncs after an array insert", afterArr);
+check("array insert left no live list items", undeletedListCount(peer.getMap("strokes")) === 0);
 providerD.disconnect();
 providerE.disconnect();
 await sleep(600);
@@ -213,13 +228,21 @@ if (arr?.id) {
   const docArr = new Y.Doc();
   const providerArr = new YProvider(host, arr.id, docArr, { party: PARTY, disableBc: true });
   await waitFor(() => providerArr.wsconnected, 8000);
-  docArr.getArray("strokes").insert(0, ["junk-item", "another"]);
+  const freshAttack = new Y.Doc();
+  freshAttack.getArray("strokes").insert(0, ["junk-item", "another"]);
+  Y.applyUpdate(docArr, Y.encodeStateAsUpdate(freshAttack));
+  docArr.getMap("strokes").set("bad", "not-json");
+  docArr.getMap("strokes").set(
+    "okfresh",
+    JSON.stringify({ id: "okfresh", color: "#c2410c", size: 6, points: [40, 40, 80, 80], client: "smokecli" }),
+  );
   await sleep(600);
   const docArrPeer = new Y.Doc();
   const providerArrPeer = new YProvider(host, arr.id, docArrPeer, { party: PARTY, disableBc: true });
   await waitFor(() => providerArrPeer.wsconnected, 8000);
   await sleep(400);
-  check("list items under strokes are deleted", docArrPeer.getArray("strokes").length === 0, docArrPeer.getArray("strokes").length);
+  check("junk map entries after an array write are dropped", !docArrPeer.getMap("strokes").has("bad") && docArrPeer.getMap("strokes").has("okfresh"));
+  check("fresh-room array items are deleted", undeletedListCount(docArrPeer.getMap("strokes")) === 0);
   providerArr.disconnect();
   providerArrPeer.disconnect();
 }
@@ -273,6 +296,17 @@ async function waitFor(pred: () => boolean, timeoutMs: number): Promise<boolean>
     await sleep(50);
   }
   return false;
+}
+
+function undeletedListCount(map: Y.Map<unknown>): number {
+  type StartItem = { deleted: boolean; right: StartItem | null };
+  let count = 0;
+  let item = (map as unknown as { _start: StartItem | null })._start;
+  while (item) {
+    if (!item.deleted) count += 1;
+    item = item.right;
+  }
+  return count;
 }
 
 function openSocket(url: string): Promise<WebSocket> {

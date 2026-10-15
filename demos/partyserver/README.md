@@ -31,7 +31,7 @@ Walkthrough stills and a short video: [artifacts/](./artifacts/).
 **Limits**
 
 - Display names ride awareness only. They are not written to Durable Object storage.
-- Creating a room needs Turnstile and `CREATE_LIMIT`. Opening a socket needs `CONNECT_LIMIT`. Status lookups need `READ_LIMIT`. Room ids are HMAC-tagged with a key derived from `TURNSTILE_SECRET`, so a forged id never wakes a Durable Object.
+- Creating a room needs Turnstile and `CREATE_LIMIT`. Opening a socket needs `CONNECT_LIMIT`. Status lookups need `READ_LIMIT`. Room ids are HMAC-tagged with a key derived from `ROOM_SECRET`, or from `TURNSTILE_SECRET` if that secret is unset. Rotating Turnstile invalidates live links until `ROOM_SECRET` is set.
 - This is a small board inspired by PartyKit, not a fork of that monorepo.
 
 ## What it proves
@@ -69,7 +69,7 @@ bun install
 bun run dev
 ```
 
-`.dev.vars.example` holds Cloudflare's published always-pass Turnstile test pair plus `TURNSTILE_LOCAL=1`. Wrangler dev rewrites `Host` to the production route, so that flag (not the hostname) is what allows the test pair. Production `wrangler.jsonc` leaves `TURNSTILE_LOCAL` at `"0"`. A deploy with the test secret, an empty secret, or no site key fails closed. Room ids are tagged with HMAC-SHA256 of a key derived from `TURNSTILE_SECRET`, not the Turnstile secret itself.
+`.dev.vars.example` holds Cloudflare's published always-pass Turnstile test pair, a local `ROOM_SECRET`, and `TURNSTILE_LOCAL=1`. Wrangler dev rewrites `Host` to the production route, so that flag (not the hostname) is what allows the test pair. Production `wrangler.jsonc` leaves `TURNSTILE_LOCAL` at `"0"`. A deploy with the test secret, an empty secret, or no site key fails closed. Room ids are tagged with HMAC-SHA256 of a key derived from `ROOM_SECRET` when that secret is set, otherwise from `TURNSTILE_SECRET`.
 
 Then, in another terminal:
 
@@ -82,7 +82,7 @@ bun run scripts/smoke.ts http://127.0.0.1:8787
 
 Live at <https://tech-demos.theserverless.dev/demos/partyserver/>.
 
-`vars.TURNSTILE_SITE_KEY` is the production widget key. `TURNSTILE_SECRET` is listed under `secrets.required` so types include it; the value stays a Worker secret. Rate-limit namespace ids are `7500` (create), `7501` (connect), and `7502` (status read). No D1 or R2. The Durable Object class and those bindings are declared in `wrangler.jsonc`.
+`vars.TURNSTILE_SITE_KEY` is the production widget key. `TURNSTILE_SECRET` and `ROOM_SECRET` are listed under `secrets.required` so types include them; the values stay Worker secrets. `ROOM_SECRET` is optional at runtime: if it is empty, room ids fall back to a key derived from `TURNSTILE_SECRET`. Rate-limit namespace ids are `7500` (create), `7501` (connect), and `7502` (status read). No D1 or R2. The Durable Object class and those bindings are declared in `wrangler.jsonc`.
 
 Redeploy from the owner account (unset any other `CF_API_TOKEN`):
 

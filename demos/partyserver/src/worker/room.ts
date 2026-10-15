@@ -1,6 +1,7 @@
 import type { Connection, ConnectionContext } from "partyserver";
 import { YServer } from "y-partyserver";
 import * as Y from "yjs";
+import type { Transaction } from "yjs";
 import {
   CLOSE_EXPIRED,
   CLOSE_FRAME,
@@ -56,6 +57,7 @@ export class BoardRoom extends YServer<Env> {
 
   override async onStart(): Promise<void> {
     await super.onStart();
+    this.document.getMap("strokes");
     this.document.on("afterTransaction", (tr) => {
       if (tr.origin === GUARD) return;
       this.#enforce(tr);
@@ -86,7 +88,7 @@ export class BoardRoom extends YServer<Env> {
   override async onConnect(connection: Connection, ctx: ConnectionContext): Promise<void> {
     if (!(await this.#admitSocket(connection))) return;
     await super.onConnect(connection, ctx);
-    if (this.#overCap) this.sendCustomMessage(connection, JSON.stringify({ type: "cap" }));
+    this.sendCustomMessage(connection, JSON.stringify({ type: this.#overCap ? "cap" : "open" }));
   }
 
   override async onMessage(connection: Connection, message: string | ArrayBuffer | ArrayBufferView): Promise<void> {
@@ -168,7 +170,7 @@ export class BoardRoom extends YServer<Env> {
       expiresAt: meta.expiresAt,
       alarmAt,
       connections: connectionCount(this),
-      strokes: expired ? 0 : (strokeMap(this.document)?.size ?? 0),
+      strokes: expired ? 0 : this.document.getMap("strokes").size,
       docBytes: stored?.byteLength ?? 0,
       full: this.#overCap,
       expired,
@@ -208,20 +210,17 @@ export class BoardRoom extends YServer<Env> {
    * Drop invalid / over-budget ink inside a GUARD transaction so y-partyserver
    * still broadcasts the deletes. Caps stay hard, and erasing reopens the board.
    */
-  #enforce(tr: Y.Transaction | null): void {
+  #enforce(tr: Transaction | null): void {
     const doc = this.document;
     let trimmed = false;
     let bytes = 0;
-    doc.transact(() => {
+    doc.transact((guardTr) => {
       for (const name of [...doc.share.keys()]) {
         if (name === "strokes") continue;
         purgeForeign(doc, name);
       }
-      const strokes = strokeMap(doc);
-      if (!strokes) {
-        bytes = Y.encodeStateAsUpdate(doc).byteLength;
-        return;
-      }
+      const strokes = doc.getMap<string>("strokes");
+      dropListItems(strokes, guardTr);
       const added: string[] = [];
       if (tr) {
         for (const keys of tr.changed.values()) {
@@ -267,7 +266,7 @@ export class BoardRoom extends YServer<Env> {
   }
 
   #syncCap(docBytes: number): void {
-    const strokes = strokeMap(this.document)?.size ?? 0;
+    const strokes = this.document.getMap("strokes").size;
     const next = strokes >= MAX_STROKES || docBytes > MAX_DOC_BYTES;
     if (next === this.#overCap) return;
     this.#overCap = next;
@@ -336,23 +335,19 @@ function typeName(doc: Y.Doc, name: string): string {
   return raw?.constructor?.name ?? "";
 }
 
-type ShareRoot = { constructor?: { name?: string }; _start?: unknown };
+type StartItem = {
+  deleted: boolean;
+  right: StartItem | null;
+  delete: (transaction: Transaction) => void;
+};
 
-function isListRoot(raw: ShareRoot | undefined): boolean {
-  if (!raw) return false;
-  const ctor = raw.constructor?.name ?? "";
-  return ctor === "YArray" || ctor === "YText" || raw._start != null;
-}
-
-/** Map of ink, or null when the root is missing or was created as an Array/Text and emptied. */
-function strokeMap(doc: Y.Doc): Y.Map<string> | null {
-  const raw = doc.share.get("strokes") as ShareRoot | undefined;
-  if (!raw) return null;
-  if (isListRoot(raw)) {
-    purgeForeign(doc, "strokes");
-    return null;
+/** List items under a Y.Map live on `_start`. Delete them; do not treat the map as a list. */
+function dropListItems(map: Y.Map<string>, transaction: Transaction): void {
+  let item = (map as unknown as { _start: StartItem | null })._start;
+  while (item) {
+    if (!item.deleted) item.delete(transaction);
+    item = item.right;
   }
-  return doc.getMap<string>("strokes");
 }
 
 function purgeForeign(doc: Y.Doc, name: string): void {

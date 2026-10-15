@@ -231,11 +231,28 @@ select {
   .field input { min-height: 44px; }
 }
 @media (orientation: landscape) and (max-height: 520px) {
-  .canvas-wrap {
-    aspect-ratio: 4 / 3;
-    max-height: 42dvh;
-    height: auto;
+  .topbar {
+    height: var(--topbar-h);
+    grid-template-columns: auto 1fr auto;
+    padding: 0 12px;
+  }
+  .topbar__title { display: block; grid-column: auto; grid-row: auto; min-width: 0; }
+  .stage {
+    grid-template-columns: minmax(0, 1fr) minmax(180px, var(--aside-w));
     min-height: 0;
+  }
+  .canvas-wrap {
+    width: 100%;
+    height: calc(100dvh - var(--topbar-h) - var(--strip-h));
+    max-height: none;
+    min-height: 0;
+    aspect-ratio: auto;
+  }
+  .aside {
+    border-left: 1px solid var(--border);
+    border-top: none;
+    overflow: auto;
+    max-height: calc(100dvh - var(--topbar-h) - var(--strip-h));
   }
   .chat { min-height: 0; }
   .lobby { min-height: 0; padding-top: 0.5rem; padding-bottom: 0.5rem; }

@@ -1,7 +1,11 @@
 import { ROOM_ALPHABET, ROOM_ID, ROOM_ID_RAND_LEN, ROOM_ID_TAG_LEN } from "../shared/protocol";
 
 const encoder = new TextEncoder();
-/** Separate from the Turnstile secret so rotating the widget does not break live room links. */
+/**
+ * HMAC info string so the room-id key is not the raw secret.
+ * Prefer `ROOM_SECRET`. If it is unset, the key is derived from `TURNSTILE_SECRET`,
+ * and rotating Turnstile then invalidates live room links (rooms last at most two hours).
+ */
 const ROOM_ID_INFO = encoder.encode("tech-demos/partyserver/room-id");
 const keyCache = new Map<string, CryptoKey>();
 
@@ -32,6 +36,13 @@ async function tagFor(secret: string, rand: string): Promise<string> {
   const key = await roomIdKey(secret);
   const sig = new Uint8Array(await crypto.subtle.sign("HMAC", key, encoder.encode(rand)));
   return encodeAlphabet(sig, ROOM_ID_TAG_LEN);
+}
+
+/** `ROOM_SECRET` if set, otherwise `TURNSTILE_SECRET`. Empty means ids cannot be minted or verified. */
+export function roomIdSecret(env: { ROOM_SECRET?: string; TURNSTILE_SECRET?: string }): string {
+  const dedicated = typeof env.ROOM_SECRET === "string" ? env.ROOM_SECRET.trim() : "";
+  if (dedicated) return dedicated;
+  return typeof env.TURNSTILE_SECRET === "string" ? env.TURNSTILE_SECRET : "";
 }
 
 /** `rand10 + HMAC(room-id-key, rand10)` in the room alphabet. Verified before any Durable Object is touched. */

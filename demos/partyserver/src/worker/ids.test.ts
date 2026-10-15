@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { ROOM_ID, ROOM_ID_RAND_LEN, ROOM_ID_TAG_LEN } from "../shared/protocol";
-import { mintRoomId, verifyRoomId } from "./ids";
+import { mintRoomId, roomIdSecret, verifyRoomId } from "./ids";
 
 const SECRET = "1x0000000000000000000000000000000AA";
 
@@ -30,4 +30,11 @@ test("a 10-char legacy id is rejected by ROOM_ID", () => {
 test("a different secret does not verify the same id", async () => {
   const id = await mintRoomId(SECRET);
   expect(await verifyRoomId("other-secret-value-not-the-test-pair", id)).toBe(false);
+});
+
+test("roomIdSecret prefers ROOM_SECRET and falls back to TURNSTILE_SECRET", () => {
+  expect(roomIdSecret({ ROOM_SECRET: " dedicated ", TURNSTILE_SECRET: SECRET })).toBe("dedicated");
+  expect(roomIdSecret({ TURNSTILE_SECRET: SECRET })).toBe(SECRET);
+  expect(roomIdSecret({ ROOM_SECRET: "  ", TURNSTILE_SECRET: SECRET })).toBe(SECRET);
+  expect(roomIdSecret({})).toBe("");
 });

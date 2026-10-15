@@ -22,13 +22,8 @@ await land.addInitScript(() => localStorage.setItem("theme", "dark"));
 await land.goto(roomUrl, { waitUntil: "domcontentloaded" });
 await land.locator("#canvas").waitFor();
 await land.waitForTimeout(300);
-const wrap = await land.locator(".canvas-wrap").boundingBox();
-if (!wrap) throw new Error("no canvas-wrap");
-const tooTall = wrap.height > 390 || wrap.height < 80;
-console.log("landscape wrap", Math.round(wrap.width), Math.round(wrap.height), tooTall ? "OVERFLOW" : "ok");
-await land.screenshot({ path: `${out.pathname}/board-844x390.png` });
+await assertLandscapeBoard(land, 844, 390, `${out.pathname}/board-844x390.png`);
 await landscape.close();
-if (tooTall) throw new Error(`844×390 canvas wrap is ${wrap.height}px, not in 80–390`);
 
 const widePhone = await browser.newContext({ viewport: { width: 932, height: 430 }, colorScheme: "dark" });
 const wide = await widePhone.newPage();
@@ -36,13 +31,8 @@ await wide.addInitScript(() => localStorage.setItem("theme", "dark"));
 await wide.goto(roomUrl, { waitUntil: "domcontentloaded" });
 await wide.locator("#canvas").waitFor();
 await wide.waitForTimeout(300);
-const wrapWide = await wide.locator(".canvas-wrap").boundingBox();
-if (!wrapWide) throw new Error("no canvas-wrap at 932×430");
-const wideBad = wrapWide.height > 430 || wrapWide.height < 80;
-console.log("932x430 wrap", Math.round(wrapWide.width), Math.round(wrapWide.height), wideBad ? "OVERFLOW" : "ok");
-await wide.screenshot({ path: `${out.pathname}/board-932x430.png` });
+await assertLandscapeBoard(wide, 932, 430, `${out.pathname}/board-932x430.png`);
 await widePhone.close();
-if (wideBad) throw new Error(`932×430 canvas wrap is ${wrapWide.height}px, not in 80–430`);
 
 const sockets: WebSocket[] = [];
 const id = new URL(roomUrl).searchParams.get("room");
@@ -86,6 +76,30 @@ for (const socket of sockets) {
 await phone.close();
 await browser.close();
 console.log("ui checks passed");
+
+async function assertLandscapeBoard(page: import("playwright").Page, width: number, height: number, path: string): Promise<void> {
+  const wrap = await page.locator(".canvas-wrap").boundingBox();
+  const aside = await page.locator(".aside").boundingBox();
+  if (!wrap) throw new Error(`no canvas-wrap at ${width}×${height}`);
+  if (!aside) throw new Error(`no aside at ${width}×${height}`);
+  const tooTall = wrap.height > height;
+  const tooShort = wrap.height < height * 0.5;
+  const tooNarrow = wrap.width < width * 0.45;
+  const stacked = aside.x < wrap.x + wrap.width - 8;
+  console.log(
+    `${width}x${height} wrap`,
+    Math.round(wrap.width),
+    Math.round(wrap.height),
+    "aside",
+    Math.round(aside.x),
+    tooTall || tooShort || tooNarrow || stacked ? "BAD" : "ok",
+  );
+  await page.screenshot({ path });
+  if (tooTall) throw new Error(`${width}×${height} canvas wrap is ${wrap.height}px, taller than the viewport`);
+  if (tooShort) throw new Error(`${width}×${height} canvas wrap is ${wrap.height}px, under half the viewport`);
+  if (tooNarrow) throw new Error(`${width}×${height} canvas wrap is ${wrap.width}px, under 45% of the viewport`);
+  if (stacked) throw new Error(`${width}×${height} tools are not beside the board`);
+}
 
 function openSocket(url: string): Promise<WebSocket> {
   return new Promise((resolve, reject) => {

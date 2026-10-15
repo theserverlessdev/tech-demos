@@ -25,7 +25,7 @@
     "TURNSTILE_LOCAL": "0"
   },
   "secrets": {
-    "required": ["TURNSTILE_SECRET"]
+    "required": ["TURNSTILE_SECRET", "ROOM_SECRET"]
   },
   "routes": [
     { "pattern": "tech-demos.theserverless.dev/demos/partyserver", "zone_name": "theserverless.dev" },
