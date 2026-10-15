@@ -1,20 +1,16 @@
+import { hostAllowed, turnstileActionOk, TURNSTILE_RACE, TURNSTILE_UNLOCK } from "../shared/guards";
+
 const SITEVERIFY = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 /** Published always-pass test secret. Local `.dev.vars` only. */
 const TEST_SECRET = "1x0000000000000000000000000000000AA";
 const TEST_SITE_KEY = "1x00000000000000000000AA";
 
-const ALLOWED_HOSTS = new Set([
-  "localhost",
-  "127.0.0.1",
-  "::1",
-  "example.com",
-  "tech-demos.theserverless.dev",
-  "actor-lab.tech-demos.theserverless.dev",
-]);
+export { hostAllowed, TURNSTILE_RACE, TURNSTILE_UNLOCK };
 
 type Siteverify = {
   success?: boolean;
   hostname?: string;
+  action?: string;
   "error-codes"?: string[];
 };
 
@@ -51,12 +47,7 @@ export function aiGate(env: Env, request: Request): "ready" | "off" {
   return "ready";
 }
 
-function hostAllowed(host: string): boolean {
-  if (ALLOWED_HOSTS.has(host)) return true;
-  return host.endsWith(".workers.dev");
-}
-
-export async function assertTurnstile(env: Env, request: Request, token: unknown): Promise<void> {
+export async function assertTurnstile(env: Env, request: Request, token: unknown, action: string): Promise<void> {
   if (aiGate(env, request) === "off") {
     throw new HttpError(503, "turnstile_unconfigured", "AI runs are off until TURNSTILE_SECRET is a real widget secret and the site key is not the test key.");
   }
@@ -85,6 +76,9 @@ export async function assertTurnstile(env: Env, request: Request, token: unknown
   }
   if (secret === TEST_SECRET) return;
   if (!hostAllowed(result.hostname ?? "")) {
+    throw new HttpError(403, "turnstile_failed", "Turnstile check failed. Refresh and try again.");
+  }
+  if (!turnstileActionOk(result.action, action)) {
     throw new HttpError(403, "turnstile_failed", "Turnstile check failed. Refresh and try again.");
   }
 }

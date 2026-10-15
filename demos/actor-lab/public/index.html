@@ -35,10 +35,10 @@
     </div>
   </header>
 
-  <p class="lede"><span class="shows__k">What this shows</span> Four updates read one counter, wait on Workers AI, and write back. The mailbox lines them up. An open input gate lets them overwrite each other.</p>
+  <p class="lede"><span class="shows__k">What this shows</span> A few updates read one counter, wait on Workers AI, and write back. The mailbox lines them up. An open input gate lets them overwrite each other.</p>
 
   <div class="gate-bar">
-    <div id="turnstile"></div>
+    <div id="turnstile-widget" class="turnstile-widget"></div>
     <p id="ai-note" class="ai-note">Checking whether AI runs are unlocked…</p>
   </div>
 
@@ -70,7 +70,7 @@
       </fieldset>
 
       <div class="n-row">
-        <span id="n-label">4 updates</span>
+        <span id="n-label">A few updates</span>
         <div class="n-picks" role="group" aria-label="How many updates">
           <button class="n" type="button" data-n="2">2</button>
           <button class="n" type="button" data-n="3">3</button>
@@ -110,7 +110,7 @@
     <section class="panel" aria-labelledby="chat-title">
       <header class="panel__head">
         <h2 id="chat-title">Room actor</h2>
-        <p>Hibernating WebSocket. Messages are SQLite. The scratch note is only in memory.</p>
+        <p>Hibernating WebSocket. Messages are SQLite. Scratch is isolate memory and also disappears when the room hibernates after about 10 seconds with no messages.</p>
       </header>
 
       <div class="room-setup" id="room-setup">
@@ -140,12 +140,12 @@
         </form>
         <div class="scratch-block">
           <label for="scratch">Scratch, memory only</label>
-          <textarea id="scratch" maxlength="280" placeholder="This note dies when the isolate drops."></textarea>
+          <textarea id="scratch" maxlength="280" placeholder="Gone after hibernation or Simulate evict."></textarea>
           <div class="scratch-actions">
+            <div id="unlock-widget" class="turnstile-widget"></div>
             <button class="btn btn-ghost" id="unlock" type="button" disabled>Unlock AI</button>
             <button class="btn" id="evict" type="button">Simulate evict</button>
           </div>
-          <p id="unlock-note" class="hint"></p>
         </div>
       </div>
     </section>

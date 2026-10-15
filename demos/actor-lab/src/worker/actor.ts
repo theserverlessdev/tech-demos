@@ -18,11 +18,8 @@ export abstract class Actor<T extends object> extends DurableObject<Env> {
     // input gate shut across that yield, so no request sees a half-loaded actor.
     ctx.blockConcurrencyWhile(async () => {
       await scheduler.wait(0);
-      this.#ensureKv();
-      this.migrate();
       this.state = this.#proxied(this.#hydrate());
       this.afterLoad();
-      await this.ctx.storage.setAlarm(Date.now() + this.ttlMs());
     });
   }
 
@@ -68,19 +65,35 @@ export abstract class Actor<T extends object> extends DurableObject<Env> {
       return;
     }
     this.beforeExpire();
-    this.ctx.storage.sql.exec("DELETE FROM kv");
     this.clearExtra();
+    await this.ctx.storage.deleteAll();
+    this.#tables = false;
     this.state = this.#proxied(this.initial());
     this.afterLoad();
     console.log(JSON.stringify({ event: "actor_expired", actor: this.constructor.name }));
   }
 
-  #ensureKv(): void {
+  protected ensureStorage(): void {
+    if (this.#tables) return;
     this.ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+    this.migrate();
+    this.#tables = true;
+  }
+
+  #tables = false;
+
+  #hasKv(): boolean {
+    const rows = this.ctx.storage.sql
+      .exec<{ n: number }>("SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'kv'")
+      .toArray();
+    return (rows[0]?.n ?? 0) > 0;
   }
 
   #hydrate(): T {
     const next = this.initial();
+    if (!this.#hasKv()) return next;
+    this.migrate();
+    this.#tables = true;
     const saved = new Map<string, unknown>();
     for (const row of this.ctx.storage.sql.exec<{ key: string; value: string }>("SELECT key, value FROM kv").toArray()) {
       try {
@@ -100,9 +113,11 @@ export abstract class Actor<T extends object> extends DurableObject<Env> {
 
   #proxied(data: T): T {
     const storage = this.ctx.storage;
+    const ensure = () => this.ensureStorage();
     return new Proxy(data, {
       set(target, prop, value) {
         if (typeof prop !== "string") return false;
+        ensure();
         (target as Record<string, unknown>)[prop] = value;
         // Each assignment flushes immediately. Upstream commits @Persisted at the
         // end of a successful call; this slice keeps the write on the assignment
