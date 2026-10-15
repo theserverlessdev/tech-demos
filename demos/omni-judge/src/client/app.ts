@@ -860,6 +860,11 @@ async function mountTurnstile(): Promise<void> {
     return;
   }
   session = (await res.json()) as SessionPayload;
+  if (session.stub) {
+    setText(testNote, "This page is using the local stub and Cloudflare’s always-pass Turnstile test widget. Production calls Clef-omni.");
+  } else if (session.testWidget) {
+    setText(testNote, "This page is using Cloudflare’s always-pass Turnstile test widget. Judgments call Clef-omni.");
+  }
   testNote.hidden = !(session.stub || session.testWidget);
   if (!session.siteKey) {
     setText(host, "Turnstile site key is not set.");

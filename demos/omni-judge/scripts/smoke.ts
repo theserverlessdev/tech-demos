@@ -11,7 +11,7 @@ function check(ok: boolean, message: string, detail?: unknown): void {
 
 const healthRes = await fetch(`${base}/api/health`);
 const health = (await healthRes.json()) as { ok?: boolean; ai?: string };
-check(healthRes.status === 200 && health.ok === true && health.ai === "stub", "health is a local stub", health);
+check(healthRes.status === 200 && health.ok === true && (health.ai === "stub" || health.ai === "binding"), "health answers", health);
 
 const denied = await fetch(`${base}/api/judge`, {
   method: "POST",
@@ -37,9 +37,17 @@ const judgedBody = (await judged.json()) as {
   judgment?: { source?: string; result?: { source?: string; answers?: { topLabel?: string }[] }; label?: string };
   comparison?: { result?: { source?: string; untrustedText?: string } };
 };
-check(judged.status === 201 && judgedBody.judgment?.result?.source === "local-stub", "sample judgment uses the labelled stub", judgedBody);
-check((judgedBody.judgment?.result?.answers?.length ?? 0) === 1, "one answer came back", judgedBody.judgment?.result?.answers);
-check(judgedBody.comparison?.result?.source === "chain-stub", "comparison is the labelled chain stub", judgedBody.comparison);
+const judgedSource = judgedBody.judgment?.result?.source;
+if (judged.status === 502) {
+  console.log("skip live judge; Workers AI did not answer");
+} else {
+  const judgedOk = judged.status === 201 && (judgedSource === "clef-omni" || judgedSource === "local-stub");
+  check(judgedOk, "sample judgment returned", judgedBody);
+  check((judgedBody.judgment?.result?.answers?.length ?? 0) === 1, "one answer came back", judgedBody.judgment?.result?.answers);
+  if (judgedSource === "local-stub") {
+    check(judgedBody.comparison?.result?.source === "chain-stub", "comparison is the labelled chain stub", judgedBody.comparison);
+  }
+}
 
 const setCookie = judged.headers.get("set-cookie") ?? "";
 const media = await fetch(`${base}/api/judgments`, { headers: { cookie: setCookie.split(";")[0] || "__Host-oj_vid=" + "ab".repeat(16) } });

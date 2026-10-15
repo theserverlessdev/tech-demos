@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1
+
+- Intact parcel is a sealed front-facing carton on a plain field. Live Clef-omni had called the isometric still damaged 47% vs intact 44%.
+- Intact option label is now “Intact — sealed, tape and edges clean”. Intact phone still is cropped to the glass.
+- `test/preset-scores.json` records the owner’s live Clef-omni run. `bun run dev` calls Clef-omni. `bun run dev:stub` is the labelled stub.
+
 ## 0.2.0
 
 - Presets are paired intake tasks: readable vs blurry receipt, cracked vs intact phone screen, damaged vs intact parcel, urgent vs routine support voice, falling vs walking.

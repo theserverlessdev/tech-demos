@@ -134,7 +134,31 @@ def shipping_label(damaged: bool) -> Image.Image:
     return label
 
 
+def make_parcel_intact() -> Image.Image:
+    """Front-facing sealed carton on a plain field. No isometric side that can read as a tear."""
+    w, h = 1000, 800
+    canvas = Image.new("RGB", (w, h), (242, 242, 238))
+    face = kraft((640, 430), 11, (198, 156, 98))
+    d = ImageDraw.Draw(face)
+    d.rectangle((2, 2, 637, 427), outline=(138, 102, 58), width=5)
+    tape = (232, 204, 108)
+    d.rectangle((0, 196, 639, 244), fill=tape)
+    d.rectangle((292, 0, 348, 429), fill=tape)
+    d.rectangle((292, 196, 348, 244), fill=(238, 214, 120))
+    d.rectangle((0, 196, 18, 244), fill=tape)
+    d.rectangle((621, 196, 639, 244), fill=tape)
+    label = shipping_label(False)
+    face.paste(label, (36, 28))
+    shadow = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    ImageDraw.Draw(shadow).rounded_rectangle((178, 198, 822, 632), radius=6, fill=(0, 0, 0, 28))
+    canvas = Image.alpha_composite(canvas.convert("RGBA"), shadow).convert("RGB")
+    canvas.paste(face, (180, 186))
+    return canvas.filter(ImageFilter.SMOOTH)
+
+
 def make_parcel(damaged: bool) -> Image.Image:
+    if not damaged:
+        return make_parcel_intact()
     w, h = 1100, 820
     canvas = Image.new("RGB", (w, h), (54, 56, 60))
     d = ImageDraw.Draw(canvas)
@@ -361,7 +385,9 @@ def main() -> None:
     if (SRC / "shattered.jpg").exists():
         save_jpeg(crop_phone(Image.open(SRC / "shattered.jpg")), "phone-cracked.jpg")
     if (SRC / "phone_intact.jpg").exists():
-        save_jpeg(Image.open(SRC / "phone_intact.jpg"), "phone-intact.jpg")
+        intact = Image.open(SRC / "phone_intact.jpg")
+        w, h = intact.size
+        save_jpeg(intact.crop((0, 0, int(w * 0.64), h)), "phone-intact.jpg")
     save_jpeg(make_parcel(True), "parcel-damaged.jpg", max_edge=900, quality=84)
     save_jpeg(make_parcel(False), "parcel-intact.jpg", max_edge=900, quality=84)
 

@@ -41,7 +41,7 @@ export const SAMPLES: Record<SampleId, SampleMeta> = {
   "phone-intact": {
     file: "phone-intact.jpg",
     label: "Intact phone screen",
-    note: "CC0 photo of an undamaged smartphone display. Wikimedia Commons.",
+    note: "CC0 photo of an undamaged smartphone display, cropped to the glass. Wikimedia Commons.",
     kind: "image",
   },
   "parcel-damaged": {
@@ -53,7 +53,7 @@ export const SAMPLES: Record<SampleId, SampleMeta> = {
   "parcel-intact": {
     file: "parcel-intact.jpg",
     label: "Intact parcel",
-    note: "Self-made delivery still. Box closed, taped, label readable.",
+    note: "Self-made still. Sealed carton, tape intact, clean edges, plain background.",
     kind: "image",
   },
   "voice-urgent": {
@@ -94,7 +94,7 @@ const PRODUCT_QUESTION = {
 
 const PARCEL_QUESTION = {
   instructions: "What is the condition of this parcel at delivery?",
-  options: ["Damaged — crushed, torn, or open", "Intact — closed and undamaged", "Not a parcel"],
+  options: ["Damaged — crushed, torn, or open", "Intact — sealed, tape and edges clean", "Not a parcel"],
 };
 
 const VOICE_QUESTION = {
@@ -162,7 +162,7 @@ export const PRESETS: Preset[] = [
     id: "parcel-intact",
     group: "Delivery",
     title: "Intact parcel",
-    proves: "A taped, closed box is marked intact at delivery.",
+    proves: "A sealed carton with clean tape is marked intact at delivery.",
     tryHint: "The damaged twin uses the same three options.",
     sample: "parcel-intact",
     expected: PARCEL_QUESTION.options[1]!,

@@ -6,7 +6,7 @@ One Workers AI call to `@cf/cloudflare/clef-omni` returns a probability for ever
 
 ## MVP
 
-Ships: phone-first capture, openly licensed or self-made samples, preset checklists with an expected answer, Turnstile, R2 media owned by a visitor cookie, D1 judgments, hourly visitor and network caps plus a rolling daily cap, a 24-hour cron delete, a labelled local stub when `ENVIRONMENT=local`, and a smoke script that scores every preset against real Workers AI when credentials are present.
+Ships: phone-first capture, openly licensed or self-made samples, preset checklists with an expected answer, Turnstile, R2 media owned by a visitor cookie, D1 judgments, hourly visitor and network caps plus a rolling daily cap, a 24-hour cron delete, Clef-omni by default (labelled stub only when `ENVIRONMENT=local`), and a smoke script that scores every preset against real Workers AI when credentials are present.
 
 Out of scope: accounts, Durable Objects, a classic-chain pass over video frames, identity or biometric liveness checks, a live deploy, and any new Cloudflare API resource.
 
@@ -35,7 +35,7 @@ Each preset has one question, labelled options, and an expected top answer. Medi
 
 - Workers + static assets, D1, R2, Workers AI, cron. No Durable Object.
 - Bun, TypeScript, the Graphite & Ember page the other demos use.
-- Local `wrangler.local.jsonc` omits the AI binding so `bun run dev` does not wait on a login. The page labels those results as a stub.
+- `bun run dev` uses `wrangler.jsonc` and calls Clef-omni. `bun run dev:stub` uses `wrangler.local.jsonc` (no AI binding, labelled stub).
 
 ## Deferred
 
