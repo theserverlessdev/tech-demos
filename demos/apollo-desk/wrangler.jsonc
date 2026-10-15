@@ -35,7 +35,7 @@
     "ENVIRONMENT": "",
     // Public widget key. Local .dev.vars sets the always-pass test key.
     // Production needs a widget for tech-demos.theserverless.dev and apollo-desk.tech-demos.theserverless.dev.
-    "TURNSTILE_SITE_KEY": ""
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFXhiKOhT-oHW_Gp"
   },
   "secrets": { "required": ["TURNSTILE_SECRET"] },
   "routes": [

@@ -18,7 +18,7 @@
     { "name": "CONNECT_LIMIT", "namespace_id": "7480", "simple": { "limit": 30, "period": 60 } }
   ],
   "vars": {
-    "TURNSTILE_SITE_KEY": "0x4AAAAAAFRgpxXI2NOgPsDG",
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFXhi8QRoNpdDoDw",
     "TURNSTILE_LOCAL": "0"
   },
   "secrets": {

@@ -41,7 +41,7 @@
   ],
   "triggers": { "crons": ["11 * * * *"] },
   "vars": {
-    "TURNSTILE_SITE_KEY": "",
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFXhiYEo4XZZou2Z",
     "TURNSTILE_LOCAL": "0"
   },
   "secrets": {
