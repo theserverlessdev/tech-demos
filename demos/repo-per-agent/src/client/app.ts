@@ -337,13 +337,23 @@ $("token-btn").addEventListener("click", async () => {
   }
 });
 
+async function copyText(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    await Promise.race([
+      navigator.clipboard.writeText(text),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("clipboard timeout")), 800)),
+    ]);
+    return;
+  }
+  throw new Error("no clipboard");
+}
+
 $("token-copy").addEventListener("click", async () => {
   const input = $<HTMLInputElement>("token-command");
   const text = input.value;
   if (!text) return;
   try {
-    if (!navigator.clipboard?.writeText) throw new Error("no clipboard");
-    await navigator.clipboard.writeText(text);
+    await copyText(text);
     $("token-copy").textContent = "Copied";
     hint("run-hint", "Clone command copied.");
   } catch {
@@ -352,6 +362,15 @@ $("token-copy").addEventListener("click", async () => {
     $("token-reveal").textContent = "Hide token";
     input.focus();
     input.select();
+    try {
+      if (document.execCommand("copy")) {
+        $("token-copy").textContent = "Copied";
+        hint("run-hint", "Clone command copied.");
+        return;
+      }
+    } catch {
+      // Fall through to the select hint.
+    }
     hint("run-hint", "Select the command and copy it.");
   }
 });
