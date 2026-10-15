@@ -74,7 +74,7 @@ export async function probeNinth(base: string): Promise<{ closeCode: number; lan
   });
   const room = (await created.json()) as CreatedRoom;
   if (created.status !== 201 || !ROOM_ID.test(room.id)) {
-    throw new Error(`could not create room for ninth probe: ${created.status}`);
+    throw new Error(`could not create room for ninth probe: ${created.status} ${JSON.stringify(room)}`);
   }
 
   const host = base.replace(/^https?:\/\//, "");

@@ -336,14 +336,22 @@ function typeName(doc: Y.Doc, name: string): string {
   return raw?.constructor?.name ?? "";
 }
 
+type ShareRoot = { constructor?: { name?: string }; _start?: unknown };
+
+function isListRoot(raw: ShareRoot | undefined): boolean {
+  if (!raw) return false;
+  const ctor = raw.constructor?.name ?? "";
+  return ctor === "YArray" || ctor === "YText" || raw._start != null;
+}
+
 /** Map of ink, or null when the root is missing or was created as an Array/Text and emptied. */
 function strokeMap(doc: Y.Doc): Y.Map<string> | null {
-  const ctor = typeName(doc, "strokes");
-  if (ctor === "YArray" || ctor === "YText") {
+  const raw = doc.share.get("strokes") as ShareRoot | undefined;
+  if (!raw) return null;
+  if (isListRoot(raw)) {
     purgeForeign(doc, "strokes");
     return null;
   }
-  if (ctor !== "YMap" && !doc.share.has("strokes")) return null;
   return doc.getMap<string>("strokes");
 }
 
@@ -354,13 +362,19 @@ function purgeForeign(doc: Y.Doc, name: string): void {
     for (const key of [...map.keys()]) map.delete(key);
     return;
   }
-  if (ctor === "YArray") {
+  try {
     const arr = doc.getArray(name);
     if (arr.length > 0) arr.delete(0, arr.length);
     return;
+  } catch {
+    /* defined as text */
   }
-  const text = doc.getText(name);
-  if (text.length > 0) text.delete(0, text.length);
+  try {
+    const text = doc.getText(name);
+    if (text.length > 0) text.delete(0, text.length);
+  } catch {
+    /* defined as a different constructor */
+  }
 }
 
 function isConnection(value: unknown): value is Connection {

@@ -153,6 +153,17 @@ docD.getMap("strokes").set(
 );
 const reopened = await waitFor(() => peer.getMap("strokes").has("aftercap") && peer.getMap("strokes").size === MAX_STROKES - 9, 8000);
 check("erase at the cap syncs and accepts a new stroke", reopened, peer.getMap("strokes").size);
+docD.getMap("strokes").set(
+  "okstroke",
+  JSON.stringify({ id: "okstroke", color: "#c2410c", size: 6, points: [100, 100, 4000, 7000], client: "smokecli" }),
+);
+docD.getMap("strokes").set(
+  "offboard",
+  JSON.stringify({ id: "offboard", color: "#c2410c", size: 6, points: [100, 9000], client: "smokecli" }),
+);
+await sleep(600);
+check("on-board stroke is kept", peer.getMap("strokes").has("okstroke"));
+check("stroke at y=9000 is dropped", !peer.getMap("strokes").has("offboard"));
 providerD.disconnect();
 providerE.disconnect();
 await sleep(600);
@@ -195,71 +206,46 @@ if (burst?.id) {
   providerJunkPeer.disconnect();
 }
 
-const boundRoom = await call("/api/rooms", { method: "POST", body: { turnstileToken: DUMMY } });
-const bound = boundRoom.data as CreatedRoom | null;
-check("room for off-board and array probes", boundRoom.status === 201 && !!bound && ROOM_ID.test(bound.id), boundRoom.data);
-if (bound?.id) {
-  const docOff = new Y.Doc();
-  const providerOff = new YProvider(host, bound.id, docOff, { party: PARTY, disableBc: true });
-  await waitFor(() => providerOff.wsconnected, 8000);
-  docOff.getMap("strokes").set(
-    "okstroke",
-    JSON.stringify({ id: "okstroke", color: "#c2410c", size: 6, points: [100, 100, 4000, 7000], client: "smokecli" }),
-  );
-  docOff.getMap("strokes").set(
-    "offboard",
-    JSON.stringify({ id: "offboard", color: "#c2410c", size: 6, points: [100, 9000], client: "smokecli" }),
-  );
+const arrRoom = await call("/api/rooms", { method: "POST", body: { turnstileToken: DUMMY } });
+const arr = arrRoom.data as CreatedRoom | null;
+check("room for strokes array probe", arrRoom.status === 201 && !!arr && ROOM_ID.test(arr.id), arrRoom.data);
+if (arr?.id) {
+  const docArr = new Y.Doc();
+  const providerArr = new YProvider(host, arr.id, docArr, { party: PARTY, disableBc: true });
+  await waitFor(() => providerArr.wsconnected, 8000);
+  docArr.getArray("strokes").insert(0, ["junk-item", "another"]);
   await sleep(600);
-  const docOffPeer = new Y.Doc();
-  const providerOffPeer = new YProvider(host, bound.id, docOffPeer, { party: PARTY, disableBc: true });
-  await waitFor(() => docOffPeer.getMap("strokes").has("okstroke"), 8000);
+  const docArrPeer = new Y.Doc();
+  const providerArrPeer = new YProvider(host, arr.id, docArrPeer, { party: PARTY, disableBc: true });
+  await waitFor(() => providerArrPeer.wsconnected, 8000);
   await sleep(400);
-  check("on-board stroke is kept", docOffPeer.getMap("strokes").has("okstroke"));
-  check("stroke at y=9000 is dropped", !docOffPeer.getMap("strokes").has("offboard"));
-  providerOff.disconnect();
-  providerOffPeer.disconnect();
-  await sleep(400);
-
-  const arrRoom = await call("/api/rooms", { method: "POST", body: { turnstileToken: DUMMY } });
-  const arr = arrRoom.data as CreatedRoom | null;
-  check("room for strokes array probe", arrRoom.status === 201 && !!arr && ROOM_ID.test(arr.id), arrRoom.data);
-  if (arr?.id) {
-    const docArr = new Y.Doc();
-    const providerArr = new YProvider(host, arr.id, docArr, { party: PARTY, disableBc: true });
-    await waitFor(() => providerArr.wsconnected, 8000);
-    docArr.getArray("strokes").insert(0, ["junk-item", "another"]);
-    await sleep(600);
-    const docArrPeer = new Y.Doc();
-    const providerArrPeer = new YProvider(host, arr.id, docArrPeer, { party: PARTY, disableBc: true });
-    await waitFor(() => providerArrPeer.wsconnected, 8000);
-    await sleep(400);
-    check("list items under strokes are deleted", docArrPeer.getArray("strokes").length === 0, docArrPeer.getArray("strokes").length);
-    providerArr.disconnect();
-    providerArrPeer.disconnect();
-  }
+  check("list items under strokes are deleted", docArrPeer.getArray("strokes").length === 0, docArrPeer.getArray("strokes").length);
+  providerArr.disconnect();
+  providerArrPeer.disconnect();
 }
 
-const ninth = await probeNinth(base);
-check("ninth connection is refused", ninth.closeCode === CLOSE_FULL, ninth.closeCode);
-check("ninth write did not land", ninth.landed === false);
+let ninthRoom = "";
+try {
+  const ninth = await probeNinth(base);
+  ninthRoom = ninth.roomId;
+  check("ninth connection is refused", ninth.closeCode === CLOSE_FULL, ninth.closeCode);
+  check("ninth write did not land", ninth.landed === false);
+} catch (err) {
+  check("ninth probe ran", false, err instanceof Error ? err.message : String(err));
+}
 
-const floodRoom = await call("/api/rooms", { method: "POST", body: { turnstileToken: DUMMY } });
-const flood = floodRoom.data as CreatedRoom | null;
-check("room for the frame flood", floodRoom.status === 201 && !!flood && ROOM_ID.test(flood.id), floodRoom.data);
-if (flood?.id) {
-  const flooded = await openSocket(`${base.replace(/^http/, "ws")}/parties/board-room/${flood.id}?_pk=flood`);
-  const closed = new Promise<number>((resolve) => {
-    flooded.addEventListener("close", (event) => resolve(event.code));
-  });
-  for (let i = 0; i < 400; i++) flooded.send(new Uint8Array([0, 1, 2, 3]));
-  const code = await Promise.race([closed, sleep(4000).then(() => 0)]);
-  check("frame flood closes the socket", code === CLOSE_RATE, code);
-  try {
-    flooded.close();
-  } catch {
-    /* already closed */
-  }
+const floodId = ninthRoom || room.id;
+const flooded = await openSocket(`${base.replace(/^http/, "ws")}/parties/board-room/${floodId}?_pk=flood`);
+const closed = new Promise<number>((resolve) => {
+  flooded.addEventListener("close", (event) => resolve(event.code));
+});
+for (let i = 0; i < 400; i++) flooded.send(new Uint8Array([0, 1, 2, 3]));
+const code = await Promise.race([closed, sleep(4000).then(() => 0)]);
+check("frame flood closes the socket", code === CLOSE_RATE, code);
+try {
+  flooded.close();
+} catch {
+  /* already closed */
 }
 
 if (failures) {
