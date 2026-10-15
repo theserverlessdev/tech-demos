@@ -100,6 +100,7 @@ export class SplitTaskWorkflow extends WorkflowEntrypoint<Env, Params> {
         let source = "fallback";
         try {
           // `as never`: the Workers AI model union does not list this chat payload.
+          if (!this.env.AI) throw new Error("workers_ai_unbound");
           const out = (await this.env.AI.run(this.env.AI_MODEL, {
             messages: [
               {

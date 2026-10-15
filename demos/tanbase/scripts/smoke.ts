@@ -123,10 +123,10 @@ check("create board without Turnstile is refused", blocked.status === 400, block
 
 const oversizedJson = await call("/api/boards", {
   method: "POST",
-  headers: { "content-length": "40000", "content-type": "application/json" },
-  rawBody: "{}",
+  headers: { "content-type": "application/json" },
+  rawBody: JSON.stringify({ title: "too big", turnstileToken: token, pad: "a".repeat(33_000) }),
 });
-check("oversize JSON Content-Length is refused before a real body", oversizedJson.status === 413, oversizedJson.status);
+check("oversize JSON body is refused before parse", oversizedJson.status === 413, oversizedJson.status);
 
 const created = await call<{ board: BoardMeta }>("/api/boards", { method: "POST", body: { title: "Launch checklist", turnstileToken: token }, headers: { "cf-turnstile-response": token } });
 const boardId = created.data?.board.id ?? "";
@@ -237,10 +237,10 @@ check("oversize attachment is refused", tooBig.status === 413, tooBig.status);
 
 const hugeUpload = await call(`/api/boards/${boardId}/tasks/${task?.id}/attachments`, {
   method: "POST",
-  headers: { "content-length": "400000", "cf-turnstile-response": token, "content-type": "multipart/form-data; boundary=x" },
-  rawBody: "--x--",
+  headers: { "cf-turnstile-response": token, "content-type": "multipart/form-data; boundary=xxxx" },
+  rawBody: `--xxxx\r\nContent-Disposition: form-data; name="file"; filename="big.bin"\r\nContent-Type: application/octet-stream\r\n\r\n${"x".repeat(301 * 1024)}\r\n--xxxx--`,
 });
-check("oversize upload Content-Length is refused before reading the body", hugeUpload.status === 413, hugeUpload.status);
+check("oversize upload body is refused before form parse", hugeUpload.status === 413, hugeUpload.status);
 
 const stranger = await call<BoardSnapshot>(`/api/boards/${boardId}`, { jar: "tb_vid=v_0123456789abcdef01234567" });
 check("another visitor cannot read the board", stranger.status === 404, stranger.status);

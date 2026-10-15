@@ -69,6 +69,8 @@ bun install
 bun run dev
 ```
 
+`bun run dev` uses `wrangler.local.jsonc`, which has no Workers AI binding so local `wrangler dev` does not wait for a Cloudflare login. The split takes the labelled fallback path. Production `wrangler.jsonc` keeps the AI binding.
+
 `.dev.vars` holds Cloudflare's published always-pass Turnstile **test** secret so smoke can send the dummy token, and it overrides `TURNSTILE_SITE_KEY` with the matching test key `1x00000000000000000000AA`. `wrangler.jsonc` keeps the live site key. Production leaves `ALLOW_LOCAL_HOOKS` empty and stores `TURNSTILE_SECRET` with `wrangler secret put`, not as a var. Then:
 
 ```bash
