@@ -237,7 +237,9 @@ textarea, input {
     padding-right: max(12px, env(safe-area-inset-right));
     gap: 8px;
   }
+  .brand span { display: none; }
   .topbar__title { flex: 1; min-width: 0; }
+  .topbar__title h1 { font-size: 16px; }
   .topbar__title p { display: none; }
   .topbar__actions { flex-shrink: 0; }
   .layout { grid-template-columns: 1fr; }
