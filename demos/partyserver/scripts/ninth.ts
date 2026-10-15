@@ -35,6 +35,20 @@ export function yjsStrokeFrame(id: string, points: number[]): Uint8Array {
     JSON.stringify({ id, color: "#c2410c", size: 6, points, client: "smokecli" }),
   );
   const update = Y.encodeStateAsUpdate(doc);
+  doc.destroy();
+  return concatBytes(varUint(0), varUint(2), varUint(update.byteLength), update);
+}
+
+/** Three-frame tombstone attack: 90 keys × 1400 chars, under the frame cap. */
+export function yjsJunkKeyFrame(keys = 90, keyLen = 1400): Uint8Array {
+  const doc = new Y.Doc();
+  const map = doc.getMap("strokes");
+  for (let i = 0; i < keys; i++) {
+    const key = `${i.toString(36).padStart(3, "0")}${"x".repeat(keyLen)}`.slice(0, keyLen);
+    map.set(key, "x");
+  }
+  const update = Y.encodeStateAsUpdate(doc);
+  doc.destroy();
   return concatBytes(varUint(0), varUint(2), varUint(update.byteLength), update);
 }
 

@@ -18,6 +18,7 @@ import {
   parseStroke,
   type RoomStatus,
 } from "../shared/protocol";
+import { frameCarriesJunk } from "../shared/yjs-guard";
 
 type RoomMeta = {
   id: string;
@@ -102,6 +103,7 @@ export class BoardRoom extends YServer<Env> {
       connection.close(CLOSE_RATE, "slow down");
       return;
     }
+    if (frameCarriesJunk(message)) return;
     await super.onMessage(connection, message);
   }
 
@@ -209,6 +211,8 @@ export class BoardRoom extends YServer<Env> {
   /**
    * Drop invalid / over-budget ink inside a GUARD transaction so y-partyserver
    * still broadcasts the deletes. Caps stay hard, and erasing reopens the board.
+   * Byte and count trims only delete incoming keys while a client transaction is
+   * in flight, so tombstone bloat cannot wipe strokes that were already on the board.
    */
   #enforce(tr: Transaction | null): void {
     const doc = this.document;
@@ -242,7 +246,7 @@ export class BoardRoom extends YServer<Env> {
         }
       }
       while (strokes.size > MAX_STROKES) {
-        const victim = added.pop() ?? [...strokes.keys()].pop();
+        const victim = added.pop() ?? (tr ? undefined : [...strokes.keys()].pop());
         if (!victim) break;
         strokes.delete(victim);
         trimmed = true;
@@ -251,7 +255,7 @@ export class BoardRoom extends YServer<Env> {
       if (bytes > MAX_DOC_BYTES) {
         const byteVictims = [...added];
         while (bytes > MAX_DOC_BYTES) {
-          const victim = byteVictims.pop() ?? [...strokes.keys()].pop();
+          const victim = byteVictims.pop();
           if (!victim) break;
           strokes.delete(victim);
           trimmed = true;

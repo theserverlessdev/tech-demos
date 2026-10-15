@@ -1,10 +1,10 @@
 // Smoke: bun run scripts/smoke.ts [baseUrl]
 import YProvider from "y-partyserver/provider";
 import * as Y from "yjs";
-import { CLOSE_FULL, CLOSE_RATE, MAX_STROKES, PARTY, ROOM_ID, type CreatedRoom, type RoomStatus } from "../src/shared/protocol";
+import { CLOSE_FULL, CLOSE_RATE, MAX_FRAME_BYTES, MAX_STROKES, PARTY, ROOM_ID, type CreatedRoom, type RoomStatus } from "../src/shared/protocol";
 import { TEST_TURNSTILE_SECRET, TEST_TURNSTILE_SITE_KEY, assessTurnstile } from "../src/worker/turnstile";
 import { verifyRoomId } from "../src/worker/ids";
-import { probeNinth } from "./ninth";
+import { probeNinth, yjsJunkKeyFrame } from "./ninth";
 
 const LOCAL_ROOM_SECRET = "partyserver-local-room-secret";
 
@@ -182,6 +182,46 @@ check("array insert left no live list items", undeletedListCount(peer.getMap("st
 providerD.disconnect();
 providerE.disconnect();
 await sleep(600);
+
+const tombWatchDoc = new Y.Doc();
+const tombWatch = new YProvider(host, room.id, tombWatchDoc, { party: PARTY, disableBc: true });
+const tombReady = await waitFor(() => tombWatchDoc.getMap("strokes").has("okstroke"), 8000);
+check("tombstone observer synced existing ink", tombReady);
+const keptInk = ["okstroke", "aftercap", "afterarr"].filter((key) => tombWatchDoc.getMap("strokes").has(key));
+const beforeJunk = tombWatchDoc.getMap("strokes").size;
+const junkFrame = yjsJunkKeyFrame(90, 1400);
+check("junk-key frame is under the frame cap", junkFrame.byteLength <= MAX_FRAME_BYTES && junkFrame.byteLength > 120_000, junkFrame.byteLength);
+const tombWs = await openSocket(`${base.replace(/^http/, "ws")}/parties/board-room/${room.id}?_pk=tomb`);
+tombWs.send(junkFrame);
+tombWs.send(junkFrame);
+await sleep(1100);
+tombWs.send(junkFrame);
+await sleep(800);
+check(
+  "existing ink survived three junk-key frames",
+  keptInk.length > 0 && keptInk.every((key) => tombWatchDoc.getMap("strokes").has(key)),
+  { keptInk, size: tombWatchDoc.getMap("strokes").size, beforeJunk },
+);
+check(
+  "junk keys did not land",
+  ![...tombWatchDoc.getMap("strokes").keys()].some((key) => key.length > 16),
+);
+tombWatchDoc.getMap("strokes").set(
+  "afterjunk",
+  JSON.stringify({ id: "afterjunk", color: "#c2410c", size: 6, points: [50, 50, 90, 90], client: "smokecli" }),
+);
+const afterJunk = await waitFor(() => tombWatchDoc.getMap("strokes").has("afterjunk"), 8000);
+check("new stroke still syncs after junk-key frames", afterJunk);
+const afterJunkStatus = await call(`/api/rooms/${room.id}`);
+const afterJunkMeta = afterJunkStatus.data as RoomStatus | null;
+check("board is not full after junk-key frames", afterJunkMeta?.full === false, afterJunkMeta);
+try {
+  tombWs.close();
+} catch {
+  /* already closed */
+}
+tombWatch.disconnect();
+await sleep(400);
 
 const burstRoom = await call("/api/rooms", { method: "POST", body: { turnstileToken: DUMMY } });
 const burst = burstRoom.data as CreatedRoom | null;

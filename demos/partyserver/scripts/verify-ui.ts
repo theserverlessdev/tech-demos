@@ -80,25 +80,47 @@ console.log("ui checks passed");
 async function assertLandscapeBoard(page: import("playwright").Page, width: number, height: number, path: string): Promise<void> {
   const wrap = await page.locator(".canvas-wrap").boundingBox();
   const aside = await page.locator(".aside").boundingBox();
+  const title = await page.locator(".topbar__title").boundingBox();
+  const actions = await page.locator(".topbar__actions").boundingBox();
   if (!wrap) throw new Error(`no canvas-wrap at ${width}×${height}`);
   if (!aside) throw new Error(`no aside at ${width}×${height}`);
+  const pageBox = await page.evaluate(() => ({
+    innerHeight: window.innerHeight,
+    scrollHeight: Math.max(document.documentElement.scrollHeight, document.body.scrollHeight),
+    scrollY: window.scrollY || document.documentElement.scrollTop || document.body.scrollTop,
+  }));
+  const bottom = wrap.y + wrap.height;
   const tooTall = wrap.height > height;
   const tooShort = wrap.height < height * 0.5;
   const tooNarrow = wrap.width < width * 0.45;
   const stacked = aside.x < wrap.x + wrap.width - 8;
+  const offScreen = bottom > pageBox.innerHeight + 1;
+  const pageScrolls = pageBox.scrollHeight > pageBox.innerHeight + 1 || pageBox.scrollY > 0;
+  const titleRight = !!(title && actions && title.x > actions.x + 8);
   console.log(
     `${width}x${height} wrap`,
     Math.round(wrap.width),
     Math.round(wrap.height),
+    "bottom",
+    Math.round(bottom),
+    "vh",
+    pageBox.innerHeight,
     "aside",
     Math.round(aside.x),
-    tooTall || tooShort || tooNarrow || stacked ? "BAD" : "ok",
+    tooTall || tooShort || tooNarrow || stacked || offScreen || pageScrolls || titleRight ? "BAD" : "ok",
   );
   await page.screenshot({ path });
   if (tooTall) throw new Error(`${width}×${height} canvas wrap is ${wrap.height}px, taller than the viewport`);
   if (tooShort) throw new Error(`${width}×${height} canvas wrap is ${wrap.height}px, under half the viewport`);
   if (tooNarrow) throw new Error(`${width}×${height} canvas wrap is ${wrap.width}px, under 45% of the viewport`);
   if (stacked) throw new Error(`${width}×${height} tools are not beside the board`);
+  if (offScreen) {
+    throw new Error(`${width}×${height} board bottom is at ${bottom}px, past the ${pageBox.innerHeight}px viewport`);
+  }
+  if (pageScrolls) {
+    throw new Error(`${width}×${height} page scrolls (scrollHeight ${pageBox.scrollHeight}, scrollY ${pageBox.scrollY})`);
+  }
+  if (titleRight) throw new Error(`${width}×${height} Partyboard title is to the right of the actions`);
 }
 
 function openSocket(url: string): Promise<WebSocket> {

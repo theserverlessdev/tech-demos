@@ -82,12 +82,13 @@ bun run scripts/smoke.ts http://127.0.0.1:8787
 
 Live at <https://tech-demos.theserverless.dev/demos/partyserver/>.
 
-`vars.TURNSTILE_SITE_KEY` is the production widget key. `TURNSTILE_SECRET` and `ROOM_SECRET` are listed under `secrets.required` so types include them; the values stay Worker secrets. `ROOM_SECRET` is optional at runtime: if it is empty, room ids fall back to a key derived from `TURNSTILE_SECRET`. Rate-limit namespace ids are `7500` (create), `7501` (connect), and `7502` (status read). No D1 or R2. The Durable Object class and those bindings are declared in `wrangler.jsonc`.
+`vars.TURNSTILE_SITE_KEY` is the production widget key. `TURNSTILE_SECRET` and `ROOM_SECRET` are listed under `secrets.required`; Wrangler 4.129 will not deploy until both are set. Put them with `wrangler secret put` **before** `wrangler deploy`. After `ROOM_SECRET` exists, room ids are tagged with HMAC-SHA256 of a key derived from it. If it were empty at runtime, ids would fall back to `TURNSTILE_SECRET` (rotating Turnstile would then invalidate live links). Rate-limit namespace ids are `7500` (create), `7501` (connect), and `7502` (status read). No D1 or R2. The Durable Object class and those bindings are declared in `wrangler.jsonc`.
 
-Redeploy from the owner account (unset any other `CF_API_TOKEN`):
+Redeploy from the owner account (unset any other `CF_API_TOKEN`). `wrangler secret put ROOM_SECRET` is required before deploy:
 
 ```bash
 cd demos/partyserver
+env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bunx wrangler secret put ROOM_SECRET
 env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bunx wrangler deploy
 ```
 

@@ -73,7 +73,7 @@ export type CreatedRoom = {
 
 export type ApiError = { error: { code: string; message: string } };
 
-const STROKE_ID = /^[a-z0-9]{6,16}$/;
+export const STROKE_ID = /^[a-z0-9]{6,16}$/;
 const CLIENT_ID = /^[a-z0-9]{8}$/;
 const COLOR = /^#[0-9a-fA-F]{6}$/;
 

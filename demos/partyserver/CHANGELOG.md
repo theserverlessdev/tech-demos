@@ -46,9 +46,9 @@ Hub Graphite & Ember. Ember accent `#c2410c`, background `#0e0e11`. LogoMark SVG
 Audit fixes (B1–B3, S1–S7, N1–N11) and PR #39 follow-ups:
 
 - HMAC-tagged room ids (key derived from `ROOM_SECRET`, or from `TURNSTILE_SECRET` if that is unset), `READ_LIMIT` on status GET, party HTTP 404, `deleteAll` on unknown rooms and on the TTL alarm.
-- Caps stay writable: `isReadOnly` is always false. Invalid strokes, extra keys, list items under the strokes map, and foreign root types are dropped in a GUARD transaction so erases sync. A rejected 9th socket cannot write.
+- Caps stay writable: `isReadOnly` is always false. Invalid strokes, extra keys, list items under the strokes map, and foreign root types are dropped in a GUARD transaction so erases sync. Sync-update frames with junk keys or list items are rejected before apply. The size cap trims only incoming strokes, never existing ink. A rejected 9th socket cannot write.
 - Fatal closes (full, expired, unknown, rate/frame) keep their message. The canvas and tools then stop accepting input.
-- 4:3 logical board with a uniform scale. Phone portrait canvas uses `aspect-ratio: 4/3` and `max-height: 62dvh`. Landscape keeps the board and tools side by side and sizes the canvas to the viewport minus the header and status strip. Long strokes commit a chunk and continue instead of dropping the head.
+- 4:3 logical board with a uniform scale. Phone portrait canvas uses `aspect-ratio: 4/3` and `max-height: 62dvh`. Landscape keeps the board and tools side by side and lets the canvas fill the remaining height (no fixed strip subtraction). Long strokes commit a chunk and continue instead of dropping the head.
 - Copy, route patterns, Turnstile test-host carve-out, presence validation, and 44px phone fields match the code.
 
 ## 2026-10-09

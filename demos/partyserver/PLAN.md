@@ -84,7 +84,7 @@ Worker `tech-demos-partyserver`:
 
 - `bun run typecheck`
 - `bun run test` (from `demos/partyserver`): HMAC ids, Turnstile host carve-out, parseStroke, byte-budget vs frame size.
-- `scripts/smoke.ts` against `wrangler dev`: health under the path prefix, Turnstile create, Yjs sync across two providers, reload from storage, 9th socket refused and its first-frame write dropped, frame flood closed, hard stroke cap, erase-after-cap, burst 400 trimmed to 240, off-board y=9000 dropped, array insert does not wipe strokes, junk map entries after an array write are dropped, party HTTP 404, malformed room id 404.
+- `scripts/smoke.ts` against `wrangler dev`: health under the path prefix, Turnstile create, Yjs sync across two providers, reload from storage, 9th socket refused and its first-frame write dropped, frame flood closed, hard stroke cap, erase-after-cap, burst 400 trimmed to 240, off-board y=9000 dropped, array insert does not wipe strokes, three junk-key frames do not wipe ink, junk map entries after an array write are dropped, party HTTP 404, malformed room id 404.
 - `scripts/ninth.ts`: 8 OPEN sockets, then a 9th that sends a Yjs update on open; peers must not see it.
 - Browser screenshot and a short two-tab video.
 
