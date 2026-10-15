@@ -8,6 +8,10 @@ export const JSON_BODY_MAX = 16 * 1024;
 export const MAX_WAIT_SECONDS = 25;
 export const WAIT_POLL_MS = 1000;
 export const SNIPPET_CHARS = 160;
+/** Collapse at most this many chars for the list snippet so V8 does not copy a huge rope. */
+export const SNIPPET_SOURCE_MAX = 2048;
+export const MAX_HEADER_CHARS = 2048;
+export const D1_MAX_BOUND_PARAMS = 100;
 export const MAX_CODES = 5;
 export const MAX_LINKS = 20;
 export const MINUTE_MS = 60_000;

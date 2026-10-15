@@ -82,7 +82,7 @@ bunx wrangler turnstile widget create "email-lomvic-temp-email" \
 # Put TURNSTILE_SITE_KEY in wrangler.hosted.jsonc vars (public).
 # Pipe the widget secret into:
 #   bunx wrangler secret put TURNSTILE_SECRET_KEY
-bun run deploy
+bun run deploy:hosted
 ```
 
 Until those are set, `POST /api/v1/keys` returns `503 mint_disabled`. The admin `AGENT_API_KEY` still works for fleet. Anonymous agent API stays closed.
@@ -119,25 +119,33 @@ Do **not** enable Email Routing on `theserverless.dev` and do **not** change TSD
 
 Owner rules do not apply to your instance. You get the full product: Email Worker, D1, R2 attachments, agent API, optional Turnstile mint.
 
-1. Click **Deploy to Cloudflare** in the README (uses `wrangler.jsonc` in this folder), or copy this directory and `bun run deploy:selfhost`.
-2. Create an R2 bucket for HTML/text bodies and attachment bytes (required — blobs are not stored in D1):
+1. Click **Deploy to Cloudflare** in the README (uses `wrangler.jsonc` and the `deploy` script in this folder), or copy this directory and `bun run deploy`. This needs **Workers Paid** (`cpu_ms` 5000; Free is 10 ms CPU).
+2. Create a D1 database and paste the id into `wrangler.jsonc` (`d1_databases[0].database_id` is zeros in the template):
+
+```bash
+bunx wrangler d1 create temp-email
+# Copy the printed database_id into wrangler.jsonc, then:
+CI=1 bunx wrangler d1 migrations apply DB --remote
+```
+
+3. Create an R2 bucket for HTML/text bodies and attachment bytes (required — blobs are not stored in D1):
 
 ```bash
 bunx wrangler r2 bucket create temp-email
 # If you pick another name, set r2_buckets[0].bucket_name in wrangler.jsonc.
 ```
 
-3. Set vars: `MAIL_DOMAIN`, `PUBLIC_ORIGIN`, `HOSTED_MODE=false`, `TURNSTILE_SITE_KEY`.
-4. Set secrets (do not echo them):
+4. Set vars: `MAIL_DOMAIN`, `PUBLIC_ORIGIN`, `HOSTED_MODE=false`, `TURNSTILE_SITE_KEY`.
+5. Set secrets (do not echo them):
 
 ```bash
 openssl rand -hex 32 | bunx wrangler secret put AGENT_API_KEY
 bunx wrangler secret put TURNSTILE_SECRET_KEY
 ```
 
-5. Create a [Turnstile widget](https://developers.cloudflare.com/turnstile/get-started/) for your UI hostname (or `wrangler turnstile widget create`).
-6. Enable **Email Routing** on **your** zone. Point MX at `route*.mx.cloudflare.net`. Catch-all `*@MAIL_DOMAIN` → this Worker.
-7. Attach a custom domain if you want. Do not use `theserverless.dev` or `email.lomvic.com`.
+6. Create a [Turnstile widget](https://developers.cloudflare.com/turnstile/get-started/) for your UI hostname (or `wrangler turnstile widget create`).
+7. Enable **Email Routing** on **your** zone. Point MX at `route*.mx.cloudflare.net`. Catch-all `*@MAIL_DOMAIN` → this Worker.
+8. Attach a custom domain if you want. Do not use `theserverless.dev` or `email.lomvic.com`.
 
 If Turnstile is unset, key mint stays off and agents use **your** admin secret only.
 
@@ -237,7 +245,7 @@ Minted keys are not rotated this way — revoke and mint again.
 
 ```bash
 cd demos/temp-email
-cp .dev.vars.example .dev.vars   # dummy Turnstile + a local admin key (typecheck uses src/worker/env.d.ts; no cf-typegen required)
+cp .dev.vars.example .dev.vars   # dummy Turnstile secret + a local admin key only (config is wrangler.jsonc + `dev --var`)
 bun run dev                       # builds the client, applies migrations locally, starts wrangler dev on 8797
 bun run smoke -- --smtp           # checks; --smtp posts to /cdn-cgi/handler/email
 bun run typecheck
@@ -249,11 +257,11 @@ Wrangler dev can stop with `Network connection lost` when a file changes during 
 
 ## Deploy (hosted)
 
-`bun run deploy` uses `wrangler.hosted.jsonc` (email.lomvic.com). Do not deploy the self-host `wrangler.jsonc` onto the owner account.
+`bun run deploy:hosted` uses `wrangler.hosted.jsonc` (email.lomvic.com). Do not deploy the self-host `wrangler.jsonc` onto the owner account. The Deploy button and `bun run deploy` are the self-host path.
 
 ```bash
 cd demos/temp-email
-bun run deploy                    # build, remote migrations, wrangler deploy -c wrangler.hosted.jsonc
+bun run deploy:hosted             # build, remote migrations, wrangler deploy -c wrangler.hosted.jsonc
 set -a && source ~/.theserverlessdev/temp-email.env && set +a
 AGENT_API_KEY="$TEMP_EMAIL_API_KEY" bun run smoke -- https://email.lomvic.com
 ```

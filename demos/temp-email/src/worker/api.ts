@@ -16,6 +16,8 @@ import {
 import { consumeCreateQuota, findKeyByHash, insertApiKey, revokeKey, toKeyInfo, touchKey, type ApiKeyRow } from "./keys";
 import { downloadHeaders } from "./attachments";
 import { ingest, Refusal, sampleMime } from "./ingest";
+import { rateLimitIp, webCreateLimitKey } from "./ip";
+import { nextExpiry } from "./ttl";
 import {
   JSON_BODY_MAX,
   KEY_CREATE_LIMIT,
@@ -124,7 +126,7 @@ function mintConfig(env: Env): AppConfig["mint"] {
 
 async function resolveCaller(request: Request, env: Env): Promise<Caller> {
   const token = bearerToken(request);
-  const ip = request.headers.get("cf-connecting-ip") ?? "local";
+  const ip = rateLimitIp(request.headers.get("cf-connecting-ip") ?? "local");
   if (!token) return { admin: false, agent: false, key: null, token: null, ip };
   if (await isAdminKey(token, env)) return { admin: true, agent: true, key: null, token: null, ip };
   const key = await findKeyByHash(env.DB, await sha256Hex(token));
@@ -211,7 +213,8 @@ async function createInbox(request: Request, env: Env, caller: Caller): Promise<
     await limit(env.CREATE_LIMIT, `create:key:${caller.key.id}`);
   } else if (!caller.admin) {
     await limit(env.CREATE_LIMIT, `create:${caller.ip}`);
-    if (hostedMode(env)) await limit(env.WEB_CREATE_LIMIT, `webcreate:${caller.ip}`);
+    const webKey = webCreateLimitKey(hostedMode(env), caller.ip);
+    if (webKey) await limit(env.WEB_CREATE_LIMIT, webKey);
   }
 
   const body = await readJson(request);
@@ -284,11 +287,15 @@ async function extendInbox(request: Request, env: Env, caller: Caller, inbox: In
     minutes = caller.agent ? (body.minutes as number) : Math.min(step, body.minutes as number);
   }
   const now = Date.now();
-  const ceiling = caller.agent
-    ? inbox.created_at + maxTtl * MINUTE_MS
-    : inbox.created_at + WEB_MAX_TTL_MINUTES * MINUTE_MS;
-  const expiresAt = Math.min(Math.max(inbox.expires_at, now) + minutes * MINUTE_MS, ceiling);
-  if (expiresAt <= inbox.expires_at) {
+  const ceilingMinutes = caller.agent ? maxTtl : WEB_MAX_TTL_MINUTES;
+  const expiresAt = nextExpiry({
+    createdAt: inbox.created_at,
+    expiresAt: inbox.expires_at,
+    now,
+    minutes,
+    ceilingMinutes,
+  });
+  if (expiresAt === null) {
     throw new HttpError(
       400,
       "ttl_capped",
@@ -365,7 +372,7 @@ async function streamAttachment(env: Env, inbox: InboxRow, messageId: string, in
 
 export async function handleApi(request: Request, env: Env, path: string, ctx: ExecutionContext): Promise<Response> {
   const url = new URL(request.url);
-  const ip = request.headers.get("cf-connecting-ip") ?? "local";
+  const ip = rateLimitIp(request.headers.get("cf-connecting-ip") ?? "local");
   const token = bearerToken(request);
   const admin = await isAdminKey(token, env);
   if (!admin) await limit(env.GATE_LIMIT, `gate:${ip}`);

@@ -12,5 +12,5 @@
     "verbatimModuleSyntax": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src/worker/**/*.ts", "src/shared/types.ts"]
+  "include": ["src/worker/**/*.ts", "src/shared/types.ts", "src/shared/scan.ts"]
 }

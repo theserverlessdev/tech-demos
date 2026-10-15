@@ -15,9 +15,9 @@ Disposable inboxes. Two ways to run it:
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/theserverlessdev/tech-demos/tree/main/demos/temp-email)
 
-The button clones `demos/temp-email`. This folder is self-contained: `wrangler.jsonc` is the self-host template (no lomvic routes, `HOSTED_MODE=false`). Set `MAIL_DOMAIN`, `PUBLIC_ORIGIN`, Turnstile keys, and `AGENT_API_KEY` (admin only). Create an **R2 bucket** (`wrangler r2 bucket create …` and set `r2_buckets[0].bucket_name`). Then attach Email Routing — details in SETUP. Fallback: copy this folder and run `bun run deploy:selfhost`.
+The button clones `demos/temp-email` and runs the `deploy` script (`wrangler deploy` with `wrangler.jsonc`). This folder is self-contained: no lomvic routes, `HOSTED_MODE=false`. Self-hosting needs **Workers Paid** (`limits.cpu_ms` is 5000; Free is 10 ms CPU and a 500 MB D1). Set `MAIL_DOMAIN`, `PUBLIC_ORIGIN`, Turnstile keys, and `AGENT_API_KEY` (admin only). Create a **D1 database** and an **R2 bucket**, then attach Email Routing — details in SETUP. Fallback: copy this folder and run `bun run deploy`.
 
-Owner deploys of email.lomvic.com use `wrangler.hosted.jsonc` (`bun run deploy`).
+Owner deploys of email.lomvic.com use `wrangler.hosted.jsonc` (`bun run deploy:hosted`).
 
 ## What this demonstrates
 
@@ -83,7 +83,7 @@ scheduled() deletes expired inboxes + R2 prefixes every 15 minutes ─┘
 | `src/worker/ingest.ts` | MIME to D1 row + R2 objects, and the sample message |
 | `src/client/app.ts` | Browser UI |
 | `migrations/` | D1 schema |
-| `wrangler.jsonc` | Self-host template (Deploy to Cloudflare button) |
-| `wrangler.hosted.jsonc` | Owner config for email.lomvic.com |
+| `wrangler.jsonc` | Self-host template (Deploy to Cloudflare button / `bun run deploy`) |
+| `wrangler.hosted.jsonc` | Owner config for email.lomvic.com (`bun run deploy:hosted`) |
 | `scripts/smoke.ts` | End-to-end checks for local or live |
-| `scripts/verify-selfhost.ts` | Copy this folder alone and `wrangler deploy --dry-run` |
+| `scripts/verify-selfhost.ts` | Copy this folder alone and dry-run the `deploy` script |

@@ -4,7 +4,7 @@ import { storeAttachments, storeBodies, messagePrefix, deletePrefix } from "./at
 import { newId } from "./auth";
 import { countMessages, hydrateBodies, insertMessage, InsertRefused, sumRawSize, type InboxRow } from "./db";
 import { extractCodes, extractLinks, htmlToText, snippetOf } from "./extract";
-import { MAX_HTML_CHARS, MAX_INBOX_BYTES, MAX_MESSAGES_PER_INBOX, MAX_RAW_BYTES, MAX_TEXT_CHARS } from "./limits";
+import { MAX_HEADER_CHARS, MAX_HTML_CHARS, MAX_INBOX_BYTES, MAX_MESSAGES_PER_INBOX, MAX_RAW_BYTES, MAX_TEXT_CHARS } from "./limits";
 
 export type IngestInput = {
   /** PostalMime reads a stream directly, so email() never buffers a message that fails a check. */
@@ -44,6 +44,12 @@ function cap(value: string | undefined, max: number): { value: string | null; cu
   return value.length > max ? { value: value.slice(0, max), cut: true } : { value, cut: false };
 }
 
+/** Cap a D1 header field. Empty becomes null. */
+export function capHeader(value: string | null | undefined, max = MAX_HEADER_CHARS): string | null {
+  if (value == null || value === "") return null;
+  return value.length > max ? value.slice(0, max) : value;
+}
+
 /**
  * The single path from raw MIME to a stored message. The email() handler, the sample button, and the
  * agent test delivery all call it, so a test delivery exercises the same parser and limits as SMTP.
@@ -75,10 +81,10 @@ export async function ingest(db: D1Database, bucket: R2Bucket, inbox: InboxRow, 
       inbox_id: inbox.id,
       via: input.via,
       received_at: Date.now(),
-      envelope_from: input.envelopeFrom,
-      from_name: from.name,
-      from_address: from.address,
-      to_header: formatAddresses(parsed.to),
+      envelope_from: capHeader(input.envelopeFrom) ?? "",
+      from_name: capHeader(from.name),
+      from_address: capHeader(from.address),
+      to_header: capHeader(formatAddresses(parsed.to)),
       subject: subject.slice(0, 998),
       snippet: snippetOf(readable),
       text_body: null,
@@ -87,8 +93,8 @@ export async function ingest(db: D1Database, bucket: R2Bucket, inbox: InboxRow, 
       html_r2_key: bodies.htmlKey,
       truncated: text.cut || html.cut,
       raw_size: input.rawSize,
-      message_id: parsed.messageId ?? null,
-      date_header: parsed.date ?? null,
+      message_id: capHeader(parsed.messageId ?? null),
+      date_header: capHeader(parsed.date ?? null),
       codes: JSON.stringify(extractCodes(subject, readable)),
       links: JSON.stringify(extractLinks(text.value ?? "", html.value ?? "")),
       attachments: JSON.stringify(attachments),

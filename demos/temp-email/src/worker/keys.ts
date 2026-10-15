@@ -58,19 +58,16 @@ export async function countActiveInboxes(db: D1Database, keyId: string, now = Da
   return row?.n ?? 0;
 }
 
-/** Atomic rolling 24h window. Returns false when the window is full. */
-export async function consumeCreateQuota(db: D1Database, key: ApiKeyRow, now = Date.now()): Promise<boolean> {
-  const result = await db
-    .prepare(
-      `UPDATE api_keys
+export const CONSUME_CREATE_QUOTA_SQL = `UPDATE api_keys
        SET window_creates = CASE WHEN ?1 - window_start >= ?2 THEN 1 ELSE window_creates + 1 END,
            window_start = CASE WHEN ?1 - window_start >= ?2 THEN ?1 ELSE window_start END
        WHERE id = ?3
          AND revoked = 0
-         AND (?1 - window_start >= ?2 OR window_creates < create_limit)`,
-    )
-    .bind(now, KEY_WINDOW_MS, key.id)
-    .run();
+         AND (?1 - window_start >= ?2 OR window_creates < create_limit)`;
+
+/** Atomic rolling 24h window. Returns false when the window is full. */
+export async function consumeCreateQuota(db: D1Database, key: ApiKeyRow, now = Date.now()): Promise<boolean> {
+  const result = await db.prepare(CONSUME_CREATE_QUOTA_SQL).bind(now, KEY_WINDOW_MS, key.id).run();
   return result.meta.changes === 1;
 }
 

@@ -1,3 +1,5 @@
+import { stripAsciiTagTrees } from "./scan";
+
 const SAFE_LINK = /^(https?:|mailto:)/i;
 
 export const DROP_TAGS = [
@@ -17,42 +19,9 @@ export const DROP_TAGS = [
   "form",
 ] as const;
 
-function isTagBoundary(code: number): boolean {
-  return code === 62 || code === 47 || code === 32 || code === 9 || code === 10 || code === 13 || code === 12;
-}
-
-/** Linear strip of hostile subtrees. Unclosed tags drop the remainder. */
+/** Linear strip of hostile subtrees. Unclosed tags drop the remainder. ASCII case-fold only. */
 export function dropHostileTrees(html: string, tags: readonly string[] = DROP_TAGS): string {
-  let input = html;
-  for (const tag of tags) {
-    const open = `<${tag}`;
-    const close = `</${tag}>`;
-    const lower = input.toLowerCase();
-    let out = "";
-    let i = 0;
-    while (i < input.length) {
-      const start = lower.indexOf(open, i);
-      if (start === -1) {
-        out += input.slice(i);
-        break;
-      }
-      const after = start + open.length;
-      if (after < lower.length && !isTagBoundary(lower.charCodeAt(after))) {
-        out += input.slice(i, after);
-        i = after;
-        continue;
-      }
-      out += input.slice(i, start);
-      const end = lower.indexOf(close, after);
-      if (end === -1) {
-        i = input.length;
-        break;
-      }
-      i = end + close.length;
-    }
-    input = out;
-  }
-  return input;
+  return stripAsciiTagTrees(html, tags);
 }
 
 export function isSafeHref(href: string): boolean {
@@ -73,21 +42,41 @@ export function shouldDropAttr(name: string): boolean {
  * srcdoc parses the markup a second time (mXSS). Dropping math/svg and checking href on every element
  * reduces that. A future allow-scripts would still be unsafe.
  */
-export function cleanMailHtml(html: string): { head: string; body: string } {
-  const stripped = dropHostileTrees(html.replace(/<base\b[^>]*>/gi, ""));
-  const doc = new DOMParser().parseFromString(stripped, "text/html");
-  doc.querySelectorAll([...DROP_TAGS].join(",")).forEach((n) => n.remove());
-  for (const node of doc.querySelectorAll<HTMLElement>("*")) {
-    for (const attr of [...node.attributes]) {
+type AttrNode = {
+  attributes: ArrayLike<{ name: string }>;
+  getAttribute(name: string): string | null;
+  removeAttribute(name: string): void;
+  setAttribute(name: string, value: string): void;
+  remove?: () => void;
+};
+
+type MailDom = {
+  querySelectorAll(selector: string): ArrayLike<AttrNode>;
+  head?: { querySelectorAll(selector: string): ArrayLike<{ outerHTML: string }> } | null;
+  body?: { innerHTML: string } | null;
+};
+
+/** DOM pass after the linear strip. Exported so tests can run it without DOMParser. */
+export function scrubMailDom(doc: MailDom): void {
+  const dropSel = Array.from(DROP_TAGS).join(",");
+  for (const node of Array.from(doc.querySelectorAll(dropSel))) node.remove?.();
+  for (const node of Array.from(doc.querySelectorAll("*"))) {
+    for (const attr of Array.from(node.attributes)) {
       if (shouldDropAttr(attr.name)) node.removeAttribute(attr.name);
     }
     const href = node.getAttribute("href")?.trim() ?? "";
     if (href && !isSafeHref(href)) node.removeAttribute("href");
   }
-  for (const link of doc.querySelectorAll<HTMLAnchorElement | HTMLAreaElement>("a, area")) {
+  for (const link of Array.from(doc.querySelectorAll("a, area"))) {
     link.setAttribute("target", "_blank");
     link.setAttribute("rel", "noopener noreferrer");
   }
+}
+
+export function cleanMailHtml(html: string): { head: string; body: string } {
+  const stripped = dropHostileTrees(html.replace(/<base\b[^>]*>/gi, ""));
+  const doc = new DOMParser().parseFromString(stripped, "text/html");
+  scrubMailDom(doc);
   const headStyles = doc.head ? [...doc.head.querySelectorAll("style")].map((n) => n.outerHTML).join("") : "";
   return { head: headStyles, body: doc.body?.innerHTML ?? "" };
 }

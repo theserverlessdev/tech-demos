@@ -1,5 +1,5 @@
 /**
- * Copy this folder alone and bundle it the way the Deploy to Cloudflare button does.
+ * Copy this folder alone and exercise the `deploy` script the way the Deploy to Cloudflare button does.
  * Usage: bun run verify:selfhost
  */
 import { cp, mkdtemp, rm } from "node:fs/promises";
@@ -20,6 +20,16 @@ function run(cmd: string[], cwd: string) {
   return out;
 }
 
+const pkg = await Bun.file(join(src, "package.json")).json();
+const deploy = String(pkg.scripts?.deploy ?? "");
+const hosted = String(pkg.scripts?.["deploy:hosted"] ?? "");
+if (!deploy.includes("wrangler deploy") || deploy.includes("wrangler.hosted")) {
+  throw new Error("package.json deploy must be the self-host command (no wrangler.hosted.jsonc)");
+}
+if (!hosted.includes("wrangler.hosted.jsonc")) {
+  throw new Error("package.json deploy:hosted must use wrangler.hosted.jsonc");
+}
+
 try {
   await cp(src, dest, {
     recursive: true,
@@ -27,16 +37,21 @@ try {
   });
   console.log(`Isolated copy: ${dest}`);
   run(["bun", "install"], dest);
+  // Same build the `deploy` script runs, then dry-run wrangler deploy (the Deploy button's command).
+  run(["bun", "run", "build"], dest);
   const out = run(["bunx", "wrangler", "deploy", "--dry-run", "--outdir", outdir], dest);
   console.log(out);
   if (/Could not resolve|packages\/shared/.test(out)) {
     throw new Error("Standalone bundle still resolves files outside the Worker folder");
   }
+  if (/wrangler\.hosted|email\.lomvic\.com/.test(out) && /Custom domains|Routes/.test(out)) {
+    throw new Error("Self-host dry-run targeted hosted routes");
+  }
   const bundled = await Bun.file(join(outdir, "index.js")).text();
   if (bundled.includes("packages/shared")) {
     throw new Error("Bundled worker still mentions packages/shared");
   }
-  console.log("Standalone wrangler deploy --dry-run succeeded.");
+  console.log("Standalone `deploy` dry-run succeeded.");
 } finally {
   await rm(dest, { recursive: true, force: true });
 }

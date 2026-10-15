@@ -2,6 +2,11 @@ import type { AttachmentMeta, DeliveryVia, InboxInfo, InboxSource, MessageFull, 
 import { deletePrefix, inboxPrefix, messagePrefix } from "./attachments";
 import { CLEANUP_BUDGET_MS, CLEANUP_PAGE, MAX_INBOX_BYTES, MAX_MESSAGES_PER_INBOX } from "./limits";
 
+/** One JSON bind via json_each — stays under D1's 100-parameter cap even when CLEANUP_PAGE is 200. */
+export const CLEANUP_DELETE_MESSAGES_SQL =
+  "DELETE FROM messages WHERE inbox_id IN (SELECT value FROM json_each(?1))";
+export const CLEANUP_DELETE_INBOXES_SQL = "DELETE FROM inboxes WHERE id IN (SELECT value FROM json_each(?1))";
+
 export type InboxRow = {
   id: string;
   local_part: string;
@@ -328,11 +333,10 @@ export async function cleanupExpired(
     for (const row of results) {
       if (row.has_r2) await deletePrefix(bucket, inboxPrefix(row.id));
     }
-    const ids = results.map((row) => row.id);
-    const placeholders = ids.map(() => "?").join(",");
+    const idsJson = JSON.stringify(results.map((row) => row.id));
     const [msgRes, inbRes] = await db.batch([
-      db.prepare(`DELETE FROM messages WHERE inbox_id IN (${placeholders})`).bind(...ids),
-      db.prepare(`DELETE FROM inboxes WHERE id IN (${placeholders})`).bind(...ids),
+      db.prepare(CLEANUP_DELETE_MESSAGES_SQL).bind(idsJson),
+      db.prepare(CLEANUP_DELETE_INBOXES_SQL).bind(idsJson),
     ]);
     messages += msgRes.meta.changes;
     inboxes += inbRes.meta.changes;

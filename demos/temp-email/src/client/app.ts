@@ -274,7 +274,8 @@ function renderAddress(): void {
     el.address.textContent = "No inbox yet";
   }
   el.copy.disabled = !inbox || expired;
-  el.extend.disabled = !inbox || expired;
+  const webCeilingMs = (state.config?.webMaxTtlMinutes ?? 180) * 60_000;
+  el.extend.disabled = !inbox || expired || inbox.expiresAt >= inbox.createdAt + webCeilingMs;
   el.deleteInbox.disabled = !inbox;
   el.sample.disabled = !inbox || expired;
   el.newRandom.disabled = false;

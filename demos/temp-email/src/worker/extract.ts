@@ -1,46 +1,13 @@
-import { HTML_TO_TEXT_MAX, MAX_CODES, MAX_LINKS, SNIPPET_CHARS } from "./limits";
+import { stripAsciiTagTrees } from "../shared/scan";
+import { HTML_TO_TEXT_MAX, MAX_CODES, MAX_LINKS, SNIPPET_CHARS, SNIPPET_SOURCE_MAX } from "./limits";
 
 const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", "#39": "'" };
 
 const BLOCK_TAGS = ["script", "style", "head", "title"] as const;
 
-function isTagBoundary(code: number): boolean {
-  // >, /, whitespace
-  return code === 62 || code === 47 || code === 32 || code === 9 || code === 10 || code === 13 || code === 12;
-}
-
 /** Drop `<tag>…</tag>` blocks with indexOf. Unclosed tags drop the remainder. Linear in input length. */
 export function stripBlockTags(html: string, tags: readonly string[] = BLOCK_TAGS): string {
-  let input = html;
-  for (const tag of tags) {
-    const open = `<${tag}`;
-    const close = `</${tag}>`;
-    const lower = input.toLowerCase();
-    let out = "";
-    let i = 0;
-    while (i < input.length) {
-      const start = lower.indexOf(open, i);
-      if (start === -1) {
-        out += input.slice(i);
-        break;
-      }
-      const after = start + open.length;
-      if (after < lower.length && !isTagBoundary(lower.charCodeAt(after))) {
-        out += input.slice(i, after);
-        i = after;
-        continue;
-      }
-      out += input.slice(i, start);
-      const end = lower.indexOf(close, after);
-      if (end === -1) {
-        i = input.length;
-        break;
-      }
-      i = end + close.length;
-    }
-    input = out;
-  }
-  return input;
+  return stripAsciiTagTrees(html, tags);
 }
 
 function tagNameOf(tag: string): { close: boolean; name: string } {
@@ -113,24 +80,27 @@ function decodeEntities(text: string): string {
   return out;
 }
 
-function collapseWhitespace(text: string): string {
+/** Collapse runs of space. Tracks the last emitted class in booleans so V8 does not copy `out` on every space. */
+export function collapseWhitespace(text: string): string {
   let out = "";
   let i = 0;
   let blankLines = 0;
   let lineSpace = false;
+  let lastWasNewline = true;
   while (i < text.length) {
     const c = text.charCodeAt(i);
     if (c === 10) {
       if (blankLines < 1) {
         out += "\n";
         blankLines++;
+        lastWasNewline = true;
       }
       lineSpace = false;
       i++;
       continue;
     }
     if (c === 32 || c === 9 || c === 12 || c === 13 || c === 11) {
-      if (!lineSpace && out.length > 0 && out.charCodeAt(out.length - 1) !== 10) {
+      if (!lineSpace && !lastWasNewline) {
         out += " ";
         lineSpace = true;
       }
@@ -139,6 +109,7 @@ function collapseWhitespace(text: string): string {
     }
     blankLines = 0;
     lineSpace = false;
+    lastWasNewline = false;
     out += text.charAt(i);
     i++;
   }
@@ -152,7 +123,8 @@ export function htmlToText(html: string): string {
 }
 
 export function snippetOf(text: string): string {
-  const flat = collapseWhitespace(text.replace(/\n/g, " "));
+  const input = text.length > SNIPPET_SOURCE_MAX ? text.slice(0, SNIPPET_SOURCE_MAX) : text;
+  const flat = collapseWhitespace(input.replace(/\n/g, " "));
   return flat.length > SNIPPET_CHARS ? `${flat.slice(0, SNIPPET_CHARS - 1)}…` : flat;
 }
 
