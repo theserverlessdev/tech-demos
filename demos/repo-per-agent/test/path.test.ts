@@ -44,9 +44,9 @@ describe("Workers AI writes the commit", () => {
     expect(result.path).toBe("src/task.ts");
     expect(result.message).toBe("Add reverse helper");
     expect(harness.ai.calls).toBe(1);
-    const input = harness.ai.lastInput as { reasoning_effort?: string; max_tokens?: number; response_format?: { type?: string } };
+    const input = harness.ai.lastInput as { reasoning_effort?: string; max_completion_tokens?: number; response_format?: { type?: string } };
     expect(input.reasoning_effort).toBe("low");
-    expect(input.max_tokens).toBe(4096);
+    expect(input.max_completion_tokens).toBe(4096);
     expect(input.response_format?.type).toBe("json_schema");
 
     const again = await api(harness.env, `/api/tasks/${id}`, { cookie });
@@ -65,6 +65,10 @@ describe("Workers AI writes the commit", () => {
 
     const detailCalls = harness.artifacts.calls.slice(beforeDetail);
     expect(detailCalls.filter((call) => call.method === "log" || call.method === "readFile").length).toBe(0);
+    expect(detailCalls.filter((call) => call.method === "readCommit").length).toBe(2);
+    expect(detailCalls.filter((call) => call.method === "readTree").length).toBe(4);
+    expect(detailCalls.filter((call) => call.method === "readBlob").length).toBe(6);
+    expect(detailCalls.length).toBeLessThanOrEqual(13);
     expect(detailCalls.some((call) => call.method === "readBlob")).toBe(true);
     const afterFirst = harness.artifacts.calls.length;
     const cached = await api(harness.env, `/api/tasks/${id}/commits/${result.hash}`, { cookie });

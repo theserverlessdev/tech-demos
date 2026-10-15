@@ -105,11 +105,11 @@ export async function headCommit(repo: ArtifactsRepo): Promise<CommitMeta | null
   return history[0] ?? null;
 }
 
-/** Walk the tree and read blobs by object hash. Avoids path-based `readFile` on every entry. */
-export async function readFilesAt(repo: ArtifactsRepo, ref: string): Promise<Map<string, string>> {
-  const commit = asCommits([await repo.readCommit(ref)])[0];
-  if (!commit) return new Map();
-  return readTreeFiles(repo, commit.treeHash, "");
+/** Walk the tree and read blobs by object hash. Pass `treeHash` to skip a second `readCommit`. */
+export async function readFilesAt(repo: ArtifactsRepo, ref: string, treeHash?: string): Promise<Map<string, string>> {
+  const tree = treeHash ?? asCommits([await repo.readCommit(ref)])[0]?.treeHash;
+  if (!tree) return new Map();
+  return readTreeFiles(repo, tree, "");
 }
 
 async function readTreeFiles(repo: ArtifactsRepo, treeHash: string, prefix: string): Promise<Map<string, string>> {

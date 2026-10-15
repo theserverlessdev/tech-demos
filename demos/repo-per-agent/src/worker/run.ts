@@ -34,7 +34,7 @@ export async function executeRun(env: DemoEnv, input: RunInput): Promise<RunResu
   const current = await withRepo(env.ARTIFACTS, task.repoName, async (repo) => {
     const head = await headCommit(repo);
     if (!head) throw new Error("The repository has no commits yet.");
-    const files = await readFilesAt(repo, head.hash);
+    const files = await readFilesAt(repo, head.hash, head.treeHash);
     return { parent: head.hash, files };
   });
 

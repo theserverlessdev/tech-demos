@@ -3,14 +3,15 @@ import { buildModelInput, MODEL_OPTIONS, modelExhausted, modelText, ModelEditErr
 import type { DemoEnv } from "../src/worker/env";
 
 describe("GLM-5.3-flash request", () => {
-  test("uses reasoning_effort low, 4096 tokens, and json_schema", () => {
+  test("uses reasoning_effort low, 4096 completion tokens, and json_schema", () => {
     const input = buildModelInput("add reverse", { "src/task.ts": "export {}\n" });
-    expect(input.max_tokens).toBe(4096);
+    expect(input.max_completion_tokens).toBe(4096);
     expect(input.reasoning_effort).toBe("low");
     expect(input.response_format.type).toBe("json_schema");
     expect(input.response_format.json_schema.name).toBe("file_edit");
     expect(input.response_format.json_schema.schema.properties.path.enum).toContain("src/task.ts");
-    expect(MODEL_OPTIONS.max_tokens).toBe(4096);
+    expect(MODEL_OPTIONS.max_completion_tokens).toBe(4096);
+    expect("max_tokens" in input).toBe(false);
     expect("chat_template_kwargs" in input).toBe(false);
   });
 

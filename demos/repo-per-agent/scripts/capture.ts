@@ -112,7 +112,8 @@ await deskPage.screenshot({ path: `${out}/desk.png`, fullPage: false });
 await desk.close();
 
 await page.click("#token-btn").catch(() => undefined);
-await page.waitForTimeout(500);
+await page.waitForSelector("#token-copy", { state: "visible" }).catch(() => undefined);
+await page.waitForTimeout(400);
 await page.screenshot({ path: `${out}/mobile-token.png`, fullPage: true });
 await page.evaluate(() => document.querySelector("#diff")?.scrollIntoView({ block: "center" }));
 await page.waitForTimeout(1200);

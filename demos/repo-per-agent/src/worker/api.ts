@@ -1,17 +1,19 @@
 import { z } from "zod";
 import type { CommitDetail, RunResult, TaskDetail } from "../shared/types";
-import { AgentBudgetError, AgentBusyError, executeRun } from "./run";
+import { executeRun } from "./run";
 import { readCommitCache, writeCommitCache } from "./cache";
 import {
   bumpCleanup,
   countAllLiveTasks,
   deleteTaskRows,
+  expireTaskNow,
   getTask,
   insertActivity,
   listActivity,
   listCommitSummaries,
   listExpired,
   listTasks,
+  markAgentStarted,
   reserveTask,
   updateTaskRemote,
 } from "./db";
@@ -258,17 +260,28 @@ async function createTask(request: Request, env: DemoEnv, visitorId: string): Pr
     console.log(JSON.stringify({ event: "task_created", task: id }));
     return json({ id, title: title.data, remote, createdAt: now, expiresAt: now + ttl * 1000, seed: hash }, 201);
   } catch (err) {
+    let repoGone = !created;
     if (created) {
       try {
         await env.ARTIFACTS.delete(id);
-      } catch {
-        // Deleting a repo we failed to seed is best-effort. The binding may be the failure.
+        repoGone = true;
+      } catch (deleteErr) {
+        console.error(JSON.stringify({ event: "task_create_delete_failed", task: id, error: String(deleteErr).slice(0, 200) }));
+        repoGone = false;
       }
     }
-    try {
-      await deleteTaskRows(env, id);
-    } catch {
-      // The reserved row is expired by the cron if this delete fails.
+    if (repoGone) {
+      try {
+        await deleteTaskRows(env, id);
+      } catch {
+        // The reserved row is expired by the cron if this delete fails.
+      }
+    } else {
+      try {
+        await expireTaskNow(env, id);
+      } catch {
+        // TTL still expires the row; cron will see it then.
+      }
     }
     if (err instanceof HttpError) throw err;
     const text = String(err);
@@ -295,7 +308,7 @@ async function taskAgent(env: DemoEnv, id: string) {
 async function purgeVisitor(request: Request, env: DemoEnv, visitorId: string): Promise<Response> {
   if (!isLocalDev(env)) throw new HttpError(404, "not_found", "Unknown API path.");
   await limit(env.CREATE_LIMIT, request);
-  await env.DB.prepare("UPDATE tasks SET expires_at = 0 WHERE visitor_id = ?").bind(visitorId).run();
+  await env.DB.prepare("UPDATE tasks SET expires_at = 0, next_attempt_at = 0 WHERE visitor_id = ?").bind(visitorId).run();
   const result = await cleanupExpired(env);
   return json(result);
 }
@@ -309,7 +322,7 @@ async function taskDetail(request: Request, env: DemoEnv, visitorId: string, id:
     task: { id: task.id, title: task.title, remote: task.remote, createdAt: task.createdAt, expiresAt: task.expiresAt },
     commits,
     activity,
-    agent: { runs, phase: "ready" },
+    agent: { runs },
   };
   return json(body);
 }
@@ -323,9 +336,13 @@ async function commitDetail(request: Request, env: DemoEnv, visitorId: string, i
   const detail = await withRepo(env.ARTIFACTS, task.repoName, async (repo) => {
     const commit = asCommits([await repo.readCommit(hash)])[0];
     if (!commit || commit.hash !== hash) return null;
-    const after = await readFilesAt(repo, hash);
+    const after = await readFilesAt(repo, hash, commit.treeHash);
     const parent = commit.parents[0] ?? null;
-    const before = parent ? await readFilesAt(repo, parent) : new Map<string, string>();
+    let before = new Map<string, string>();
+    if (parent) {
+      const parentCommit = asCommits([await repo.readCommit(parent)])[0];
+      before = parentCommit ? await readFilesAt(repo, parent, parentCommit.treeHash) : new Map();
+    }
     return { commit, before, after, parent };
   });
   if (!detail) throw new HttpError(404, "not_found", "That commit is not on main.");
@@ -348,6 +365,7 @@ async function runTask(request: Request, env: DemoEnv, visitorId: string, id: st
   const instruction = InstructionSchema.safeParse(field(body, "instruction"));
   if (!instruction.success) throw new HttpError(400, "bad_instruction", "Tell the agent what to change, up to 500 characters.");
 
+  await markAgentStarted(env, id);
   const input = { visitorId, taskId: id, instruction: instruction.data };
   try {
     const result = env.DIRECT_RUN === "1" ? await executeRun(env, input) : await (await taskAgent(env, id)).runTurn(input);
@@ -357,10 +375,18 @@ async function runTask(request: Request, env: DemoEnv, visitorId: string, id: st
   }
 }
 
+function errorCode(err: unknown): string | undefined {
+  if (!err || typeof err !== "object") return undefined;
+  const code = (err as { code?: unknown }).code;
+  return typeof code === "string" ? code : undefined;
+}
+
+/** Map by `code`. Durable Object RPC keeps own properties and drops `instanceof`. */
 export function httpFromRunError(taskId: string, err: unknown): HttpError {
-  if (err instanceof AgentBusyError) return new HttpError(409, "agent_busy", err.message);
-  if (err instanceof AgentBudgetError) return new HttpError(429, "ai_budget", err.message);
+  const code = errorCode(err);
   const message = err instanceof Error ? err.message : "The agent run failed.";
+  if (code === "agent_busy") return new HttpError(409, "agent_busy", message);
+  if (code === "ai_budget") return new HttpError(429, "ai_budget", message);
   console.error(JSON.stringify({ event: "agent_run_failed", task: taskId, error: message.slice(0, 240) }));
   return new HttpError(502, "agent_failed", message.slice(0, 240));
 }
@@ -389,8 +415,8 @@ async function mintToken(request: Request, env: DemoEnv, visitorId: string, id: 
   });
 }
 
-async function purgeAgent(env: DemoEnv, id: string): Promise<void> {
-  if (env.DIRECT_RUN === "1" || !env.TaskAgent) return;
+async function purgeAgent(env: DemoEnv, id: string, agentStarted: boolean): Promise<void> {
+  if (!agentStarted || env.DIRECT_RUN === "1" || !env.TaskAgent) return;
   try {
     const agent = await taskAgent(env, id);
     await agent.purge();
@@ -421,7 +447,7 @@ export async function cleanupExpired(env: DemoEnv): Promise<{ deleted: number; f
           continue;
         }
       }
-      await purgeAgent(env, task.id);
+      await purgeAgent(env, task.id, task.agentStarted);
       await deleteTaskRows(env, task.id);
       deleted++;
     }

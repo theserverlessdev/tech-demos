@@ -124,12 +124,68 @@ describe("caps and cleanup", () => {
     };
     const failed = await cleanupExpired(harness.env);
     expect(failed.failed).toBe(1);
-    const row = await harness.env.DB.prepare("SELECT attempts, expires_at FROM tasks WHERE id = ?")
+    const row = await harness.env.DB.prepare("SELECT attempts, expires_at, next_attempt_at FROM tasks WHERE id = ?")
       .bind("task-ffffffffffffffff")
-      .first<{ attempts: number; expires_at: number }>();
+      .first<{ attempts: number; expires_at: number; next_attempt_at: number }>();
     expect(row?.attempts).toBe(1);
-    expect(row?.expires_at ?? 0).toBeGreaterThan(Date.now());
+    expect(row?.expires_at).toBe(1);
+    expect(row?.next_attempt_at ?? 0).toBeGreaterThan(Date.now());
+    const listed = await api(harness.env, "/api/session", { cookie: visitorCookie("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") });
+    expect((listed.data as { tasks: { id: string }[] }).tasks.some((task) => task.id === "task-ffffffffffffffff")).toBe(false);
+    const skipped = await cleanupExpired(harness.env);
+    expect(skipped.failed).toBe(0);
+    expect(skipped.deleted).toBe(0);
     harness.env.ARTIFACTS.delete = original;
+  }, 20000);
+
+  test("a failed seed keeps the D1 row when repo delete fails", async () => {
+    harness = await makeHarness();
+    const originalCreate = harness.env.ARTIFACTS.create.bind(harness.env.ARTIFACTS);
+    const originalDelete = harness.env.ARTIFACTS.delete.bind(harness.env.ARTIFACTS);
+    harness.env.ARTIFACTS.create = async (name) => {
+      const created = await originalCreate(name);
+      return { ...created, token: "bad" };
+    };
+    harness.env.ARTIFACTS.delete = async () => {
+      throw new Error("cannot delete");
+    };
+    const res = await api(harness.env, "/api/tasks", {
+      method: "POST",
+      cookie: visitorCookie(),
+      origin: harness.origin,
+      body: { title: "orphan", turnstileToken: DUMMY },
+    });
+    expect(res.status).toBe(503);
+    const row = await harness.env.DB.prepare("SELECT id, expires_at, next_attempt_at FROM tasks LIMIT 1").first<{
+      id: string;
+      expires_at: number;
+      next_attempt_at: number;
+    }>();
+    expect(row).toBeTruthy();
+    expect(row?.expires_at).toBe(0);
+    expect(row?.next_attempt_at).toBe(0);
+    harness.env.ARTIFACTS.delete = originalDelete;
+    const cleaned = await cleanupExpired(harness.env);
+    expect(cleaned.deleted).toBe(1);
+    expect(await harness.env.DB.prepare("SELECT id FROM tasks LIMIT 1").first()).toBeNull();
+  }, 20000);
+
+  test("a failed seed deletes the D1 row when the repo is gone", async () => {
+    harness = await makeHarness();
+    const originalCreate = harness.env.ARTIFACTS.create.bind(harness.env.ARTIFACTS);
+    harness.env.ARTIFACTS.create = async (name) => {
+      const created = await originalCreate(name);
+      return { ...created, token: "bad" };
+    };
+    const res = await api(harness.env, "/api/tasks", {
+      method: "POST",
+      cookie: visitorCookie(),
+      origin: harness.origin,
+      body: { title: "gone", turnstileToken: DUMMY },
+    });
+    expect(res.status).toBe(503);
+    const row = await harness.env.DB.prepare("SELECT id FROM tasks LIMIT 1").first();
+    expect(row).toBeNull();
   }, 20000);
 
   test("daily AI cap is enforced", async () => {
@@ -173,6 +229,20 @@ describe("errors", () => {
     const err = httpFromRunError("task-1", new AgentBudgetError());
     expect(err.status).toBe(429);
     expect(err.code).toBe("ai_budget");
+  });
+
+  test("a plain Error with code maps after Durable Object RPC", () => {
+    const busy = Object.assign(new Error("This agent is already writing a commit."), { code: "agent_busy" });
+    const budget = Object.assign(new Error("The shared Workers AI budget for today is used up. Try again tomorrow."), {
+      code: "ai_budget",
+    });
+    const mappedBusy = httpFromRunError("task-1", busy);
+    expect(mappedBusy).toBeInstanceOf(HttpError);
+    expect(mappedBusy.status).toBe(409);
+    expect(mappedBusy.code).toBe("agent_busy");
+    const mappedBudget = httpFromRunError("task-1", budget);
+    expect(mappedBudget.status).toBe(429);
+    expect(mappedBudget.code).toBe("ai_budget");
   });
 
   test("unknown API paths are 404", async () => {

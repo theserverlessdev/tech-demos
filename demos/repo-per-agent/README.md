@@ -28,7 +28,7 @@ Inspired by [choyiny/gitorange](https://github.com/choyiny/gitorange) (Apache-2.
 
 - The Artifacts binding does not write file bytes. The commit goes through Git smart HTTP (`git-receive-pack`).
 - A browser cookie can hold 3 live repos. There is also a global ceiling of 300 live repos. D1 stores the task and the activity rows.
-- Workers AI authors the commit (`@cf/zai-org/glm-5.3-flash`, `reasoning_effort: low`, 4096 tokens, JSON schema). A failed or unchanged model response is not committed. Shared daily cap: 80 runs.
+- Workers AI authors the commit (`@cf/zai-org/glm-5.3-flash`, `reasoning_effort: low`, `max_completion_tokens: 4096`, JSON schema). A failed or unchanged model response is not committed. Shared daily cap: 80 runs.
 - Turnstile is required on create and run. Production fails closed when the secret is missing.
 - The hub path shares an origin with every other demo. Prefer the subdomain if you care about cookie isolation.
 
@@ -100,7 +100,7 @@ bunx wrangler secret put TURNSTILE_SECRET
 
 The widget secret is in the Turnstile dashboard for that site key. Production fails closed when `TURNSTILE_SECRET` is missing. The public site key lives in `wrangler.jsonc`.
 
-After the worker is deployed, apply D1 migration `0002_caps.sql` and redeploy `apps/hub` so the gallery card is not only a fallback redirect.
+Apply every pending D1 migration (`0002_caps.sql`, `0003_next_attempt.sql`) **before** deploying the worker. Deploying first breaks create (missing `attempts`) and run (missing `ai_daily`) until the new columns land. The commands above already apply migrations first. Then redeploy `apps/hub` so the gallery card is not only a fallback redirect.
 
 ## Layout
 
@@ -108,6 +108,6 @@ After the worker is deployed, apply D1 migration `0002_caps.sql` and redeploy `a
 src/worker/   API, TaskAgent, git push, D1, Turnstile
 src/client/   commit log and line diff
 public/       Graphite & Ember page
-migrations/   tasks + activity + daily AI counter
+migrations/   tasks + activity + daily AI counter + cleanup retry column
 test/         create → run → diff proof (fake Artifacts + scripted model)
 ```

@@ -327,12 +327,32 @@ $("token-btn").addEventListener("click", async () => {
     input.type = "password";
     revealed = false;
     $("token-reveal").textContent = "Show token";
+    $("token-copy").textContent = "Copy clone command";
     $("token-box").hidden = false;
     hint("run-hint", "Read token ready for 10 minutes.");
   } catch (err) {
     hint("run-hint", err instanceof Error ? err.message : "Token failed.", true);
   } finally {
     button.disabled = false;
+  }
+});
+
+$("token-copy").addEventListener("click", async () => {
+  const input = $<HTMLInputElement>("token-command");
+  const text = input.value;
+  if (!text) return;
+  try {
+    if (!navigator.clipboard?.writeText) throw new Error("no clipboard");
+    await navigator.clipboard.writeText(text);
+    $("token-copy").textContent = "Copied";
+    hint("run-hint", "Clone command copied.");
+  } catch {
+    input.type = "text";
+    revealed = true;
+    $("token-reveal").textContent = "Hide token";
+    input.focus();
+    input.select();
+    hint("run-hint", "Select the command and copy it.");
   }
 });
 

@@ -98,12 +98,15 @@
       </form>
 
       <div class="token" id="token-box" hidden>
-        <p>Read-only for 10 minutes. The token stays masked.</p>
+        <p>Read-only for 10 minutes. The token stays masked. Copy works without revealing it.</p>
         <label class="field">
           <span>git clone</span>
           <input id="token-command" type="password" readonly />
         </label>
-        <button class="btn btn-ghost" id="token-reveal" type="button">Show token</button>
+        <div class="row">
+          <button class="btn btn-ghost" id="token-copy" type="button">Copy clone command</button>
+          <button class="btn btn-ghost" id="token-reveal" type="button">Show token</button>
+        </div>
       </div>
     </section>
 

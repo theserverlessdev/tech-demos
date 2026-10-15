@@ -17,7 +17,7 @@ Repositories are Artifacts repos. Git clients clone them with a repo-scoped toke
 
 ## 2026-10-15
 
-Audit fixes. GLM-5.3-flash call uses `reasoning_effort: "low"`, `max_tokens: 4096`, and `response_format` json_schema. Local `bun test` proves create → run → line diff with a fake Artifacts store. Task view uses `minmax(0, 1fr)` so a 390px phone no longer grows a horizontal scrollbar. Turnstile waits for `api.js` onload. `/api/health` is rate-limited and checks D1 only. Commit views are cached. Create no longer wakes a Durable Object; cron destroys expired agents, loops for ~20s, and backs off failed deletes. Repo cap is an atomic insert plus a 300-repo ceiling. Smoke deletes the repo it created.
+Audit fixes. GLM-5.3-flash call uses `reasoning_effort: "low"`, `max_completion_tokens: 4096`, and `response_format` json_schema. Local `bun test` proves create → run → line diff with a fake Artifacts store. Task view uses `minmax(0, 1fr)` so a 390px phone no longer grows a horizontal scrollbar. Turnstile waits for `api.js` onload. `/api/health` is rate-limited and checks D1 only. Commit views are cached. Create no longer wakes a Durable Object; cron destroys expired agents, loops for ~20s, and backs off failed deletes on `next_attempt_at` so they do not look live. A failed seed keeps the D1 row when the repo delete fails. Busy/budget errors map by `err.code` after Durable Object RPC. Repo cap is an atomic insert plus a 300-repo ceiling. Smoke deletes the repo it created. Clone command has a copy button.
 
 ## 2026-10-09
 

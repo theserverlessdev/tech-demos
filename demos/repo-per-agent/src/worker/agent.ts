@@ -44,8 +44,7 @@ export class TaskAgent extends Agent<DemoEnv, AgentState> {
     return this.state;
   }
 
-  /** Drop SQLite storage for this instance. Called from the cron after the repo is deleted. */
-  @callable()
+  /** Drop SQLite storage for this instance. Worker RPC only — not exposed to clients. */
   async purge(): Promise<void> {
     const destroy = (this as unknown as { destroy?: () => Promise<void> }).destroy;
     if (typeof destroy === "function") {

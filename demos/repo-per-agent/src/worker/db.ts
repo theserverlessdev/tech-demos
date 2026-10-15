@@ -141,20 +141,43 @@ export async function listCommitSummaries(env: DemoEnv, taskId: string): Promise
   }));
 }
 
-export async function listExpired(env: DemoEnv, now: number, limit: number): Promise<{ id: string; repoName: string; attempts: number }[]> {
+export async function listExpired(
+  env: DemoEnv,
+  now: number,
+  limit: number,
+): Promise<{ id: string; repoName: string; attempts: number; agentStarted: boolean }[]> {
   const { results } = await env.DB.prepare(
-    "SELECT id, repo_name, COALESCE(attempts, 0) AS attempts FROM tasks WHERE expires_at <= ? ORDER BY expires_at ASC LIMIT ?",
+    `SELECT id, repo_name, COALESCE(attempts, 0) AS attempts, COALESCE(agent_started, 0) AS agent_started
+     FROM tasks
+     WHERE expires_at <= ? AND COALESCE(next_attempt_at, 0) <= ?
+     ORDER BY expires_at ASC
+     LIMIT ?`,
   )
-    .bind(now, limit)
-    .all<{ id: string; repo_name: string; attempts: number }>();
-  return results.map((row) => ({ id: row.id, repoName: row.repo_name, attempts: row.attempts }));
+    .bind(now, now, limit)
+    .all<{ id: string; repo_name: string; attempts: number; agent_started: number }>();
+  return results.map((row) => ({
+    id: row.id,
+    repoName: row.repo_name,
+    attempts: row.attempts,
+    agentStarted: row.agent_started > 0,
+  }));
 }
 
+/** Push the next cleanup try out. Never move expires_at — that would make the task look live. */
 export async function bumpCleanup(env: DemoEnv, taskId: string, attempts: number, now: number): Promise<void> {
   const delay = Math.min(3_600_000, 60_000 * 2 ** Math.min(attempts, 6));
-  await env.DB.prepare("UPDATE tasks SET attempts = ?, expires_at = ? WHERE id = ?")
+  await env.DB.prepare("UPDATE tasks SET attempts = ?, next_attempt_at = ? WHERE id = ?")
     .bind(attempts + 1, now + delay, taskId)
     .run();
+}
+
+/** Keep the row for cron after a create-path repo delete failed. */
+export async function expireTaskNow(env: DemoEnv, taskId: string): Promise<void> {
+  await env.DB.prepare("UPDATE tasks SET expires_at = 0, next_attempt_at = 0 WHERE id = ?").bind(taskId).run();
+}
+
+export async function markAgentStarted(env: DemoEnv, taskId: string): Promise<void> {
+  await env.DB.prepare("UPDATE tasks SET agent_started = 1 WHERE id = ?").bind(taskId).run();
 }
 
 export async function deleteTaskRows(env: DemoEnv, taskId: string): Promise<void> {

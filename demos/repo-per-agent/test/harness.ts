@@ -9,6 +9,7 @@ import { FakeArtifacts } from "./fake-artifacts";
 const SCHEMA = [
   readFileSync(join(import.meta.dir, "../migrations/0001_init.sql"), "utf8"),
   readFileSync(join(import.meta.dir, "../migrations/0002_caps.sql"), "utf8"),
+  readFileSync(join(import.meta.dir, "../migrations/0003_next_attempt.sql"), "utf8"),
 ].join("\n");
 
 export const DUMMY = "XXXX.DUMMY.TOKEN.XXXX";

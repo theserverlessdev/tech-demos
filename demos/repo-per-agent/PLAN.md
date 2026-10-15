@@ -7,7 +7,7 @@ Make the demo merge-ready against the 2026-10-15 audit: prove the Workers AI com
 ## MVP for this pass
 
 - In:
-  - GLM-5.3-flash call matches current docs: `reasoning_effort: "low"`, `max_tokens: 4096`, `response_format` json_schema. Token exhaustion is reported as such.
+  - GLM-5.3-flash call matches current docs: `reasoning_effort: "low"`, `max_completion_tokens: 4096`, `response_format` json_schema. Token exhaustion is reported as such.
   - A local test/smoke that runs create → run → commit → line diff with a fake Artifacts store and a scripted model reply. That is the proof in this PR. A live GLM call stays an owner step.
   - Task view uses `minmax(0, 1fr)` so a 390px phone does not grow a horizontal scrollbar.
   - Turnstile waits for `api.js` onload and removes the run widget before remount.
@@ -29,6 +29,15 @@ Make the demo merge-ready against the 2026-10-15 audit: prove the Workers AI com
 ## Stack
 
 Unchanged: Workers Paid, Agents SDK DO, Artifacts `tech-demos`, D1, Turnstile, Graphite & Ember. Local proof uses Bun + in-process fakes so `bun test` does not touch the shared namespace or Workers AI.
+
+## PR #42 follow-ups (this pass)
+
+- Map busy/budget errors by `err.code` so Durable Object RPC does not turn them into 502.
+- Cleanup retry uses `next_attempt_at`. `expires_at` stays expired so a failed delete cannot look live.
+- Create keeps the D1 row (`expires_at = 0`) when the Artifacts delete fails after a seed error.
+- README: apply D1 migrations before deploy.
+- Nits: drop `@callable` on `purge`, skip purge when the agent never ran, pass tree hashes into `readFilesAt`, cap the in-memory commit cache, `max_completion_tokens`, no hard-coded phase, copy button for the clone command.
+- Still out: a paid GLM call, deploy, Cloudflare API writes.
 
 ## Deferred
 

@@ -27,7 +27,7 @@ export const EDIT_JSON_SCHEMA = {
 
 /** GLM-5.3-flash: reasoning cannot be disabled; default is max. low + 4096 leaves room for a full-file body. */
 export const MODEL_OPTIONS = {
-  max_tokens: 4096,
+  max_completion_tokens: 4096,
   temperature: 0.2,
   reasoning_effort: "low" as const,
   response_format: { type: "json_schema" as const, json_schema: EDIT_JSON_SCHEMA },
