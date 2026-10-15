@@ -8,9 +8,24 @@ import { notifyBoard } from "./board";
 type Params = { boardId: string; taskId: string; splitId: string };
 
 type ChatOutput = {
-  choices?: { message?: { content?: string | null } }[];
+  choices?: { message?: { content?: string | null; reasoning_content?: string | null } }[];
   response?: string;
 };
+
+const SUBTASK_SCHEMA = {
+  type: "array",
+  minItems: 3,
+  maxItems: 6,
+  items: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      title: { type: "string" },
+      description: { type: "string" },
+    },
+    required: ["title", "description"],
+  },
+} as const;
 
 function stripThinking(text: string): string {
   const end = text.lastIndexOf("</think>");
@@ -90,13 +105,18 @@ export class SplitTaskWorkflow extends WorkflowEntrypoint<Env, Params> {
               {
                 role: "system",
                 content:
-                  "Split one kanban card into concrete subtasks. Return only a JSON array of 4 objects with keys title and description. Titles under 80 characters. No markdown.",
+                  "Split one kanban card into concrete subtasks. Return only a JSON array of 3 to 6 objects with keys title and description. Titles under 80 characters. No markdown.",
               },
               { role: "user", content: `Title: ${loaded.title}\nDescription: ${loaded.description || "(none)"}` },
             ],
-            max_tokens: 600,
+            max_tokens: 2000,
+            max_completion_tokens: 2000,
             temperature: 0.2,
-            chat_template_kwargs: { enable_thinking: false },
+            reasoning_effort: "low",
+            response_format: {
+              type: "json_schema",
+              json_schema: { name: "subtasks", schema: SUBTASK_SCHEMA },
+            },
           } as never)) as ChatOutput;
           const parsed = parseSubtasks(modelText(out));
           if (parsed) {

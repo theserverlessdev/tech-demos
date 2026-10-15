@@ -1,4 +1,4 @@
-import { COLUMNS, SPLIT_STEPS, type BoardMeta, type BoardSnapshot, type ColumnId, type ServerEvent, type SessionPayload, type SplitRun, type Task } from "../shared/types";
+import { COLUMNS, LIMITS, SPLIT_STEPS, type BoardMeta, type BoardSnapshot, type ColumnId, type ServerEvent, type SessionPayload, type SplitRun, type Task } from "../shared/types";
 
 const COLUMN_LABEL: Record<ColumnId, string> = { todo: "To do", doing: "Doing", done: "Done" };
 const STEP_LABEL: Record<string, string> = {
@@ -38,9 +38,12 @@ let peers = 0;
 let connected = false;
 let socket: WebSocket | null = null;
 let reconnectAt = 0;
+let reconnectFails = 0;
 let splitTimer = 0;
+let splitStarted = 0;
 let watching: string | null = null;
 let editing = false;
+let drawerSig = "";
 let createWidget: string | null = null;
 let actionWidget: string | null = null;
 let dragId: string | null = null;
@@ -62,9 +65,10 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string,
   return node;
 }
 
-async function api<T>(path: string, init: { method?: string; body?: unknown; form?: FormData } = {}): Promise<{ ok: boolean; status: number; data: T | null; error: string }> {
+async function api<T>(path: string, init: { method?: string; body?: unknown; form?: FormData; turnstile?: string } = {}): Promise<{ ok: boolean; status: number; data: T | null; error: string }> {
   const headers: Record<string, string> = {};
   let body: BodyInit | undefined;
+  if (init.turnstile) headers["cf-turnstile-response"] = init.turnstile;
   if (init.form) body = init.form;
   else if (init.body !== undefined) {
     headers["content-type"] = "application/json";
@@ -133,13 +137,28 @@ function resetWidget(widget: string | null): void {
   if (widget) window.turnstile?.reset(widget);
 }
 
+function dropWidget(widget: string | null): void {
+  if (widget) window.turnstile?.remove(widget);
+}
+
 function formatDue(ms: number): string {
-  return new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+  return new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
 function dateInput(ms: number | null): string {
   if (!ms) return "";
-  return new Date(ms).toISOString().slice(0, 10);
+  const date = new Date(ms);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function localEndOfDay(value: string): number | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const [year, month, day] = value.split("-").map(Number);
+  if (!year || !month || !day) return null;
+  return new Date(year, month - 1, day, 23, 59, 59, 999).getTime();
 }
 
 function expiryLine(ms: number): string {
@@ -150,6 +169,21 @@ function expiryLine(ms: number): string {
 
 function taskById(id: string | null): Task | null {
   return board?.tasks.find((task) => task.id === id) ?? null;
+}
+
+function cardFieldsSig(task: Task): string {
+  const files = board?.attachments.filter((file) => file.taskId === task.id).map((file) => `${file.id}:${file.filename}`).join(",") ?? "";
+  return [task.id, task.title, task.description, String(task.dueAt), task.column, String(task.overdue), files].join("|");
+}
+
+function clearColumnOver(): void {
+  document.querySelectorAll(".column.is-over").forEach((node) => node.classList.remove("is-over"));
+}
+
+function edgeScroll(clientY: number): void {
+  const edge = 56;
+  if (clientY < edge) window.scrollBy(0, -24);
+  else if (clientY > window.innerHeight - edge) window.scrollBy(0, 24);
 }
 
 function applySnapshot(snapshot: BoardSnapshot, rebuildDrawer = false): void {
@@ -171,6 +205,14 @@ async function refreshBoards(): Promise<void> {
 async function openBoard(id: string): Promise<void> {
   const res = await api<BoardSnapshot>(`/api/boards/${id}`);
   if (!res.data) {
+    boards = boards.filter((item) => item.id !== id);
+    sessionStorage.removeItem("tanbase-board");
+    const next = boards[0];
+    if (next) {
+      setStrip(res.error);
+      await openBoard(next.id);
+      return;
+    }
     setStrip(res.error);
     renderEmpty();
     return;
@@ -178,6 +220,8 @@ async function openBoard(id: string): Promise<void> {
   sessionStorage.setItem("tanbase-board", id);
   editing = false;
   selectedId = null;
+  drawerSig = "";
+  reconnectFails = 0;
   applySnapshot(res.data, true);
   connect();
 }
@@ -193,15 +237,22 @@ function connect(): void {
   ws.addEventListener("open", () => {
     if (socket !== ws) return;
     connected = true;
+    reconnectFails = 0;
     setStrip(liveLine());
   });
   ws.addEventListener("close", () => {
     if (socket !== ws) return;
     connected = false;
     setStrip(liveLine());
+    reconnectFails += 1;
+    if (reconnectFails > 8) {
+      setStrip("Lost the board connection. Refresh to try again.");
+      return;
+    }
+    const delay = Math.min(1200 * 2 ** (reconnectFails - 1), 20_000);
     reconnectAt = window.setTimeout(() => {
       if (board?.id === boardId) connect();
-    }, 1200);
+    }, delay);
   });
   ws.addEventListener("message", (event) => {
     if (socket !== ws) return;
@@ -219,33 +270,47 @@ function connect(): void {
       setStrip(liveLine());
     } else if (message.type === "expired") {
       connected = false;
+      const gone = board?.id;
       board = null;
       setStrip("That board has expired.");
-      void refreshBoards().then(() => renderEmpty());
+      void refreshBoards().then(async () => {
+        boards = boards.filter((item) => item.id !== gone);
+        const next = boards[0];
+        if (next) await openBoard(next.id);
+        else {
+          renderEmpty();
+          setStrip("That board has expired.");
+        }
+      });
     } else {
       setHint(message.message);
     }
   });
 }
 
-async function createBoard(title: string, widget: string | null): Promise<void> {
+async function createBoard(title: string, widget: string | null, hint: HTMLElement | null): Promise<void> {
+  const writeHint = (text: string) => {
+    if (hint) hint.textContent = text;
+    else setHint(text);
+  };
   const turnstileToken = tokenOf(widget);
   if (!turnstileToken) {
-    setHint("Complete the Turnstile check, then create the board.");
+    writeHint("Complete the Turnstile check, then create the board.");
     return;
   }
-  const res = await api<{ board: BoardMeta }>("/api/boards", { method: "POST", body: { title, turnstileToken } });
+  const res = await api<{ board: BoardMeta }>("/api/boards", { method: "POST", body: { title, turnstileToken }, turnstile: turnstileToken });
   resetWidget(widget);
   if (!res.data) {
-    setHint(res.error);
-    setStrip(res.error);
+    writeHint(res.error);
     return;
   }
+  const dialog = document.querySelector("#create-dialog");
+  if (dialog instanceof HTMLDialogElement) dialog.close();
   boards = [res.data.board, ...boards.filter((item) => item.id !== res.data?.board.id)];
   await openBoard(res.data.board.id);
 }
 
-async function saveTask(task: Task, patch: { title?: string; description?: string; dueAt?: string | null; column?: ColumnId }): Promise<void> {
+async function saveTask(task: Task, patch: { title?: string; description?: string; dueAt?: number | null; column?: ColumnId }): Promise<void> {
   if (!board) return;
   const res = await api<BoardSnapshot>(`/api/boards/${board.id}/tasks/${task.id}`, { method: "PATCH", body: patch });
   editing = false;
@@ -280,12 +345,29 @@ async function addTask(title: string): Promise<void> {
   applySnapshot(res.data, true);
 }
 
+function dropOnColumn(taskId: string, clientX: number, clientY: number): void {
+  const section = document.elementFromPoint(clientX, clientY)?.closest("[data-column]");
+  const column = section?.getAttribute("data-column");
+  if (!(section instanceof HTMLElement) || !column || !COLUMNS.includes(column as ColumnId) || !board) return;
+  const cards = [...section.querySelectorAll(".card")].filter((card) => !card.classList.contains("is-dragging"));
+  let index = cards.length;
+  for (let i = 0; i < cards.length; i++) {
+    const box = cards[i]?.getBoundingClientRect();
+    if (box && clientY < box.top + box.height / 2) {
+      index = i;
+      break;
+    }
+  }
+  void moveTask(taskId, column as ColumnId, index);
+}
+
 function cardNode(task: Task): HTMLElement {
   const parent = task.parentId ? taskById(task.parentId) : null;
   const files = board?.attachments.filter((file) => file.taskId === task.id).length ?? 0;
   const overdue = task.overdue || (task.dueAt !== null && task.dueAt < Date.now() && task.column !== "done");
+  const handle = el("button", { class: "card__handle", type: "button", "aria-label": "Drag to another column" }, "Move");
   const button = el("article", { class: `card${task.id === selectedId ? " is-selected" : ""}`, draggable: "true", tabindex: "0", role: "button" },
-    el("h3", {}, task.title),
+    el("div", { class: "card__top" }, el("h3", {}, task.title), handle),
     task.description ? el("p", {}, task.description) : "",
     el("div", { class: "card__meta" },
       task.dueAt ? el("span", { class: overdue ? "chip chip-warn" : "chip" }, overdue ? `Overdue · ${formatDue(task.dueAt)}` : `Due ${formatDue(task.dueAt)}`) : "",
@@ -301,60 +383,99 @@ function cardNode(task: Task): HTMLElement {
   button.addEventListener("dragend", () => {
     button.classList.remove("is-dragging");
     dragId = null;
+    clearColumnOver();
   });
-  // Phones do not fire HTML5 drag. A touch pointer that moves becomes a drop on the column underneath.
-  let touch: { pointerId: number; x: number; y: number; moved: boolean } | null = null;
+  let touch: { pointerId: number; x: number; y: number; moved: boolean; armed: boolean } | null = null;
+  let pressTimer = 0;
   let swallowClick = false;
-  button.addEventListener("pointerdown", (event) => {
-    if (event.pointerType === "mouse") return;
-    touch = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, moved: false };
-    button.setPointerCapture(event.pointerId);
-  });
-  button.addEventListener("pointermove", (event) => {
-    if (!touch || touch.pointerId !== event.pointerId) return;
-    if (Math.hypot(event.clientX - touch.x, event.clientY - touch.y) < 10) return;
-    touch.moved = true;
-    dragId = task.id;
-    button.classList.add("is-dragging");
-    document.querySelectorAll(".column.is-over").forEach((node) => node.classList.remove("is-over"));
-    document.elementFromPoint(event.clientX, event.clientY)?.closest("[data-column]")?.classList.add("is-over");
-  });
-  button.addEventListener("pointerup", (event) => {
-    if (!touch || touch.pointerId !== event.pointerId) return;
-    const moved = touch.moved;
+  const arm = (pointerId: number, x: number, y: number) => {
+    touch = { pointerId, x, y, moved: false, armed: true };
+    button.classList.add("is-armed");
+    button.style.touchAction = "none";
+  };
+  const finishTouch = (event: PointerEvent, dropped: boolean) => {
+    window.clearTimeout(pressTimer);
+    const moved = Boolean(touch?.moved);
+    const armed = Boolean(touch?.armed);
     touch = null;
-    button.classList.remove("is-dragging");
-    document.querySelectorAll(".column.is-over").forEach((node) => node.classList.remove("is-over"));
-    if (!moved || !board) {
+    button.classList.remove("is-dragging", "is-armed");
+    button.style.touchAction = "";
+    clearColumnOver();
+    if (!dropped || !moved || !armed || !board) {
       dragId = null;
       return;
     }
     swallowClick = true;
     dragId = null;
-    const section = document.elementFromPoint(event.clientX, event.clientY)?.closest("[data-column]");
-    const column = section?.getAttribute("data-column");
-    if (!(section instanceof HTMLElement) || !column || !COLUMNS.includes(column as ColumnId)) return;
-    const cards = [...section.querySelectorAll(".card")].filter((card) => card !== button);
-    let index = cards.length;
-    for (let i = 0; i < cards.length; i++) {
-      const box = cards[i]?.getBoundingClientRect();
-      if (box && event.clientY < box.top + box.height / 2) {
-        index = i;
-        break;
-      }
-    }
-    void moveTask(task.id, column as ColumnId, index);
+    dropOnColumn(task.id, event.clientX, event.clientY);
+  };
+  handle.addEventListener("pointerdown", (event) => {
+    if (event.pointerType === "mouse") return;
+    event.stopPropagation();
+    event.preventDefault();
+    arm(event.pointerId, event.clientX, event.clientY);
+    handle.setPointerCapture(event.pointerId);
   });
-  button.addEventListener("pointercancel", () => {
+  button.addEventListener("pointerdown", (event) => {
+    if (event.pointerType === "mouse" || event.target === handle || handle.contains(event.target as Node)) return;
+    touch = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, moved: false, armed: false };
+    pressTimer = window.setTimeout(() => {
+      arm(event.pointerId, event.clientX, event.clientY);
+      try {
+        button.setPointerCapture(event.pointerId);
+      } catch {
+        // Capture is optional; the handle path already has it.
+      }
+    }, 380);
+  });
+  const onMove = (event: PointerEvent) => {
+    if (!touch || touch.pointerId !== event.pointerId) return;
+    if (!touch.armed) {
+      if (Math.hypot(event.clientX - touch.x, event.clientY - touch.y) > 10) {
+        window.clearTimeout(pressTimer);
+        touch = null;
+      }
+      return;
+    }
+    if (Math.hypot(event.clientX - touch.x, event.clientY - touch.y) >= 8) touch.moved = true;
+    dragId = task.id;
+    button.classList.add("is-dragging");
+    clearColumnOver();
+    document.elementFromPoint(event.clientX, event.clientY)?.closest("[data-column]")?.classList.add("is-over");
+    edgeScroll(event.clientY);
+  };
+  handle.addEventListener("pointermove", onMove);
+  button.addEventListener("pointermove", onMove);
+  handle.addEventListener("pointerup", (event) => finishTouch(event, true));
+  button.addEventListener("pointerup", (event) => {
+    if (!touch || touch.pointerId !== event.pointerId) {
+      window.clearTimeout(pressTimer);
+      return;
+    }
+    finishTouch(event, true);
+  });
+  const cancel = () => {
+    window.clearTimeout(pressTimer);
     touch = null;
     dragId = null;
-    button.classList.remove("is-dragging");
-  });
+    button.classList.remove("is-dragging", "is-armed");
+    button.style.touchAction = "";
+    clearColumnOver();
+  };
+  handle.addEventListener("pointercancel", cancel);
+  button.addEventListener("pointercancel", cancel);
   const open = () => {
     selectedId = task.id;
     editing = false;
     renderWorkspace(true);
+    if (window.matchMedia("(max-width: 900px)").matches) {
+      document.querySelector("#drawer")?.scrollIntoView({ block: "nearest" });
+    }
   };
+  handle.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  });
   button.addEventListener("click", (event) => {
     if (swallowClick) {
       swallowClick = false;
@@ -397,7 +518,7 @@ function renderSteps(): void {
     const state = done.has(name) ? "is-done" : name === active ? "is-run" : "";
     return el("li", { class: state }, STEP_LABEL[name] ?? name);
   }));
-  if (!run) note.textContent = "Split asks Workers AI for 3–6 subtasks. The three workflow steps show up here.";
+  if (!run) note.textContent = "Split asks Workers AI for about four subtasks (3–6 accepted). The three workflow steps show up here.";
   else if (run.status === "errored") note.textContent = run.error || "The split failed.";
   else if (run.source === "workers-ai") note.textContent = "Subtasks came from Workers AI.";
   else if (run.source === "fallback") note.textContent = "The model output was unusable, so the workflow wrote fallback subtasks.";
@@ -410,13 +531,20 @@ function renderDrawer(force: boolean): void {
   const task = taskById(selectedId);
   if (!task) {
     editing = false;
+    drawerSig = "";
     drawer.replaceChildren(el("h2", {}, "Card"), el("p", { class: "lede" }, "Select a card to edit it, attach a file, or split it into subtasks."));
     return;
   }
-  if (editing && !force) {
+  const sig = cardFieldsSig(task);
+  if (!force && (editing || drawerSig === sig)) {
     renderSteps();
     return;
   }
+  if (actionWidget) {
+    dropWidget(actionWidget);
+    actionWidget = null;
+  }
+  drawerSig = sig;
   const title = el("input", { id: "card-title", value: task.title, maxlength: "120" }) as HTMLInputElement;
   const description = el("textarea", { id: "card-description" }) as HTMLTextAreaElement;
   description.value = task.description;
@@ -431,6 +559,8 @@ function renderDrawer(force: boolean): void {
   const files = board.attachments.filter((file) => file.taskId === task.id);
   const reminders = board.reminders.filter((item) => item.taskId === task.id);
   const turnstile = el("div", { class: "turnstile", id: "action-turnstile" });
+  const fileInput = el("input", { id: "file", type: "file" }) as HTMLInputElement;
+  fileInput.addEventListener("change", mark);
 
   drawer.replaceChildren(
     el("h2", {}, "Card"),
@@ -442,12 +572,12 @@ function renderDrawer(force: boolean): void {
       el("button", { class: "btn-primary", id: "save-card", type: "button" }, "Save"),
       el("button", { class: "btn-danger btn-ghost", id: "delete-card", type: "button" }, "Delete"),
     ),
-    reminders.length ? el("p", { class: "lede" }, reminders[reminders.length - 1]?.message ?? "") : "",
+    reminders.length && task.overdue ? el("p", { class: "lede" }, reminders[reminders.length - 1]?.message ?? "") : "",
     el("h2", {}, "Files"),
     el("ul", { class: "files" }, ...files.map((file) => el("li", {}, el("a", { href: `${root()}/api/boards/${board?.id}/attachments/${file.id}` }, file.filename)))),
     el("form", { id: "upload-form", class: "field" },
       el("span", {}, "Attach a PNG, JPEG, WEBP, GIF, PDF, or text file up to 256 KB"),
-      el("input", { id: "file", type: "file" }),
+      fileInput,
       turnstile,
       el("button", { class: "btn", type: "submit" }, "Upload"),
     ),
@@ -461,7 +591,7 @@ function renderDrawer(force: boolean): void {
     void saveTask(task, {
       title: title.value,
       description: description.value,
-      dueAt: due.value || null,
+      dueAt: due.value ? localEndOfDay(due.value) : null,
       column: column.value as ColumnId,
     });
   });
@@ -499,8 +629,7 @@ async function uploadFile(taskId: string): Promise<void> {
   }
   const form = new FormData();
   form.set("file", file);
-  form.set("turnstileToken", turnstileToken);
-  const res = await api<BoardSnapshot>(`/api/boards/${board.id}/tasks/${taskId}/attachments`, { method: "POST", form });
+  const res = await api<BoardSnapshot>(`/api/boards/${board.id}/tasks/${taskId}/attachments`, { method: "POST", form, turnstile: turnstileToken });
   resetWidget(actionWidget);
   if (!res.data) {
     setHint(res.error);
@@ -518,13 +647,14 @@ async function splitTask(taskId: string): Promise<void> {
     setHint("Complete the Turnstile check, then split.");
     return;
   }
-  const res = await api<{ split: SplitRun }>(`/api/boards/${board.id}/tasks/${taskId}/split`, { method: "POST", body: { turnstileToken } });
+  const res = await api<{ split: SplitRun }>(`/api/boards/${board.id}/tasks/${taskId}/split`, { method: "POST", body: { turnstileToken }, turnstile: turnstileToken });
   resetWidget(actionWidget);
   if (!res.data) {
     setHint(res.error);
     return;
   }
   watching = res.data.split.id;
+  splitStarted = Date.now();
   board.splits = [...board.splits.filter((item) => item.id !== res.data?.split.id), res.data.split];
   renderSteps();
   pollSplit();
@@ -533,6 +663,11 @@ async function splitTask(taskId: string): Promise<void> {
 function pollSplit(): void {
   window.clearTimeout(splitTimer);
   if (!watching || !board) return;
+  if (Date.now() - splitStarted > LIMITS.splitPollMs) {
+    watching = null;
+    setHint("The split is still running. Refresh if the subtasks do not appear.");
+    return;
+  }
   const boardId = board.id;
   const splitId = watching;
   splitTimer = window.setTimeout(() => {
@@ -639,6 +774,8 @@ function renderWorkspace(rebuildDrawer: boolean): void {
     });
     workspace.querySelector("#new-board")?.addEventListener("click", () => {
       const dialogEl = document.querySelector("#create-dialog");
+      const hint = document.querySelector("#create-hint");
+      if (hint) hint.textContent = "";
       if (dialogEl instanceof HTMLDialogElement) {
         dialogEl.showModal();
         whenTurnstile(() => {
@@ -654,8 +791,9 @@ function renderWorkspace(rebuildDrawer: boolean): void {
     workspace.querySelector("#create-form")?.addEventListener("submit", (event) => {
       event.preventDefault();
       const input = document.querySelector("#create-title");
+      const hint = document.querySelector("#create-hint");
       const titleValue = input instanceof HTMLInputElement ? input.value : "";
-      void createBoard(titleValue, createWidget);
+      void createBoard(titleValue, createWidget, hint instanceof HTMLElement ? hint : null);
     });
     workspace.querySelector("#delete-board")?.addEventListener("click", () => {
       if (!board || !confirm("Delete this board and its files?")) return;
@@ -701,21 +839,22 @@ function renderEmpty(): void {
   socket = null;
   connected = false;
   createWidget = null;
+  const hint = el("p", { class: "hint", id: "hint" }, "");
   const form = el("form", { class: "empty", id: "empty-form" },
-    el("p", { class: "lede" }, "Anonymous board"),
+    el("p", { class: "lede" }, "Private board for this browser"),
     el("h2", {}, "Start a board"),
-    el("p", { class: "lede" }, "Cards live in D1. A Board Durable Object keeps every open tab in sync. The board expires after 7 days."),
+    el("p", { class: "lede" }, "Cards live in D1. A Board Durable Object keeps this browser's tabs in sync. The board expires after 7 days."),
     el("label", { class: "field" }, "Name", el("input", { id: "empty-title", value: "Launch checklist", maxlength: "120", required: "required" })),
     el("div", { class: "turnstile", id: "empty-turnstile" }),
     el("button", { class: "btn-primary", type: "submit" }, "Create board"),
-    el("p", { class: "hint", id: "hint" }, ""),
+    hint,
   );
   rootEl.replaceChildren(form);
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     const input = document.querySelector("#empty-title");
     const title = input instanceof HTMLInputElement ? input.value : "";
-    void createBoard(title, createWidget);
+    void createBoard(title, createWidget, hint);
   });
   whenTurnstile(() => {
     const node = document.querySelector("#empty-turnstile");

@@ -2,7 +2,7 @@
 
 Live at <https://tech-demos.theserverless.dev/demos/tanbase/>.
 
-The D1 database `tech-demos-tanbase` (`67b63062-595d-48dc-a13c-2585dbeb5612`), the R2 bucket `tech-demos-tanbase`, and the Workflow `tech-demos-tanbase-split` are created. `TURNSTILE_SITE_KEY` in `wrangler.jsonc` is the live widget key. `TURNSTILE_SECRET` is a Worker secret (`wrangler secret put`), not a var — a var with that name would collide with the secret and fail Workers Builds. Rate-limit namespaces are `7391` (writes), `7392` (uploads), and `7393` (AI). `7394` is reserved and unused.
+The D1 database `tech-demos-tanbase` (`67b63062-595d-48dc-a13c-2585dbeb5612`), the R2 bucket `tech-demos-tanbase`, and the Workflow `tech-demos-tanbase-split` are created. `TURNSTILE_SITE_KEY` in `wrangler.jsonc` is the live widget key. `TURNSTILE_SECRET` is a Worker secret (`wrangler secret put`), not a var — a var with that name would collide with the secret and fail Workers Builds. Rate-limit namespaces are `7540` (writes), `7541` (uploads), and `7542` (AI). `7543`–`7549` are reserved and unused. The owner must point those ids in the dashboard; this PR does not call the Cloudflare API.
 
 ## Local
 
@@ -26,10 +26,19 @@ Those override the live site key for `wrangler dev` only. They are dummy credent
 
 ## Routes
 
-- `tech-demos.theserverless.dev/demos/tanbase*`
+- `tech-demos.theserverless.dev/demos/tanbase` and `…/demos/tanbase/*`
 - `tanbase.tech-demos.theserverless.dev/*`
+
+## Owner steps
+
+This PR does not deploy and does not call the Cloudflare API.
+
+1. Confirm rate-limit namespace ids `7540` (writes), `7541` (uploads), and `7542` (AI) in the dashboard. `7543`–`7549` stay unused.
+2. Deploy `demos/tanbase` when you want the audit fixes live (`bun run deploy` from that folder). Routes are `…/demos/tanbase` and `…/demos/tanbase/*`.
+3. After deploy, complete one live split and check the drawer: it should say “Subtasks came from Workers AI” if `@cf/zai-org/glm-5.3-flash` returned JSON. If it still falls back, keep the honest copy and re-shoot `artifacts/split.png` only after a real AI write.
+4. `TURNSTILE_SECRET` is already a Worker secret. Do not put it in `wrangler.jsonc`.
 
 ## What stays stubbed
 
 - Reminder delivery is a D1 log line. Nothing is emailed.
-- If Workers AI returns something other than 3–6 JSON subtasks, the workflow writes four fixed fallback subtasks and says so in the drawer.
+- If Workers AI returns something other than 3–6 JSON subtasks, the AI step picks four fixed fallback subtasks and the write step stores them. The drawer says which source wrote them. A live paid Workers AI call was not made here.

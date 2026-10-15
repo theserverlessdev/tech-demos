@@ -1,10 +1,11 @@
 import { LIMITS, type BoardSnapshot } from "../shared/types";
 import { boardStub, notifyBoard } from "./board";
-import { createBoard, createSplitRow, deleteBoardData, ensureVisitor, getAttachment, getBoardForVisitor, getSplit, listBoards, loadSnapshot, updateSplit } from "./db";
+import { countTables, createBoard, createSplitRow, deleteBoardData, getAttachment, getBoardForVisitor, getSplit, listBoards, loadSnapshot, updateSplit } from "./db";
 import { HttpError } from "./errors";
 import { sweep } from "./sweep";
 import { turnstileConfigured, verifyTurnstile } from "./turnstile";
 import {
+  assertLiveOrigin,
   assertSameOrigin,
   clientIp,
   enforceLimit,
@@ -13,6 +14,7 @@ import {
   parseTitle,
   parseTtlMs,
   readJson,
+  requireContentLength,
   safeFilename,
 } from "./validate";
 
@@ -55,16 +57,21 @@ function visitorFrom(request: Request): string | null {
 }
 
 function cookieHeader(request: Request, visitorId: string): string {
-  const secure = new URL(request.url).protocol === "https:" ? "; Secure" : "";
-  return `${COOKIE}=${visitorId}; HttpOnly; SameSite=Lax; Path=/; Max-Age=2592000${secure}`;
+  const url = new URL(request.url);
+  const secure = url.protocol === "https:" ? "; Secure" : "";
+  const path = url.pathname.startsWith("/demos/tanbase") ? "/demos/tanbase" : "/";
+  return `${COOKIE}=${visitorId}; HttpOnly; SameSite=Lax; Path=${path}; Max-Age=2592000${secure}`;
 }
 
-async function visitor(request: Request, env: Env): Promise<{ id: string; cookie: string | null }> {
+function visitor(request: Request): { id: string; cookie: string | null } {
   const existing = visitorFrom(request);
   if (existing) return { id: existing, cookie: null };
   const id = `v_${crypto.randomUUID().replaceAll("-", "").slice(0, 24)}`;
-  await ensureVisitor(env, id);
   return { id, cookie: cookieHeader(request, id) };
+}
+
+function turnstileFrom(request: Request, body: Record<string, unknown>): unknown {
+  return request.headers.get("cf-turnstile-response") || body.turnstileToken;
 }
 
 function withCookie(response: Response, cookie: string | null): Response {
@@ -111,7 +118,12 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
     return json(await sweep(env));
   }
 
-  const who = await visitor(request, env);
+  if (path === "/api/counts" && method === "GET") {
+    if (!localHooksEnabled(env.ALLOW_LOCAL_HOOKS)) throw new HttpError(404, "not_found", "Unknown API route.");
+    return json(await countTables(env));
+  }
+
+  const who = visitor(request);
   const finish = (data: unknown, status = 200) => withCookie(json(data, status), who.cookie);
 
   if (method !== "GET" && method !== "HEAD") assertSameOrigin(request);
@@ -123,7 +135,7 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
   if (path === "/api/boards" && method === "POST") {
     await enforceLimit(env.WRITE_LIMIT, clientIp(request));
     const body = await readJson(request);
-    await verifyTurnstile(env, request, body.turnstileToken, "create-board");
+    await verifyTurnstile(env, request, turnstileFrom(request, body), "create-board");
     const title = parseTitle(body.title, true);
     if (!title) throw new HttpError(400, "invalid", "Title is required.");
     const board = await createBoard(env, who.id, title, parseTtlMs(localHooksEnabled(env.ALLOW_LOCAL_HOOKS), body.ttlSeconds));
@@ -137,6 +149,7 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
   const board = await requireBoard(env, boardId, who.id);
 
   if (rest === "/live" && method === "GET") {
+    assertLiveOrigin(request);
     const headers = new Headers(request.headers);
     headers.set("x-board-id", board.id);
     headers.set("x-visitor-id", who.id);
@@ -211,7 +224,7 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
       await enforceLimit(env.AI_LIMIT, clientIp(request));
       await enforceLimit(env.WRITE_LIMIT, clientIp(request));
       const body = await readJson(request);
-      await verifyTurnstile(env, request, body.turnstileToken, "board-write");
+      await verifyTurnstile(env, request, turnstileFrom(request, body), "board-write");
       const split = await createSplitRow(env, board.id, taskId);
       try {
         await env.SPLIT_TASK.create({ id: split.id, params: { boardId: board.id, taskId, splitId: split.id } });
@@ -220,8 +233,7 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
         console.error(JSON.stringify({ event: "workflow_create_failed", error: String(err) }));
         throw new HttpError(503, "workflow", "The split workflow did not start. Try again.");
       }
-      await updateSplit(env, split.id, { status: "running" });
-      return finish({ split: { ...split, status: "running" } }, 202);
+      return finish({ split }, 202);
     }
   }
 
@@ -235,7 +247,10 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
       const instance = await env.SPLIT_TASK.get(split.instanceId);
       const status = await instance.status();
       workflow = { status: status.status, error: status.error?.message ?? null };
-      if ((status.status === "errored" || status.status === "terminated") && split.status !== "errored") {
+      if (status.status === "complete" && split.status !== "complete" && split.status !== "errored") {
+        await updateSplit(env, split.id, { status: "complete" });
+        split.status = "complete";
+      } else if ((status.status === "errored" || status.status === "terminated") && split.status !== "errored" && split.status !== "complete") {
         await updateSplit(env, split.id, { status: "errored", error: workflow.error });
         split.status = "errored";
         split.error = workflow.error;
@@ -271,8 +286,9 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
 }
 
 async function upload(request: Request, env: Env, boardId: string, taskId: string, visitorId: string): Promise<BoardSnapshot> {
+  requireContentLength(request, LIMITS.maxUploadBodyBytes, "upload");
+  await verifyTurnstile(env, request, request.headers.get("cf-turnstile-response"), "board-write");
   const form = await request.formData();
-  await verifyTurnstile(env, request, form.get("turnstileToken"), "board-write");
   const file = form.get("file");
   if (!(file instanceof File)) throw new HttpError(400, "invalid", "Choose a file to upload.");
   if (file.size <= 0 || file.size > LIMITS.maxAttachmentBytes) {

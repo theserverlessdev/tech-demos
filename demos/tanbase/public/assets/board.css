@@ -120,7 +120,7 @@ button { cursor: pointer; }
   padding: 8px 10px;
   min-width: 0;
 }
-.title-input { font-family: var(--font-heading); font-size: 1.15rem; color: var(--text-strong); min-width: 220px; }
+.title-input { font-family: var(--font-heading); font-size: 1.15rem; color: var(--text-strong); min-width: 220px; overflow-wrap: anywhere; }
 .expiry { margin-left: auto; color: var(--muted); font-size: 0.82rem; font-family: var(--font-mono); }
 
 .columns { flex: 1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; align-items: stretch; min-height: 420px; }
@@ -146,6 +146,7 @@ button { cursor: pointer; }
 .card {
   text-align: left;
   width: 100%;
+  min-width: 0;
   cursor: grab;
   background: var(--surface-2);
   border: 1px solid var(--border);
@@ -156,11 +157,25 @@ button { cursor: pointer; }
   gap: 6px;
 }
 .card.is-selected { border-color: var(--ember); }
-.card.is-dragging { opacity: 0.45; }
-.card h3 { font-size: 0.98rem; }
-.card p { margin: 0; color: var(--muted); font-size: 0.86rem; }
-.card__meta { display: flex; flex-wrap: wrap; gap: 6px; }
-.chip { font-size: 0.72rem; border-radius: 999px; padding: 2px 7px; background: rgba(255, 255, 255, 0.04); color: var(--muted); }
+.card.is-dragging, .card.is-armed { opacity: 0.45; touch-action: none; }
+.card__top { display: flex; align-items: start; gap: 8px; min-width: 0; }
+.card__top h3 { flex: 1; min-width: 0; }
+.card__handle {
+  flex: none;
+  display: none;
+  touch-action: none;
+  cursor: grab;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 0.72rem;
+}
+.card h3 { font-size: 0.98rem; overflow-wrap: anywhere; }
+.card p { margin: 0; color: var(--muted); font-size: 0.86rem; overflow-wrap: anywhere; }
+.card__meta { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.chip { font-size: 0.72rem; border-radius: 999px; padding: 2px 7px; background: rgba(255, 255, 255, 0.04); color: var(--muted); overflow-wrap: anywhere; max-width: 100%; }
 .chip-warn { color: var(--warn); background: rgba(209, 154, 42, 0.12); }
 .chip-ember { color: var(--accent-text); background: rgba(194, 65, 12, 0.12); }
 .drop-hint { margin: auto; color: var(--muted); font-size: 0.82rem; padding: 12px; }
@@ -181,7 +196,7 @@ button { cursor: pointer; }
 .row { display: flex; flex-wrap: wrap; gap: 8px; }
 .hint { min-height: 1.2em; margin: 0; color: var(--warn); font-size: 0.86rem; }
 .files { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.files a { font-size: 0.86rem; }
+.files a { font-size: 0.86rem; overflow-wrap: anywhere; }
 .steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .steps li { display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 0.88rem; }
 .steps li::before { content: ""; width: 8px; height: 8px; border-radius: 99px; background: var(--border-strong); flex: none; }
@@ -206,11 +221,29 @@ button { cursor: pointer; }
 .foot { padding: 12px 18px 18px; color: var(--muted); font-size: 0.82rem; }
 .foot a { color: var(--accent-text); }
 
+dialog {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  max-width: calc(100vw - 24px);
+}
+dialog::backdrop { background: rgb(0 0 0 / .6); }
+dialog .empty { margin: 0; }
+
 @media (max-width: 900px) {
-  .topbar { flex-wrap: wrap; }
-  .layout, .columns { grid-template-columns: 1fr; }
+  .topbar { flex-wrap: wrap; gap: 8px; min-height: 0; }
+  .topbar__title p { display: none; }
+  .layout { display: flex; flex-direction: column; grid-template-columns: 1fr; }
+  .columns { grid-template-columns: 1fr; order: 0; }
   .expiry { margin-left: 0; }
-  .drawer { order: -1; }
+  .drawer {
+    order: 1;
+    position: sticky;
+    bottom: 0;
+    max-height: 55dvh;
+    overflow: auto;
+  }
+  .card__handle { display: inline-flex; min-height: 44px; align-items: center; }
 }
 
 /* Phone layout. Graphite and Ember stay; controls grow to a finger and fields stay at 16px so iOS does not zoom. */
@@ -264,6 +297,7 @@ select {
 }
 
 .card { touch-action: manipulation; }
+.card__handle { touch-action: none; }
 @media (max-width: 900px) {
   .title-input { min-width: 0; width: 100%; }
   #app { padding-left: 12px; padding-right: 12px; }

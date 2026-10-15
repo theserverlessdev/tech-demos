@@ -370,16 +370,16 @@ export const demos: DemoEntry[] = [
     title: "Tanbase",
     description: "An anonymous kanban. Cards stay in sync across tabs, and a workflow can split one.",
     demonstrates:
-      "D1 is the board of record. One hibernating Board Durable Object per board fans creates, moves, edits, and deletes to every open tab. A Workflow splits a card with Workers AI, or writes four fallback subtasks if the model output is unusable. There are no accounts; boards expire after 7 days.",
+      "D1 is the board of record. One hibernating Board Durable Object per board fans creates, moves, edits, and deletes to every tab in the same browser. A Workflow splits a card and the drawer shows whether Workers AI or the fallback wrote the subtasks. There are no accounts; boards expire after 7 days.",
     capabilities: [
       "Create a board and add, edit, move, and delete cards",
       "Open the same board in another tab and watch the Durable Object sync it",
       "Attach a small file to a card",
-      "Split a card and watch the workflow steps, including the fallback subtasks",
+      "Split a card and see whether Workers AI or the fallback wrote the subtasks",
     ],
     useCases: [
-      "A small shared board that does not need accounts",
-      "Live card updates across every open tab",
+      "A private board per browser that stays in sync across its tabs",
+      "Live card updates across every open tab in that browser",
       "A “split this task” action backed by a Workflow",
     ],
     tags: ["d1", "durable-objects", "r2", "workflows", "workers-ai", "turnstile"],

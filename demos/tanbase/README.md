@@ -13,19 +13,19 @@ Walkthrough stills and a short video: [artifacts/](./artifacts/).
 
 ## What this demonstrates
 
-**Pattern.** D1 is the board of record. One hibernating `BoardRoom` Durable Object per board fans creates, moves, edits, and deletes to every open tab. A Workflow splits a card with Workers AI, or writes four fallback subtasks if the model output is unusable. There are no accounts. Boards expire after 7 days.
+**Pattern.** D1 is the board of record. One hibernating `BoardRoom` Durable Object per board fans creates, moves, edits, and deletes to every tab in the same browser. A Workflow splits a card and the drawer shows whether Workers AI or the fallback wrote the subtasks. There are no accounts and no share link. Boards expire after 7 days.
 
 **What you can do**
 
 - Create a board and add, edit, move, and delete cards.
-- Open the same board in another tab and watch the Durable Object sync it.
+- Open the same board in another tab of this browser and watch the Durable Object sync it.
 - Attach a small file to a card (256 KB; PNG, JPEG, WEBP, GIF, PDF, or plain text).
-- Split a card and watch the workflow steps, including the fallback subtasks.
+- Split a card and see whether Workers AI or the fallback wrote the subtasks.
 
 **What you could build**
 
-- A small shared board that does not need accounts.
-- Live card updates across every open tab.
+- A private board per browser that stays in sync across its tabs.
+- Live card updates across every open tab in that browser.
 - A "split this task" action backed by a Workflow.
 
 **Limits**
@@ -41,10 +41,10 @@ Walkthrough stills and a short video: [artifacts/](./artifacts/).
 | **D1** | Visitors, boards, cards, attachment rows, reminder log, workflow step log. |
 | **Durable Object** | One `BoardRoom` per board. `ctx.acceptWebSocket` fans create, move, edit, and delete out to every open tab. |
 | **R2** | Card files, 256 KB cap, PNG / JPEG / WEBP / GIF / PDF / plain text. Deleted with the board. |
-| **Workflows** | Split a card into 3–6 subtasks. The UI shows load, Workers AI, and write. |
-| **Workers AI** | The split step. If the model is down or the JSON is unusable, the same step writes four fallback subtasks. |
-| **Cron** | Hourly. Marks overdue cards and writes a reminder log. No email. Deletes boards older than 7 days and their R2 objects. |
-| **Turnstile + rate limits** | Create board, upload, and split require a server-side Turnstile check. Every public write is rate-limited. Missing `TURNSTILE_SECRET` fails closed. |
+| **Workflows** | Split a card into about four subtasks (3–6 accepted). The UI shows load, Workers AI, and write. |
+| **Workers AI** | The AI step asks `@cf/zai-org/glm-5.3-flash` with `reasoning_effort: low`, `max_tokens: 2000`, and a JSON schema. If the model is down or the JSON is unusable, that step picks four fallback subtasks and the write step stores them. A live paid call was not made in this repo, so production may still fall back until the owner confirms. |
+| **Cron** | Hourly. Marks overdue cards and writes a reminder log. No email. Deletes boards older than 7 days, their R2 objects, unused visitors, and orphan rows (500 per table per run). |
+| **Turnstile + rate limits** | Create board, upload, and split require a server-side Turnstile check. Every public write is rate-limited. Cookie-less reads do not write D1. Missing `TURNSTILE_SECRET` fails closed. |
 
 There is no account. A `tb_vid` cookie scopes boards to the browser: 3 boards, 40 cards, then a 7-day TTL.
 
@@ -81,7 +81,7 @@ bun run scripts/smoke.ts http://127.0.0.1:8787
 
 See [SETUP.md](./SETUP.md). Routes:
 
-- `tech-demos.theserverless.dev/demos/tanbase*`
+- `tech-demos.theserverless.dev/demos/tanbase` and `…/demos/tanbase/*`
 - `tanbase.tech-demos.theserverless.dev/*`
 
 The hub registry keeps a fallback Dynamic Worker that redirects to the subdomain if the zone route is missing.

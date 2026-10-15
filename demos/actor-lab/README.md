@@ -39,7 +39,7 @@ Walkthrough stills and a short video: [artifacts/](./artifacts/).
 | **Durable Objects (SQLite)** | One race actor per visitor cookie, one chat actor per room code. A `state` proxy writes fields to SQLite. Handlers on the mailbox run one at a time. |
 | **Workers AI** | Each race update awaits the model between the read and the write, which opens the input gate. The room actor can answer after a Turnstile unlock. |
 | **Hibernatable WebSockets** | The room stays connected across hibernation. A raw `ping` is answered without waking the actor. |
-| **Rate limiting** | Race uses `RACE_LIMIT` (7351) and chat uses `CHAT_LIMIT` (7352), 30 requests a minute per IP. `AI_LIMIT` (7353) stays on this worker. Actor-lab keeps 7351–7353; tanbase is moving off that range. |
+| **Rate limiting** | Race uses `RACE_LIMIT` (7351) and chat uses `CHAT_LIMIT` (7352), 30 requests a minute per IP. `AI_LIMIT` (7353) stays on this worker. Actor-lab keeps 7351–7353. |
 | **Turnstile** | Required to arm a race and to unlock chat AI. The live worker's health check reports AI ready. |
 | **Alarms** | Actor rows are deleted after 6 hours idle. |
 
@@ -99,7 +99,7 @@ bunx wrangler whoami
 env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bunx wrangler deploy
 ```
 
-The worker is live. The `v1` migration created the SQLite Durable Object classes. Rate limit namespace ids stay `7351` (race), `7352` (chat), and `7353` (AI). Actor-lab keeps that range; tanbase is moving off it. Do not renumber them.
+The worker is live. The `v1` migration created the SQLite Durable Object classes. Rate limit namespace ids stay `7351` (race), `7352` (chat), and `7353` (AI). Actor-lab keeps that range. Do not renumber them.
 
 Routes:
 

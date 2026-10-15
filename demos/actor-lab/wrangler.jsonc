@@ -18,7 +18,7 @@
     ]
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RaceActor", "ChatActor"] }],
-  // Actor-lab keeps namespace ids 7351–7353. tanbase is moving off this range.
+  // Actor-lab keeps namespace ids 7351–7353.
   "ratelimits": [
     { "name": "RACE_LIMIT", "namespace_id": "7351", "simple": { "limit": 30, "period": 60 } },
     { "name": "CHAT_LIMIT", "namespace_id": "7352", "simple": { "limit": 30, "period": 60 } },

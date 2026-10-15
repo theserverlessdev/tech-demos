@@ -7,9 +7,13 @@ export const LIMITS = {
   maxAttachmentsPerTask: 4,
   maxAttachmentsPerBoard: 16,
   maxAttachmentBytes: 256 * 1024,
+  maxUploadBodyBytes: 300 * 1024,
+  maxJsonBytes: 32_000,
   boardTtlMs: 7 * 24 * 60 * 60 * 1000,
   maxTitle: 120,
   maxDescription: 2000,
+  sweepBatch: 500,
+  splitPollMs: 60_000,
 } as const;
 
 export const SPLIT_STEPS = ["load task", "ask workers ai", "write subtasks"] as const;

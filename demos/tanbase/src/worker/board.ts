@@ -11,7 +11,7 @@ import {
   renameBoard,
 } from "./db";
 import { HttpError, errorResponse } from "./errors";
-import { enforceLimit, parseColumn, parseDescription, parseDue, parseIndex, parseTitle } from "./validate";
+import { parseColumn, parseDescription, parseDue, parseIndex, parseTitle } from "./validate";
 
 const BOARD_RE = /^b_[a-f0-9]{16}$/;
 const VISITOR_RE = /^v_[a-f0-9]{24}$/;
@@ -49,35 +49,27 @@ export class BoardRoom extends DurableObject<Env> {
     }
   }
 
-  async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
-    const meta = ws.deserializeAttachment() as SocketMeta | null;
-    if (!meta) return;
+  async webSocketMessage(ws: WebSocket): Promise<void> {
     try {
-      const text = typeof message === "string" ? message : new TextDecoder().decode(message);
-      if (text.length > 16_000) throw new HttpError(413, "too_large", "That update is too large.");
-      const body = JSON.parse(text) as ClientEvent;
-      await enforceLimit(this.env.WRITE_LIMIT, meta.ip);
-      const boardId = this.boardIdFromTags(ws);
-      const board = await this.owned(boardId, meta.visitorId);
-      await this.applyEvent(board.id, body);
-      await this.pushSnapshot(board.id);
-    } catch (err) {
-      const messageText = err instanceof HttpError ? err.message : "The board rejected that update.";
-      try {
-        ws.send(JSON.stringify({ type: "error", message: messageText }));
-      } catch {
-        // The socket closed while we were answering.
-      }
+      ws.send(JSON.stringify({ type: "error", message: "Use the HTTP API to change the board." }));
+    } catch {
+      // The socket closed while we were answering.
     }
   }
 
-  async webSocketClose(): Promise<void> {
-    const peers = this.ctx.getWebSockets().length;
+  async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {
+    try {
+      ws.close(code === 1005 || code === 1006 ? 1000 : code, reason);
+    } catch {
+      // Already gone.
+    }
+    const peers = this.ctx.getWebSockets().filter((socket) => socket !== ws).length;
     this.sendAll(JSON.stringify({ type: "peers", peers }));
   }
 
   private async accept(request: Request): Promise<Response> {
     const { boardId, visitorId } = await this.auth(request, false);
+    const board = await this.owned(boardId, visitorId);
     const pair = new WebSocketPair();
     const client = pair[0];
     const server = pair[1];
@@ -85,9 +77,10 @@ export class BoardRoom extends DurableObject<Env> {
     this.ctx.acceptWebSocket(server, [boardId]);
     const ip = request.headers.get("x-client-ip") || "local";
     server.serializeAttachment({ visitorId, ip } satisfies SocketMeta);
-    const board = await this.owned(boardId, visitorId);
     const snapshot = await loadSnapshot(this.env, board);
-    server.send(JSON.stringify(snapshotEvent(snapshot, this.ctx.getWebSockets().length)));
+    const peers = this.ctx.getWebSockets().length;
+    server.send(JSON.stringify(snapshotEvent(snapshot, peers)));
+    this.sendAllExcept(server, JSON.stringify({ type: "peers", peers }));
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -196,7 +189,12 @@ export class BoardRoom extends DurableObject<Env> {
   }
 
   private sendAll(payload: string): void {
+    this.sendAllExcept(null, payload);
+  }
+
+  private sendAllExcept(skip: WebSocket | null, payload: string): void {
     for (const ws of this.ctx.getWebSockets()) {
+      if (skip && ws === skip) continue;
       try {
         ws.send(payload);
       } catch {

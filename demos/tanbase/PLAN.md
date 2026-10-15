@@ -32,7 +32,7 @@ Upstream is one TanStack Start Worker that maps each Cloudflare primitive onto a
   - One Worker + static Graphite & Ember kanban (Bricolage / Hanken, ember `#c2410c`, background `#0e0e11`). Contact CTA links to the hub.
   - Columns **To do / Doing / Done**. Cards have title, description, due date. Drag-and-drop plus a move control.
   - D1 is the store. One `BoardRoom` Durable Object per board fans changes out over hibernatable WebSockets.
-  - Anonymous boards: `tb_vid` cookie, max 3 boards, max 40 tasks, 7-day TTL. Hourly cron deletes expired boards and their R2 objects.
+  - Anonymous boards: `tb_vid` cookie minted on first response, visitor row only on first board create, max 3 boards, max 40 tasks, 7-day TTL. Hourly cron deletes expired boards, their R2 objects, unused visitors, and orphan rows.
   - R2 attachments behind Turnstile, rate limit, size cap, and an allowlist.
   - A Workflow splits a task into 3–6 subtasks. The three steps show in the card drawer. Turnstile + AI rate limit.
   - Cron reminder stub (log + overdue flag, no email).
@@ -54,10 +54,10 @@ Upstream is one TanStack Start Worker that maps each Cloudflare primitive onto a
 
 - **Workers + Static Assets**, `run_worker_first` — one origin for the page, the API, and the WebSocket.
 - **D1** — boards and tasks the cron can query without waking every DO.
-- **Durable Object (SQLite class)** — per-board serialisation and `ctx.acceptWebSocket` fanout.
+- **Durable Object (SQLite class)** — one `BoardRoom` per board for `ctx.acceptWebSocket` fanout. Caps are atomic D1 inserts, not DO-held D1 locks.
 - **R2** — attachment bytes, deleted with the board.
 - **Workflows + Workers AI** — the split is a visible multi-step job, not a single fetch.
-- **Rate Limiting + Turnstile** — public writes are capped; create, upload, and AI fail closed without the secret.
+- **Rate Limiting + Turnstile** — public writes are capped (`7540`–`7542`); create, upload, and AI fail closed without the secret. Reads do not write D1.
 - **Cron** — overdue flag and TTL cleanup.
 - **No Hono, no React, no Drizzle, no zod package** — hand-written guards, same as resolve-hq.
 
@@ -95,9 +95,23 @@ Worker `tech-demos-tanbase`:
 ## Cost
 
 - D1, R2, DO, and Workflow demo traffic stays inside Paid included amounts.
-- AI calls cap `max_tokens` at 600 and are rate-limited per IP, behind Turnstile.
-- Boards, tasks, and uploads are count- and size-capped, then deleted after 7 days.
+- AI calls send `reasoning_effort: low` and cap `max_tokens` at 2000, rate-limited per IP, behind Turnstile. Output is about $0.50 per million tokens (~$0.001 per split). A live paid call was not made in this slice, so production may still fall back until the owner confirms.
+- Boards, tasks, and uploads are count- and size-capped with atomic inserts, then deleted after 7 days.
+- Visitor rows are created only when a board is created. Cookie-less reads do not write D1. The hourly sweep deletes unused visitors and orphan rows (limit 500 per table per run).
 - No Containers, Browser Rendering, Vectorize, Email Service, or Workers for Platforms.
+
+## Audit remediations
+
+Fixes for `/cursor/stores/bot/audits/tanbase-audit.md`:
+
+- **B1.** `handleApi` mints a `tb_vid` cookie without inserting a visitor. `ensureVisitor` runs only from `createBoard`. Sweep deletes visitors that own no board.
+- **S1.** Split uses `reasoning_effort: "low"`, `max_tokens: 2000`, and a JSON schema. `chat_template_kwargs` is gone. README says a live paid call was not made here.
+- **S2.** Board, task, attachment, and split inserts are `INSERT … SELECT … WHERE COUNT(*) < cap`. `meta.changes === 0` is the cap.
+- **S3.** JSON and uploads reject missing or oversize `Content-Length` before reading. Uploads send `cf-turnstile-response` and verify it before `formData()`.
+- **S4.** `webSocketClose` closes the socket, then broadcasts the remaining peer count. `accept()` checks ownership first and notifies the other sockets.
+- **S5.** Phone drag uses a `touch-action: none` handle, long-press arming, edge auto-scroll, and `pointercancel` clears `.is-over`.
+- **S6–S10.** Create dialog closes and shows its own errors; the drawer keeps Turnstile and the chosen file across snapshots; long text wraps; subtasks require the parent and board; copy is a private board per browser.
+- **N1–N13.** Live sockets require a matching Origin and ignore client mutations; overdue clears in Done; due dates use the client's local end of day; split status is written before `create()`; sweep is bounded; unknown paths 404; cookie `Path` is `/demos/tanbase` on the hub; rate-limit ids are `7540`–`7542` (range `7540`–`7549` only).
 
 ## Testing
 
