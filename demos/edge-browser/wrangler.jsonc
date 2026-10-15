@@ -16,7 +16,7 @@
     {
       "binding": "DB",
       "database_name": "tech-demos-edge-browser",
-      "database_id": "00000000-0000-4000-8000-000000007441",
+      "database_id": "2d74f86e-fe37-499e-811b-85e52176cbac",
       "migrations_dir": "migrations"
     }
   ],
