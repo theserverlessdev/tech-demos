@@ -95,6 +95,16 @@ function hint(text: string, tone: "ok" | "error" | "" = "") {
   status("chat-hint", text, tone);
 }
 
+function clearGateHint() {
+  status("gate-hint", "");
+}
+
+function needTurnstile(panelId: string) {
+  status(panelId, "Complete the Turnstile check first.", "error");
+  status("gate-hint", "Complete the Turnstile check first.", "error");
+  $("gate").scrollIntoView({ block: "nearest", inline: "nearest" });
+}
+
 async function api<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
   const headers: Record<string, string> = {};
   const grant = storedToken();
@@ -129,18 +139,20 @@ function widgetTheme(): "light" | "dark" {
   return document.documentElement.dataset.theme === "light" ? "light" : "dark";
 }
 
-function scrollThread() {
+type ScrollMode = "thread" | "page";
+
+function scrollThread(mode: ScrollMode = "thread") {
   const thread = document.querySelector(".thread") as HTMLElement | null;
   const last = $("messages").lastElementChild;
   if (!thread || !last) return;
-  if (window.matchMedia("(max-width: 900px)").matches) {
+  if (mode === "page" && window.matchMedia("(max-width: 900px)").matches) {
     last.scrollIntoView({ block: "end" });
     return;
   }
   thread.scrollTop = thread.scrollHeight;
 }
 
-function renderMessages(messages: ThreadMessage[], opts: { scroll?: boolean } = {}) {
+function renderMessages(messages: ThreadMessage[], opts: { scroll?: ScrollMode } = {}) {
   const list = $("messages");
   list.replaceChildren();
   $("empty").hidden = messages.length > 0;
@@ -201,7 +213,7 @@ function emptyStrip() {
     `Visitor ${visitor.slice(0, 6)}… · a Durable Object is created on the first write. Notes and chat expire ${ttlHours}h after that.`;
 }
 
-async function refresh(opts: { scroll?: boolean } = {}) {
+async function refresh(opts: { scroll?: ScrollMode } = {}) {
   if (!storedToken()) {
     emptyStrip();
     renderMessages([]);
@@ -249,6 +261,7 @@ function turnstileOptions(): Record<string, unknown> {
     theme: widgetTheme(),
     size: "flexible",
     appearance: short ? "interaction-only" : "always",
+    callback: () => clearGateHint(),
   };
 }
 
@@ -294,8 +307,7 @@ $("composer").addEventListener("submit", async (event) => {
   if (!message) return;
   const turnstileToken = token();
   if (!turnstileToken) {
-    hint("Complete the Turnstile check first.", "error");
-    status("gate-hint", "Complete the Turnstile check first.", "error");
+    needTurnstile("chat-hint");
     return;
   }
   const button = $<HTMLButtonElement>("send");
@@ -305,8 +317,9 @@ $("composer").addEventListener("submit", async (event) => {
     const reply = await api<ChatReply>("/api/chat", { method: "POST", body: { visitorId: visitor, message, turnstileToken } });
     $<HTMLTextAreaElement>("message").value = "";
     hint(reply.source === "workers-ai" ? "Reply from Workers AI." : "Reply from the local fallback. Workers AI did not answer.", reply.source === "workers-ai" ? "ok" : "");
+    clearGateHint();
     resetCheck();
-    await refresh({ scroll: true });
+    await refresh({ scroll: "page" });
   } catch (err) {
     hint(err instanceof ApiFailure ? err.message : "The send failed.", "error");
     resetCheck();
@@ -321,8 +334,7 @@ $("note-form").addEventListener("submit", async (event) => {
   const body = $<HTMLTextAreaElement>("note-body").value.trim();
   const turnstileToken = token();
   if (!turnstileToken) {
-    status("notes-hint", "Complete the Turnstile check first.", "error");
-    status("gate-hint", "Complete the Turnstile check first.", "error");
+    needTurnstile("notes-hint");
     return;
   }
   const button = $<HTMLButtonElement>("save-note");
@@ -333,6 +345,7 @@ $("note-form").addEventListener("submit", async (event) => {
     $<HTMLInputElement>("note-title").value = "";
     $<HTMLTextAreaElement>("note-body").value = "";
     status("notes-hint", "Note saved in R2.", "ok");
+    clearGateHint();
     resetCheck();
     await refresh();
   } catch (err) {
@@ -352,8 +365,7 @@ $("delete-note").addEventListener("click", async () => {
   }
   const turnstileToken = token();
   if (!turnstileToken) {
-    status("notes-hint", "Complete the Turnstile check first.", "error");
-    status("gate-hint", "Complete the Turnstile check first.", "error");
+    needTurnstile("notes-hint");
     return;
   }
   try {
@@ -363,6 +375,7 @@ $("delete-note").addEventListener("click", async () => {
     });
     showNote(null);
     status("notes-hint", "Note deleted.", "ok");
+    clearGateHint();
     resetCheck();
     await refresh();
   } catch (err) {
@@ -380,8 +393,7 @@ $("research-form").addEventListener("submit", async (event) => {
     .filter(Boolean);
   const turnstileToken = token();
   if (!turnstileToken) {
-    status("research-hint", "Complete the Turnstile check first.", "error");
-    status("gate-hint", "Complete the Turnstile check first.", "error");
+    needTurnstile("research-hint");
     return;
   }
   const button = $<HTMLButtonElement>("research");
@@ -416,6 +428,7 @@ $("research-form").addEventListener("submit", async (event) => {
       cites.append(item);
     }
     status("research-hint", "Research finished.", "ok");
+    clearGateHint();
     resetCheck();
     await refresh();
   } catch (err) {
@@ -435,7 +448,7 @@ try {
   status("gate-hint", "The page could not load its configuration. Refresh and try again.", "error");
 }
 try {
-  await refresh();
+  await refresh({ scroll: "thread" });
 } catch (err) {
   hint(err instanceof ApiFailure ? err.message : "The notebook could not be loaded.", "error");
 }

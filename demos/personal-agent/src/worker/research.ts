@@ -137,6 +137,8 @@ export function markdownToText(markdown: string, fallbackTitle: string): { title
     src = src.slice(fm[0].length);
   }
   if (!title) title = headingTitle(src);
+  const toc = src.search(/^## On this page\b/im);
+  if (toc >= 0) src = src.slice(0, toc);
   const text = src
     .replace(/\[skip to content\]\([^)]*\)/gi, "")
     .replace(/^#\s+.+\n?/m, "")

@@ -50,6 +50,17 @@ Durable Objects keep state close to the Worker that uses them.
   expect(page.text).not.toMatch(/last updated/i);
 });
 
+test("markdownToText cuts at On this page", () => {
+  const page = markdownToText(
+    `# Cloudflare R2\n\nObject storage without egress fees.\n\n## On this page\n\n- [Buckets](#buckets)\n\n{"@context":"https://schema.org"}\n`,
+    "developers.cloudflare.com",
+  );
+  expect(page.title).toBe("Cloudflare R2");
+  expect(page.text).toContain("without egress fees");
+  expect(page.text).not.toMatch(/on this page/i);
+  expect(page.text).not.toContain("schema.org");
+});
+
 test("markdownToText falls back to the first heading", () => {
   const page = markdownToText("# Fetch API\n\nThe Fetch API provides an interface.\n", "developer.mozilla.org");
   expect(page.title).toBe("Fetch API");

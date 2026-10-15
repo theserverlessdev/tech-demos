@@ -79,8 +79,9 @@ check("unsigned GET session is empty and ignores the query string", unsignedSess
 const twoPart = await call<{ noteCount: number }>("/api/session", { visitorToken: `${id}.${"ab".repeat(32)}` });
 check("two-part token does not unlock a session", twoPart.status === 200 && twoPart.data?.noteCount === 0, twoPart.data);
 
-const expiredShaped = await call<{ noteCount: number }>("/api/session", { visitorToken: `${id}.100.${"ab".repeat(32)}` });
-check("expired-shaped token does not unlock a session", expiredShaped.status === 200 && expiredShaped.data?.noteCount === 0, expiredShaped.data);
+const pastExp = String(Date.now() - 60_000);
+const expired = await call<{ noteCount: number }>("/api/session", { visitorToken: `${id}.${pastExp}.${"ab".repeat(32)}` });
+check("expired token does not unlock a session", expired.status === 200 && expired.data?.noteCount === 0 && /^\d{11,15}$/.test(pastExp), expired.data);
 
 const emptyChat = await call("/api/chat", { method: "POST", body: { visitorId: id, message: "   ", turnstileToken: TOKEN } });
 check("empty chat is 400 before a Durable Object is touched", emptyChat.status === 400, emptyChat.data);
