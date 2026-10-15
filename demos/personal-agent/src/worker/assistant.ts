@@ -1,13 +1,11 @@
 import { Agent, type Connection } from "agents";
 import type { ChatReply, NoteDetail, NoteSummary, RecallHit, ResearchReply, SessionInfo, ThreadMessage } from "../shared/types";
 import { complete, embedTexts } from "./ai";
-import { cosine, fromBlob, keywordScore, keywords, toBlob } from "./memory";
+import { cosine, fromBlob, keywordOverlap, keywords, selectRecalls, toBlob } from "./memory";
 import { researchQuestion } from "./research";
 
 const MAX_NOTES = 40;
 const MAX_MESSAGES = 40;
-const RECALL_K = 3;
-const MIN_SCORE = 0.34;
 const DEFAULT_TTL_HOURS = 24;
 
 export type AssistantState = {
@@ -135,13 +133,21 @@ export class Assistant extends Agent<Env, AssistantState> {
    * Agents SDK schedule() owns the Durable Object alarm. A direct setAlarm()
    * would clobber that slot, so expiry is a named callback. A stale callback
    * no-ops when a newer write has already pushed expiresAt forward.
+   * destroy() is safe inside this schedule callback and drops every table.
    */
   async purgeExpired(): Promise<void> {
     if (this.state.expiresAt > Date.now() + 30_000) return;
-    await deletePrefix(this.env.NOTES, this.prefix());
+    try {
+      await deletePrefix(this.env.NOTES, this.prefix());
+    } catch (err) {
+      console.error(JSON.stringify({ event: "purge_r2_failed", error: err instanceof Error ? err.name : "error" }));
+      await this.armPurge();
+      return;
+    }
     this.ctx.storage.sql.exec("DELETE FROM messages");
     this.ctx.storage.sql.exec("DELETE FROM notes");
     this.setState({ noteCount: 0, messageCount: 0, expiresAt: 0, purgeScheduleId: null });
+    await this.destroy();
   }
 
   private async armPurge(): Promise<void> {
@@ -211,6 +217,15 @@ export class Assistant extends Agent<Env, AssistantState> {
     const vector = embedded?.[0] ?? null;
     try {
       await this.env.NOTES.put(key, markdown, { httpMetadata: { contentType: "text/markdown; charset=utf-8" } });
+      const again = this.noteRows().find((note) => note.body_hash === hash);
+      if (again) {
+        await this.env.NOTES.delete(key).catch(() => undefined);
+        return { ok: true, data: { note: toSummary(again), duplicate: true } };
+      }
+      if (this.countNotes() >= MAX_NOTES) {
+        await this.env.NOTES.delete(key).catch(() => undefined);
+        return { ok: false, code: "too_many_notes", message: "This visitor already has 40 notes. Delete one first." };
+      }
       this.ctx.storage.sql.exec(
         "INSERT INTO notes (id, title, r2_key, embedding, dims, keywords, body_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         id,
@@ -345,20 +360,16 @@ export class Assistant extends Agent<Env, AssistantState> {
     if (!rows.length) return [];
     const embedded = await embedTexts(this.env, [query]);
     const queryVector = embedded?.[0] ?? null;
-    const hits: RecallHit[] = [];
-    for (const row of rows) {
-      let semantic = 0;
-      if (queryVector && row.embedding && row.dims === queryVector.length) {
-        semantic = cosine(queryVector, fromBlob(row.embedding));
-      }
-      const lexical = keywordScore(query, `${row.title} ${row.keywords}`);
-      // Short notes often sit under a cosine floor. Keep the stronger signal so recall still works when embeddings are down.
-      const score = Math.max(semantic, lexical);
-      if (score < MIN_SCORE) continue;
-      hits.push({ id: row.id, title: row.title, score: Math.round(score * 100) / 100 });
-    }
-    hits.sort((a, b) => b.score - a.score);
-    return hits.slice(0, RECALL_K);
+    return selectRecalls(
+      rows.map((row) => {
+        let semantic = 0;
+        if (queryVector && row.embedding && row.dims === queryVector.length) {
+          semantic = cosine(queryVector, fromBlob(row.embedding));
+        }
+        const lexical = keywordOverlap(query, `${row.title} ${row.keywords}`);
+        return { id: row.id, title: row.title, semantic, lexicalHits: lexical.hits, lexical: lexical.score };
+      }),
+    );
   }
 }
 

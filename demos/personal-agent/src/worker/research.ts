@@ -85,9 +85,9 @@ export function pickCatalog(question: string): string[] {
     url: item.url,
     score: item.terms.filter((term) => hay.includes(term)).length,
   })).sort((a, b) => b.score - a.score);
-  const picked = ranked.filter((row) => row.score > 0).slice(0, 3);
-  if (picked.length >= 2) return picked.map((row) => row.url);
-  return [CATALOG[0]!.url, CATALOG[1]!.url];
+  const picked = ranked.filter((row) => row.score > 0).map((row) => row.url);
+  const defaults = [CATALOG[0]!.url, CATALOG[1]!.url];
+  return [...new Set([...picked, ...defaults])].slice(0, 3);
 }
 
 function htmlToText(html: string): { title: string; text: string } {
@@ -114,9 +114,7 @@ function htmlToText(html: string): { title: string; text: string } {
   return { title, text: text.slice(0, MAX_TEXT) };
 }
 
-async function readCapped(res: Response): Promise<string | null> {
-  const declared = Number(res.headers.get("content-length") ?? "0");
-  if (Number.isFinite(declared) && declared > MAX_BYTES) return null;
+async function readCapped(res: Response): Promise<string> {
   if (!res.body) return "";
   const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -125,11 +123,14 @@ async function readCapped(res: Response): Promise<string | null> {
     const { done, value } = await reader.read();
     if (done) break;
     if (!value) continue;
-    total += value.byteLength;
-    if (total > MAX_BYTES) {
+    if (total + value.byteLength > MAX_BYTES) {
+      const room = MAX_BYTES - total;
+      if (room > 0) chunks.push(value.subarray(0, room));
+      total += room;
       await reader.cancel().catch(() => undefined);
-      return null;
+      break;
     }
+    total += value.byteLength;
     chunks.push(value);
   }
   const buf = new Uint8Array(total);
@@ -143,6 +144,10 @@ async function readCapped(res: Response): Promise<string | null> {
 
 type Page = { url: string; title: string; text: string };
 
+async function cancelBody(res: Response): Promise<void> {
+  await res.body?.cancel().catch(() => undefined);
+}
+
 async function fetchOne(raw: string, hops = 0): Promise<Page | { url: string; error: string }> {
   const checked = validatePublicUrl(raw);
   if (!checked.ok) return { url: raw.slice(0, 300), error: checked.message };
@@ -153,7 +158,7 @@ async function fetchOne(raw: string, hops = 0): Promise<Page | { url: string; er
       method: "GET",
       redirect: "manual",
       headers: {
-        accept: "text/html,text/plain,text/markdown,application/json;q=0.5",
+        accept: "text/markdown, text/plain;q=0.9, text/html;q=0.8, application/json;q=0.5",
         "user-agent": "tech-demos-personal-agent/1.0",
       },
       signal: AbortSignal.timeout(TIMEOUT_MS),
@@ -163,16 +168,27 @@ async function fetchOne(raw: string, hops = 0): Promise<Page | { url: string; er
   }
   if (res.status >= 300 && res.status < 400) {
     const location = res.headers.get("location");
-    if (!location || hops >= MAX_HOPS) return { url: target, error: "Too many redirects." };
-    return fetchOne(new URL(location, checked.url).toString(), hops + 1);
+    await cancelBody(res);
+    if (!location) return { url: target, error: "Redirect had no Location." };
+    if (hops >= MAX_HOPS) return { url: target, error: "Too many redirects." };
+    let next: string;
+    try {
+      next = new URL(location, checked.url).toString();
+    } catch {
+      return { url: target, error: "Redirect Location was not a valid URL." };
+    }
+    return fetchOne(next, hops + 1);
   }
-  if (res.status !== 200) return { url: target, error: `HTTP ${res.status}.` };
+  if (res.status !== 200) {
+    await cancelBody(res);
+    return { url: target, error: `HTTP ${res.status}.` };
+  }
   const type = (res.headers.get("content-type") ?? "").toLowerCase();
   if (!/text\/html|text\/plain|text\/markdown|application\/json|application\/xhtml/.test(type)) {
+    await cancelBody(res);
     return { url: target, error: "Unsupported content type." };
   }
   const body = await readCapped(res);
-  if (body === null) return { url: target, error: "The page is larger than the size cap." };
   const extracted = /html/.test(type)
     ? htmlToText(body)
     : { title: checked.url.hostname, text: body.replace(/\s+/g, " ").trim().slice(0, MAX_TEXT) };

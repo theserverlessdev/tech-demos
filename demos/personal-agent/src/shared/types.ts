@@ -34,6 +34,7 @@ export type ChatReply = {
   recalled: RecallHit[];
   source: "workers-ai" | "fallback";
   savedNote: NoteSummary | null;
+  visitorToken?: string;
 };
 
 export type ResearchCitation = {
@@ -47,6 +48,18 @@ export type ResearchReply = {
   summary: string;
   source: "workers-ai" | "fallback";
   citations: ResearchCitation[];
+  visitorToken?: string;
+};
+
+export type NoteSaveReply = {
+  note: NoteSummary;
+  duplicate: boolean;
+  visitorToken?: string;
+};
+
+export type NoteDeleteReply = {
+  deleted: true;
+  visitorToken?: string;
 };
 
 export type ConfigResponse = {

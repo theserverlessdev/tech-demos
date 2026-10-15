@@ -1,5 +1,13 @@
 // Smoke: bun run scripts/smoke.ts [baseUrl]
-import type { ChatReply, ConfigResponse, HealthResponse, NoteDetail, NoteSummary, ResearchReply, ThreadMessage } from "../src/shared/types";
+import type {
+  ChatReply,
+  ConfigResponse,
+  HealthResponse,
+  NoteDetail,
+  NoteSaveReply,
+  ResearchReply,
+  ThreadMessage,
+} from "../src/shared/types";
 
 const base = (process.argv.find((arg) => arg.startsWith("http")) ?? "http://127.0.0.1:8787").replace(/\/$/, "");
 const TOKEN = "XXXX.DUMMY.TOKEN.XXXX";
@@ -16,13 +24,14 @@ function visitor(): string {
   return [...bytes].map((byte) => alphabet[byte % 36]).join("");
 }
 
-async function call<T>(path: string, init: { method?: string; body?: unknown } = {}) {
+async function call<T>(path: string, init: { method?: string; body?: unknown; visitorToken?: string } = {}) {
   const headers: Record<string, string> = {};
   let body: string | undefined;
   if (init.body !== undefined) {
     headers["content-type"] = "application/json";
     body = JSON.stringify(init.body);
   }
+  if (init.visitorToken) headers["x-visitor-id"] = init.visitorToken;
   const res = await fetch(`${base}${path}`, { method: init.method ?? "GET", headers, body });
   const text = await res.text();
   let data: T | null = null;
@@ -45,6 +54,9 @@ check("config publishes the test site key and an allowlist", config.status === 2
   hosts: config.data?.allowlist.length,
 });
 
+const unknown = await call("/api/does-not-exist");
+check("unknown GET is 404 before a visitor Durable Object is touched", unknown.status === 404, unknown.data);
+
 const id = visitor();
 const other = visitor();
 const blocked = await call("/api/chat", { method: "POST", body: { visitorId: id, message: "hello there friend" } });
@@ -59,9 +71,12 @@ const privateHost = await call("/api/research", {
     turnstileToken: TOKEN,
   },
 });
-check("research rejects private and non-https targets", privateHost.status === 400, privateHost.data);
+check("research rejects private and non-https targets before Turnstile", privateHost.status === 400, privateHost.data);
 
-const saved = await call<{ note: NoteSummary; duplicate: boolean }>("/api/notes", {
+const unsignedSession = await call<{ noteCount: number; messages?: unknown }>(`/api/session?visitorId=${id}`);
+check("unsigned GET session is empty and ignores the query string", unsignedSession.status === 200 && unsignedSession.data?.noteCount === 0, unsignedSession.data);
+
+const saved = await call<NoteSaveReply>("/api/notes", {
   method: "POST",
   body: {
     visitorId: id,
@@ -70,17 +85,24 @@ const saved = await call<{ note: NoteSummary; duplicate: boolean }>("/api/notes"
     turnstileToken: TOKEN,
   },
 });
-check("note is stored", saved.status === 200 && saved.data?.note.title === "Color palette", saved.data);
+const grant = saved.data?.visitorToken;
+check("note is stored and returns a signed visitor token", saved.status === 200 && saved.data?.note.title === "Color palette" && Boolean(grant), {
+  title: saved.data?.note.title,
+  hasToken: Boolean(grant),
+});
 const noteId = saved.data?.note?.id;
 
-const listed = await call<{ notes: NoteSummary[] }>(`/api/notes?visitorId=${id}`);
+const listed = await call<{ notes: { id: string }[] }>("/api/notes", { visitorToken: grant });
 check("note list contains the saved title", listed.status === 200 && listed.data?.notes.some((note) => note.id === noteId), listed.data);
 
+const leaked = await call<{ notes: { id: string }[] }>(`/api/notes?visitorId=${id}`);
+check("query-string visitor id does not unlock notes", leaked.status === 200 && (leaked.data?.notes.length ?? 0) === 0, leaked.data);
+
 if (noteId) {
-  const detail = await call<NoteDetail>(`/api/notes/${noteId}?visitorId=${id}`);
+  const detail = await call<NoteDetail>(`/api/notes/${noteId}`, { visitorToken: grant });
   check("note body round-trips from R2", detail.status === 200 && (detail.data?.body.includes("ember accent") ?? false), detail.data?.body);
-  const foreign = await call(`/api/notes/${noteId}?visitorId=${other}`);
-  check("another visitor cannot read the note", foreign.status === 404, foreign.data);
+  const foreign = await call(`/api/notes/${noteId}`);
+  check("a note is hidden without a signed visitor token", foreign.status === 404, foreign.data);
 }
 
 const chat = await call<ChatReply>("/api/chat", {
@@ -95,8 +117,24 @@ check("chat recalls the note title and a score", chat.status === 200 && recalled
   preview: chat.data?.reply.slice(0, 120),
 });
 
-const thread = await call<{ messages: ThreadMessage[] }>(`/api/thread?visitorId=${id}`);
+const thread = await call<{ messages: ThreadMessage[] }>("/api/thread", { visitorToken: grant });
 check("thread keeps the user turn and the reply", (thread.data?.messages.length ?? 0) >= 2, thread.data?.messages.length);
+
+const catalog = await call<ResearchReply>("/api/research", {
+  method: "POST",
+  body: {
+    visitorId: id,
+    question: "How do Durable Objects keep state?",
+    turnstileToken: TOKEN,
+  },
+});
+const catalogCited = catalog.data?.citations.filter((item) => item.ok).length ?? 0;
+check("docs catalog answers the placeholder question", catalog.status === 200 && catalogCited >= 2 && (catalog.data?.summary.length ?? 0) > 40, {
+  status: catalog.status,
+  source: catalog.data?.source,
+  citations: catalog.data?.citations,
+  preview: catalog.data?.summary.slice(0, 140),
+});
 
 const research = await call<ResearchReply>("/api/research", {
   method: "POST",
@@ -132,8 +170,17 @@ if (noteId) {
   check("deleted note is not recalled", again.status === 200 && !still, again.data?.recalled);
 }
 
-const emptyOther = await call<{ notes: NoteSummary[] }>(`/api/notes?visitorId=${other}`);
-check("second visitor notebook is empty", emptyOther.status === 200 && emptyOther.data?.notes.length === 0, emptyOther.data);
+const emptyOther = await call<{ notes: { id: string }[] }>("/api/notes");
+check("second visitor notebook is empty without a token", emptyOther.status === 200 && emptyOther.data?.notes.length === 0, emptyOther.data);
+
+const otherSaved = await call<NoteSaveReply>("/api/notes", {
+  method: "POST",
+  body: { visitorId: other, title: "Other notebook", body: "This note belongs to the second visitor only.", turnstileToken: TOKEN },
+});
+if (noteId) {
+  const cross = await call(`/api/notes/${noteId}`, { visitorToken: otherSaved.data?.visitorToken });
+  check("another visitor cannot read the first visitor's note", cross.status === 404, cross.data);
+}
 
 if (failures) {
   console.error(`\n${failures} check(s) failed.`);

@@ -34,11 +34,20 @@ The X post that pointed at the upstream repo: <https://x.com/tonycasavan/status/
 - One Durable Object holding the conversation
 - Markdown notes in R2 and vector recall beside each reply
 - A research fan-out that cites URLs
-- An expiry path that deletes the visitor's data
+- An expiry path that deletes the visitor's R2 prefix and `destroy()`s the Durable Object
 
 ## Branding
 
 Hub Graphite & Ember. Ember accent `#c2410c`, background `#0e0e11`. Contact links to <https://theserverless.dev/contact>. The mark links back to the hub.
+
+## 2026-10-15
+
+Audit fixes for the docs catalog, Durable Object lifetime, recall floor, and phone layout.
+
+- Research asks Cloudflare docs for markdown, truncates at 180 KB instead of failing, and keeps a single catalog match (padded with defaults). The UI placeholder question is a smoke check.
+- Page views and unsigned GETs no longer call `getAgentByName`. The first Turnstile-gated write mints an HMAC-signed `x-visitor-id`. `purgeExpired` deletes the R2 prefix and then `destroy()`s the Durable Object.
+- GLM-5.3 Flash uses `reasoning_effort: "low"` and `max_completion_tokens: 1500`. Recall needs cosine ≥ 0.58 or two keyword hits.
+- Phone: static topbar, per-panel status, a shared Turnstile gate, scrollable thread, and `overflow-wrap: anywhere` on long URLs.
 
 ## 2026-10-09
 

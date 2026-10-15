@@ -1,13 +1,25 @@
-import type { ChatReply, ConfigResponse, NoteDetail, NoteSummary, ResearchReply, SessionInfo, ThreadMessage } from "../shared/types";
+import type {
+  ChatReply,
+  ConfigResponse,
+  NoteDeleteReply,
+  NoteDetail,
+  NoteSaveReply,
+  NoteSummary,
+  ResearchReply,
+  SessionInfo,
+  ThreadMessage,
+} from "../shared/types";
 
 const API_BASE = location.pathname.startsWith("/demos/personal-agent") ? "/demos/personal-agent" : "";
 const VISITOR_KEY = "personal-agent-visitor";
+const TOKEN_KEY = "personal-agent-visitor-token";
 const VISITOR_RE = /^[a-z0-9]{16,32}$/;
-const DUMMY_READY = "personal-agent";
+const TURNSTILE_ACTION = "personal-agent";
 
 type TurnstileApi = {
   render: (el: HTMLElement, opts: Record<string, unknown>) => string;
   reset: (id?: string) => void;
+  remove?: (id?: string) => void;
   getResponse: (id?: string) => string | undefined;
 };
 
@@ -47,18 +59,34 @@ function visitorId(): string {
 
 let visitor = visitorId();
 let turnstileId = "";
+let siteKey = "";
+let ttlHours = 24;
 let openNote: NoteDetail | null = null;
 let deleteArmed = false;
 
-function hint(text: string, tone: "ok" | "error" | "" = "") {
-  const node = $("hint");
+function storedToken(): string {
+  return localStorage.getItem(TOKEN_KEY) ?? "";
+}
+
+function rememberToken(token: string | undefined) {
+  if (token && token.includes(".")) localStorage.setItem(TOKEN_KEY, token);
+}
+
+function status(id: string, text: string, tone: "ok" | "error" | "" = "") {
+  const node = $(id);
   node.textContent = text;
   if (tone) node.dataset.tone = tone;
   else delete node.dataset.tone;
 }
 
+function hint(text: string, tone: "ok" | "error" | "" = "") {
+  status("chat-hint", text, tone);
+}
+
 async function api<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
   const headers: Record<string, string> = {};
+  const grant = storedToken();
+  if (grant) headers["x-visitor-id"] = grant;
   let body: string | undefined;
   if (init.body !== undefined) {
     headers["content-type"] = "application/json";
@@ -70,7 +98,8 @@ async function api<T>(path: string, init: { method?: string; body?: unknown } = 
   } catch {
     throw new ApiFailure(0, "network", "The network request failed.");
   }
-  const data = (await res.json().catch(() => null)) as { error?: { code: string; message: string } } | null;
+  const data = (await res.json().catch(() => null)) as ({ error?: { code: string; message: string }; visitorToken?: string } & T) | null;
+  if (data?.visitorToken) rememberToken(data.visitorToken);
   if (!res.ok) throw new ApiFailure(res.status, data?.error?.code ?? "http", data?.error?.message ?? `HTTP ${res.status}`);
   return data as T;
 }
@@ -82,6 +111,21 @@ function token(): string {
 
 function resetCheck() {
   if (turnstileId && window.turnstile) window.turnstile.reset(turnstileId);
+}
+
+function widgetTheme(): "light" | "dark" {
+  return document.documentElement.dataset.theme === "light" ? "light" : "dark";
+}
+
+function scrollThread() {
+  const thread = document.querySelector(".thread") as HTMLElement | null;
+  const last = $("messages").lastElementChild;
+  if (!thread || !last) return;
+  if (window.matchMedia("(max-width: 900px)").matches) {
+    last.scrollIntoView({ block: "end" });
+    return;
+  }
+  thread.scrollTop = thread.scrollHeight;
 }
 
 function renderMessages(messages: ThreadMessage[]) {
@@ -106,7 +150,7 @@ function renderMessages(messages: ThreadMessage[]) {
     }
     list.append(item);
   }
-  list.scrollTop = list.scrollHeight;
+  scrollThread();
 }
 
 function renderNotes(notes: NoteSummary[]) {
@@ -140,11 +184,23 @@ function showNote(note: NoteDetail | null) {
   $("viewer-body").textContent = note.body;
 }
 
+function emptyStrip() {
+  $("strip-text").textContent =
+    `Visitor ${visitor.slice(0, 6)}… · a Durable Object is created on the first write. Notes and chat expire ${ttlHours}h after that.`;
+}
+
 async function refresh() {
+  if (!storedToken()) {
+    emptyStrip();
+    renderMessages([]);
+    renderNotes([]);
+    showNote(null);
+    return;
+  }
   const [session, thread, notes] = await Promise.all([
-    api<SessionInfo>(`/api/session?visitorId=${visitor}`),
-    api<{ messages: ThreadMessage[] }>(`/api/thread?visitorId=${visitor}`),
-    api<{ notes: NoteSummary[] }>(`/api/notes?visitorId=${visitor}`),
+    api<SessionInfo>("/api/session"),
+    api<{ messages: ThreadMessage[] }>("/api/thread"),
+    api<{ notes: NoteSummary[] }>("/api/notes"),
   ]);
   const when = session.expiresAt ? new Date(session.expiresAt).toLocaleString() : "the first write";
   $("strip-text").textContent = `Visitor ${visitor.slice(0, 6)}… · notes and chat expire ${session.ttlHours}h after the last write (${when}).`;
@@ -154,10 +210,14 @@ async function refresh() {
 }
 
 async function open(id: string) {
-  const note = await api<NoteDetail>(`/api/notes/${id}?visitorId=${visitor}`);
-  showNote(note);
-  const notes = await api<{ notes: NoteSummary[] }>(`/api/notes?visitorId=${visitor}`);
-  renderNotes(notes.notes);
+  try {
+    const note = await api<NoteDetail>(`/api/notes/${id}`);
+    showNote(note);
+    const notes = await api<{ notes: NoteSummary[] }>("/api/notes");
+    renderNotes(notes.notes);
+  } catch (err) {
+    status("notes-hint", err instanceof ApiFailure ? err.message : "That note could not be opened.", "error");
+  }
 }
 
 async function waitForTurnstile(): Promise<TurnstileApi | null> {
@@ -169,9 +229,27 @@ async function waitForTurnstile(): Promise<TurnstileApi | null> {
   return null;
 }
 
-async function mountTurnstile(siteKey: string) {
+function turnstileOptions(): Record<string, unknown> {
+  const short = window.matchMedia("(max-height: 520px)").matches;
+  return {
+    sitekey: siteKey,
+    action: TURNSTILE_ACTION,
+    theme: widgetTheme(),
+    size: "flexible",
+    appearance: short ? "interaction-only" : "always",
+  };
+}
+
+function remountTurnstile(apiWidget: TurnstileApi) {
+  const host = $("turnstile");
+  if (turnstileId && apiWidget.remove) apiWidget.remove(turnstileId);
+  host.replaceChildren();
+  turnstileId = apiWidget.render(host, turnstileOptions());
+}
+
+async function mountTurnstile() {
   if (!siteKey) {
-    hint("Turnstile site key is not set. Chat stays closed until it is configured.", "error");
+    status("gate-hint", "Turnstile site key is not set. Chat stays closed until it is configured.", "error");
     $<HTMLButtonElement>("send").disabled = true;
     $<HTMLButtonElement>("save-note").disabled = true;
     $<HTMLButtonElement>("research").disabled = true;
@@ -179,24 +257,22 @@ async function mountTurnstile(siteKey: string) {
   }
   const apiWidget = await waitForTurnstile();
   if (!apiWidget) {
-    hint("The Turnstile script did not load.", "error");
+    status("gate-hint", "The Turnstile script did not load.", "error");
     return;
   }
-  turnstileId = apiWidget.render($("turnstile"), {
-    sitekey: siteKey,
-    action: DUMMY_READY,
-    theme: document.documentElement.dataset.theme === "light" ? "light" : "dark",
-  });
+  remountTurnstile(apiWidget);
 }
 
 $("theme").addEventListener("click", () => {
   const next = document.documentElement.dataset.theme === "light" ? "dark" : "light";
   document.documentElement.dataset.theme = next;
   localStorage.setItem("theme", next);
+  if (window.turnstile && siteKey) remountTurnstile(window.turnstile);
 });
 
 $("new-visitor").addEventListener("click", () => {
   localStorage.removeItem(VISITOR_KEY);
+  localStorage.removeItem(TOKEN_KEY);
   location.reload();
 });
 
@@ -207,6 +283,7 @@ $("composer").addEventListener("submit", async (event) => {
   const turnstileToken = token();
   if (!turnstileToken) {
     hint("Complete the Turnstile check first.", "error");
+    status("gate-hint", "Complete the Turnstile check first.", "error");
     return;
   }
   const button = $<HTMLButtonElement>("send");
@@ -232,20 +309,22 @@ $("note-form").addEventListener("submit", async (event) => {
   const body = $<HTMLTextAreaElement>("note-body").value.trim();
   const turnstileToken = token();
   if (!turnstileToken) {
-    hint("Complete the Turnstile check first.", "error");
+    status("notes-hint", "Complete the Turnstile check first.", "error");
+    status("gate-hint", "Complete the Turnstile check first.", "error");
     return;
   }
   const button = $<HTMLButtonElement>("save-note");
   button.disabled = true;
+  status("notes-hint", "Saving…");
   try {
-    await api<{ note: NoteSummary }>("/api/notes", { method: "POST", body: { visitorId: visitor, title, body, turnstileToken } });
+    await api<NoteSaveReply>("/api/notes", { method: "POST", body: { visitorId: visitor, title, body, turnstileToken } });
     $<HTMLInputElement>("note-title").value = "";
     $<HTMLTextAreaElement>("note-body").value = "";
-    hint("Note saved in R2.", "ok");
+    status("notes-hint", "Note saved in R2.", "ok");
     resetCheck();
     await refresh();
   } catch (err) {
-    hint(err instanceof ApiFailure ? err.message : "The note could not be saved.", "error");
+    status("notes-hint", err instanceof ApiFailure ? err.message : "The note could not be saved.", "error");
     resetCheck();
   } finally {
     button.disabled = false;
@@ -261,20 +340,21 @@ $("delete-note").addEventListener("click", async () => {
   }
   const turnstileToken = token();
   if (!turnstileToken) {
-    hint("Complete the Turnstile check first.", "error");
+    status("notes-hint", "Complete the Turnstile check first.", "error");
+    status("gate-hint", "Complete the Turnstile check first.", "error");
     return;
   }
   try {
-    await api<{ deleted: true }>(`/api/notes/${openNote.id}`, {
+    await api<NoteDeleteReply>(`/api/notes/${openNote.id}`, {
       method: "DELETE",
       body: { visitorId: visitor, turnstileToken },
     });
     showNote(null);
-    hint("Note deleted.", "ok");
+    status("notes-hint", "Note deleted.", "ok");
     resetCheck();
     await refresh();
   } catch (err) {
-    hint(err instanceof ApiFailure ? err.message : "The note could not be deleted.", "error");
+    status("notes-hint", err instanceof ApiFailure ? err.message : "The note could not be deleted.", "error");
     resetCheck();
   }
 });
@@ -288,12 +368,13 @@ $("research-form").addEventListener("submit", async (event) => {
     .filter(Boolean);
   const turnstileToken = token();
   if (!turnstileToken) {
-    hint("Complete the Turnstile check first.", "error");
+    status("research-hint", "Complete the Turnstile check first.", "error");
+    status("gate-hint", "Complete the Turnstile check first.", "error");
     return;
   }
   const button = $<HTMLButtonElement>("research");
   button.disabled = true;
-  hint("Fetching pages…");
+  status("research-hint", "Fetching pages…");
   try {
     const body: { visitorId: string; question: string; turnstileToken: string; urls?: string[] } = {
       visitorId: visitor,
@@ -322,19 +403,25 @@ $("research-form").addEventListener("submit", async (event) => {
       }
       cites.append(item);
     }
-    hint("Research finished.", "ok");
+    status("research-hint", "Research finished.", "ok");
     resetCheck();
     await refresh();
   } catch (err) {
-    hint(err instanceof ApiFailure ? err.message : "Research failed.", "error");
+    status("research-hint", err instanceof ApiFailure ? err.message : "Research failed.", "error");
     resetCheck();
   } finally {
     button.disabled = false;
   }
 });
 
-const config = await api<ConfigResponse>("/api/config");
-await mountTurnstile(config.siteKey);
+try {
+  const config = await api<ConfigResponse>("/api/config");
+  siteKey = config.siteKey;
+  ttlHours = config.ttlHours;
+  await mountTurnstile();
+} catch {
+  status("gate-hint", "The page could not load its configuration. Refresh and try again.", "error");
+}
 try {
   await refresh();
 } catch (err) {

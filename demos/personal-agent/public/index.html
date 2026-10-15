@@ -43,8 +43,13 @@
 
   <div class="strip" id="strip" role="status">
     <span class="strip__dot"></span>
-    <span id="strip-text">This browser keeps an anonymous visitor id. Notes and chat are deleted 24 hours after the last write.</span>
+    <span id="strip-text">This browser keeps an anonymous visitor id. A Durable Object is created on the first write. Notes and chat are deleted 24 hours after that.</span>
     <button class="btn btn-ghost" id="new-visitor" type="button">New visitor</button>
+  </div>
+
+  <div class="gate" id="gate">
+    <div id="turnstile"></div>
+    <p class="hint" id="gate-hint" role="status"></p>
   </div>
 
   <main class="layout">
@@ -54,11 +59,10 @@
         <p class="empty" id="empty">Save a note, then ask about it. Recalled titles and scores show under the reply.</p>
       </div>
       <form class="composer" id="composer">
-        <div id="turnstile"></div>
         <label class="sr-only" for="message">Message</label>
         <textarea id="message" rows="3" maxlength="2000" placeholder="Ask about a saved note, or start with “Remember that …”" required></textarea>
         <div class="composer__row">
-          <p class="hint" id="hint" role="status"></p>
+          <p class="hint" id="chat-hint" role="status"></p>
           <button class="btn btn-primary" id="send" type="submit">Send</button>
         </div>
       </form>
@@ -75,7 +79,10 @@
           <input id="note-title" maxlength="120" placeholder="Title" required />
           <label class="sr-only" for="note-body">Note body</label>
           <textarea id="note-body" rows="4" maxlength="8000" placeholder="Markdown note stored in R2" required></textarea>
-          <button class="btn" id="save-note" type="submit">Save note</button>
+          <div class="panel-actions">
+            <p class="hint" id="notes-hint" role="status"></p>
+            <button class="btn" id="save-note" type="submit">Save note</button>
+          </div>
         </form>
         <ol class="note-list" id="note-list"></ol>
         <article class="viewer" id="viewer" hidden>
@@ -97,7 +104,10 @@
           <textarea id="question" rows="3" maxlength="500" placeholder="How do Durable Objects keep state?" required></textarea>
           <label class="field-label" for="urls">URLs, one per line (optional)</label>
           <textarea id="urls" rows="3" placeholder="https://developers.cloudflare.com/durable-objects/&#10;https://developers.cloudflare.com/r2/"></textarea>
-          <button class="btn" id="research" type="submit">Research</button>
+          <div class="panel-actions">
+            <p class="hint" id="research-hint" role="status"></p>
+            <button class="btn" id="research" type="submit">Research</button>
+          </div>
         </form>
         <div class="report" id="report" hidden>
           <p class="eyebrow" id="report-source"></p>
