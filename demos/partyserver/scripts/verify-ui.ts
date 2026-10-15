@@ -34,6 +34,15 @@ await wide.waitForTimeout(300);
 await assertLandscapeBoard(wide, 932, 430, `${out.pathname}/board-932x430.png`);
 await widePhone.close();
 
+const narrowPhone = await browser.newContext({ viewport: { width: 667, height: 375 }, colorScheme: "dark" });
+const narrow = await narrowPhone.newPage();
+await narrow.addInitScript(() => localStorage.setItem("theme", "dark"));
+await narrow.goto(roomUrl, { waitUntil: "domcontentloaded" });
+await narrow.locator("#canvas").waitFor();
+await narrow.waitForTimeout(300);
+await assertLandscapeBoard(narrow, 667, 375, `${out.pathname}/board-667x375.png`);
+await narrowPhone.close();
+
 const sockets: WebSocket[] = [];
 const id = new URL(roomUrl).searchParams.get("room");
 if (!id) throw new Error("no room id");
@@ -97,6 +106,8 @@ async function assertLandscapeBoard(page: import("playwright").Page, width: numb
   const offScreen = bottom > pageBox.innerHeight + 1;
   const pageScrolls = pageBox.scrollHeight > pageBox.innerHeight + 1 || pageBox.scrollY > 0;
   const titleRight = !!(title && actions && title.x > actions.x + 8);
+  const erase = await page.locator("#tool-erase").boundingBox();
+  const toolsOffScreen = width === 844 && (!erase || erase.y + erase.height > pageBox.innerHeight + 1);
   console.log(
     `${width}x${height} wrap`,
     Math.round(wrap.width),
@@ -107,7 +118,7 @@ async function assertLandscapeBoard(page: import("playwright").Page, width: numb
     pageBox.innerHeight,
     "aside",
     Math.round(aside.x),
-    tooTall || tooShort || tooNarrow || stacked || offScreen || pageScrolls || titleRight ? "BAD" : "ok",
+    tooTall || tooShort || tooNarrow || stacked || offScreen || pageScrolls || titleRight || toolsOffScreen ? "BAD" : "ok",
   );
   await page.screenshot({ path });
   if (tooTall) throw new Error(`${width}×${height} canvas wrap is ${wrap.height}px, taller than the viewport`);
@@ -121,6 +132,7 @@ async function assertLandscapeBoard(page: import("playwright").Page, width: numb
     throw new Error(`${width}×${height} page scrolls (scrollHeight ${pageBox.scrollHeight}, scrollY ${pageBox.scrollY})`);
   }
   if (titleRight) throw new Error(`${width}×${height} Partyboard title is to the right of the actions`);
+  if (toolsOffScreen) throw new Error(`${width}×${height} Eraser is below the fold`);
 }
 
 function openSocket(url: string): Promise<WebSocket> {

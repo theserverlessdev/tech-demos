@@ -1,12 +1,20 @@
 import * as Y from "yjs";
 import { STROKE_ID } from "./protocol";
 
-type StartItem = { deleted: boolean; right: StartItem | null };
-
 /** y-protocols: messageSync. */
 const MESSAGE_SYNC = 0;
+/** y-protocols sync: messageYjsSyncStep2. */
+const MESSAGE_YJS_STEP2 = 1;
 /** y-protocols sync: messageYjsUpdate. */
 const MESSAGE_YJS_UPDATE = 2;
+
+type YStruct = {
+  constructor: { name: string };
+  id: { client: number; clock: number };
+  length?: number;
+  parent?: unknown;
+  parentSub?: unknown;
+};
 
 function asBytes(message: string | ArrayBuffer | ArrayBufferView): Uint8Array | null {
   if (typeof message === "string") return null;
@@ -29,8 +37,8 @@ function readVarUint(bytes: Uint8Array, offset: { i: number }): number {
 }
 
 /**
- * Pull the Yjs update out of a y-protocols sync-update frame.
- * Awareness, sync step 1/2, and anything we cannot parse return null.
+ * Pull the Yjs update out of a y-protocols sync step-2 or update frame.
+ * Awareness, sync step 1, and anything we cannot parse return null.
  */
 export function extractSyncUpdate(message: string | ArrayBuffer | ArrayBufferView): Uint8Array | null {
   const bytes = asBytes(message);
@@ -40,7 +48,7 @@ export function extractSyncUpdate(message: string | ArrayBuffer | ArrayBufferVie
     const outer = readVarUint(bytes, offset);
     if (outer !== MESSAGE_SYNC) return null;
     const inner = readVarUint(bytes, offset);
-    if (inner !== MESSAGE_YJS_UPDATE) return null;
+    if (inner !== MESSAGE_YJS_STEP2 && inner !== MESSAGE_YJS_UPDATE) return null;
     const length = readVarUint(bytes, offset);
     if (offset.i + length > bytes.length) return null;
     return bytes.subarray(offset.i, offset.i + length);
@@ -49,35 +57,80 @@ export function extractSyncUpdate(message: string | ArrayBuffer | ArrayBufferVie
   }
 }
 
-/** True when applying this update on an empty doc would introduce junk keys, list items, or foreign roots. */
+function decodeStructs(update: Uint8Array): YStruct[] {
+  const decoded = Y.decodeUpdate(update) as { structs: YStruct[] };
+  return decoded.structs;
+}
+
+function nextClock(doc: Y.Doc, client: number): number {
+  return Y.decodeStateVector(Y.encodeStateVector(doc)).get(client) ?? 0;
+}
+
+/** True when a client’s structs start past the next expected clock, or leave a hole. */
+export function updateSkipsAhead(doc: Y.Doc, update: Uint8Array): boolean {
+  const byClient = new Map<number, Array<{ clock: number; length: number }>>();
+  for (const struct of decodeStructs(update)) {
+    if (struct.constructor.name === "Skip") return true;
+    const list = byClient.get(struct.id.client) ?? [];
+    list.push({ clock: struct.id.clock, length: struct.length ?? 1 });
+    byClient.set(struct.id.client, list);
+  }
+  for (const [client, structs] of byClient) {
+    structs.sort((a, b) => a.clock - b.clock);
+    const expected = nextClock(doc, client);
+    if (structs[0]!.clock > expected) return true;
+    let end = expected;
+    for (const struct of structs) {
+      if (struct.clock > end) return true;
+      end = Math.max(end, struct.clock + struct.length);
+    }
+  }
+  return false;
+}
+
+/**
+ * True when decoded items include junk keys, list items under strokes, or a foreign root.
+ * Uses `Y.decodeUpdate` so follow-on updates are visible without applying them.
+ */
 export function updateCarriesJunk(update: Uint8Array): boolean {
-  const doc = new Y.Doc();
-  doc.getMap("strokes");
+  for (const struct of decodeStructs(update)) {
+    const parent = struct.parent;
+    const parentSub = struct.parentSub;
+    if (typeof parent === "string") {
+      if (parent !== "strokes") return true;
+      if (typeof parentSub !== "string") return true;
+      if (!STROKE_ID.test(parentSub)) return true;
+    } else if (typeof parentSub === "string" && !STROKE_ID.test(parentSub)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Drop Yjs pending structs left by a gap so they cannot bloat encodeStateAsUpdate. */
+export function dropPendingUpdates(doc: Y.Doc): void {
+  const store = (doc as unknown as { store?: { pendingStructs: unknown; pendingDs: unknown } }).store;
+  if (!store) return;
+  store.pendingStructs = null;
+  store.pendingDs = null;
+}
+
+/**
+ * True for a sync step-2 or update frame that would poison the room.
+ * Awareness and sync step 1 are left alone.
+ */
+export function frameShouldReject(doc: Y.Doc, message: string | ArrayBuffer | ArrayBufferView): boolean {
+  const update = extractSyncUpdate(message);
+  if (!update) return false;
   try {
-    Y.applyUpdate(doc, update);
-    for (const name of doc.share.keys()) {
-      if (name !== "strokes") return true;
-    }
-    const strokes = doc.getMap("strokes");
-    for (const key of strokes.keys()) {
-      if (!STROKE_ID.test(key)) return true;
-    }
-    let item = (strokes as unknown as { _start: StartItem | null })._start;
-    while (item) {
-      if (!item.deleted) return true;
-      item = item.right;
-    }
-    return false;
+    if (updateSkipsAhead(doc, update)) return true;
+    return updateCarriesJunk(update);
   } catch {
     return true;
-  } finally {
-    doc.destroy();
   }
 }
 
-/** True for a y-protocols sync-update whose payload would poison the strokes map. Other frames are left alone. */
+/** @deprecated alias used by older tests; inspects against an empty document. */
 export function frameCarriesJunk(message: string | ArrayBuffer | ArrayBufferView): boolean {
-  const update = extractSyncUpdate(message);
-  if (!update) return false;
-  return updateCarriesJunk(update);
+  return frameShouldReject(new Y.Doc(), message);
 }

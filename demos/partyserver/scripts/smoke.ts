@@ -1,10 +1,10 @@
 // Smoke: bun run scripts/smoke.ts [baseUrl]
 import YProvider from "y-partyserver/provider";
 import * as Y from "yjs";
-import { CLOSE_FULL, CLOSE_RATE, MAX_FRAME_BYTES, MAX_STROKES, PARTY, ROOM_ID, type CreatedRoom, type RoomStatus } from "../src/shared/protocol";
+import { CLOSE_FRAME, CLOSE_FULL, CLOSE_RATE, MAX_DOC_BYTES, MAX_FRAME_BYTES, MAX_STROKES, PARTY, ROOM_ID, type CreatedRoom, type RoomStatus } from "../src/shared/protocol";
 import { TEST_TURNSTILE_SECRET, TEST_TURNSTILE_SITE_KEY, assessTurnstile } from "../src/worker/turnstile";
 import { verifyRoomId } from "../src/worker/ids";
-import { probeNinth, yjsJunkKeyFrame } from "./ninth";
+import { probeNinth, wrapSyncFrame, yjsFollowOnJunkFrames, yjsJunkKeyFrame, yjsSkipAheadFrame } from "./ninth";
 
 const LOCAL_ROOM_SECRET = "partyserver-local-room-secret";
 
@@ -169,7 +169,8 @@ check("on-board stroke is kept", peer.getMap("strokes").has("okstroke"));
 check("stroke at y=9000 is dropped", !peer.getMap("strokes").has("offboard"));
 const arrayAttack = new Y.Doc();
 arrayAttack.getArray("strokes").insert(0, ["wipe"]);
-Y.applyUpdate(docD, Y.encodeStateAsUpdate(arrayAttack));
+const arrayWs = await openSocket(`${base.replace(/^http/, "ws")}/parties/board-room/${room.id}?_pk=arratk`);
+arrayWs.send(wrapSyncFrame(Y.encodeStateAsUpdate(arrayAttack)));
 await sleep(600);
 check("existing strokes survive an array insert", peer.getMap("strokes").has("okstroke") && peer.getMap("strokes").has("aftercap"));
 docD.getMap("strokes").set(
@@ -179,6 +180,11 @@ docD.getMap("strokes").set(
 const afterArr = await waitFor(() => peer.getMap("strokes").has("afterarr"), 8000);
 check("new stroke still syncs after an array insert", afterArr);
 check("array insert left no live list items", undeletedListCount(peer.getMap("strokes")) === 0);
+try {
+  arrayWs.close();
+} catch {
+  /* already closed */
+}
 providerD.disconnect();
 providerE.disconnect();
 await sleep(600);
@@ -188,38 +194,12 @@ const tombWatch = new YProvider(host, room.id, tombWatchDoc, { party: PARTY, dis
 const tombReady = await waitFor(() => tombWatchDoc.getMap("strokes").has("okstroke"), 8000);
 check("tombstone observer synced existing ink", tombReady);
 const keptInk = ["okstroke", "aftercap", "afterarr"].filter((key) => tombWatchDoc.getMap("strokes").has(key));
-const beforeJunk = tombWatchDoc.getMap("strokes").size;
-const junkFrame = yjsJunkKeyFrame(90, 1400);
-check("junk-key frame is under the frame cap", junkFrame.byteLength <= MAX_FRAME_BYTES && junkFrame.byteLength > 120_000, junkFrame.byteLength);
-const tombWs = await openSocket(`${base.replace(/^http/, "ws")}/parties/board-room/${room.id}?_pk=tomb`);
-tombWs.send(junkFrame);
-tombWs.send(junkFrame);
-await sleep(1100);
-tombWs.send(junkFrame);
-await sleep(800);
-check(
-  "existing ink survived three junk-key frames",
-  keptInk.length > 0 && keptInk.every((key) => tombWatchDoc.getMap("strokes").has(key)),
-  { keptInk, size: tombWatchDoc.getMap("strokes").size, beforeJunk },
-);
-check(
-  "junk keys did not land",
-  ![...tombWatchDoc.getMap("strokes").keys()].some((key) => key.length > 16),
-);
-tombWatchDoc.getMap("strokes").set(
-  "afterjunk",
-  JSON.stringify({ id: "afterjunk", color: "#c2410c", size: 6, points: [50, 50, 90, 90], client: "smokecli" }),
-);
-const afterJunk = await waitFor(() => tombWatchDoc.getMap("strokes").has("afterjunk"), 8000);
-check("new stroke still syncs after junk-key frames", afterJunk);
-const afterJunkStatus = await call(`/api/rooms/${room.id}`);
-const afterJunkMeta = afterJunkStatus.data as RoomStatus | null;
-check("board is not full after junk-key frames", afterJunkMeta?.full === false, afterJunkMeta);
-try {
-  tombWs.close();
-} catch {
-  /* already closed */
-}
+const beforeJunkBytes = ((await call(`/api/rooms/${room.id}`)).data as RoomStatus | null)?.docBytes ?? 0;
+
+await probeJunkPath("step2", room.id, tombWatchDoc, keptInk, beforeJunkBytes, yjsJunkKeyFrame(90, 1400, 1));
+await probeJunkPath("follow-on", room.id, tombWatchDoc, keptInk, beforeJunkBytes, null, yjsFollowOnJunkFrames());
+await probeJunkPath("skip-ahead", room.id, tombWatchDoc, keptInk, beforeJunkBytes, yjsSkipAheadFrame(200_000));
+
 tombWatch.disconnect();
 await sleep(400);
 
@@ -353,6 +333,64 @@ function undeletedListCount(map: Y.Map<unknown>): number {
     item = item.right;
   }
   return count;
+}
+
+async function probeJunkPath(
+  label: string,
+  roomId: string,
+  observer: Y.Doc,
+  keptInk: string[],
+  beforeBytes: number,
+  frame: Uint8Array | null,
+  follow?: { first: Uint8Array; junk: Uint8Array },
+): Promise<void> {
+  const pk = label.replace(/[^a-z0-9]/g, "").slice(0, 10) || "junk";
+  const strokeId = `ok${pk}xx`.slice(0, 8);
+  if (frame) {
+    check(`${label} frame is under the frame cap`, frame.byteLength <= MAX_FRAME_BYTES, frame.byteLength);
+  }
+  const ws = await openSocket(`${base.replace(/^http/, "ws")}/parties/board-room/${roomId}?_pk=${pk}`);
+  const closed = new Promise<number>((resolve) => {
+    ws.addEventListener("close", (event) => resolve(event.code));
+  });
+  if (follow) {
+    ws.send(follow.first);
+    await sleep(400);
+    ws.send(follow.junk);
+  } else if (frame) {
+    ws.send(frame);
+  }
+  const code = await Promise.race([closed, sleep(4000).then(() => 0)]);
+  check(`${label} closes the socket`, code === CLOSE_FRAME, code);
+  try {
+    ws.close();
+  } catch {
+    /* already closed */
+  }
+  await sleep(400);
+  check(
+    `${label}: existing ink kept`,
+    keptInk.length > 0 && keptInk.every((key) => observer.getMap("strokes").has(key)),
+  );
+  check(
+    `${label}: junk keys did not land`,
+    ![...observer.getMap("strokes").keys()].some((key) => key.length > 16),
+  );
+  observer.getMap("strokes").set(
+    strokeId,
+    JSON.stringify({ id: strokeId, color: "#c2410c", size: 6, points: [50, 50, 90, 90], client: "smokecli" }),
+  );
+  const landed = await waitFor(() => observer.getMap("strokes").has(strokeId), 8000);
+  check(`${label}: new stroke still syncs`, landed);
+  await sleep(800);
+  const status = await call(`/api/rooms/${roomId}`);
+  const meta = status.data as RoomStatus | null;
+  check(`${label}: board is not full`, meta?.full === false, meta);
+  check(
+    `${label}: stored size stays small after reload`,
+    (meta?.docBytes ?? MAX_DOC_BYTES) < beforeBytes + 24_000 && (meta?.docBytes ?? MAX_DOC_BYTES) < MAX_DOC_BYTES,
+    { beforeBytes, docBytes: meta?.docBytes },
+  );
 }
 
 function openSocket(url: string): Promise<WebSocket> {

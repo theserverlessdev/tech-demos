@@ -269,7 +269,21 @@ select {
     max-height: none;
     min-height: 0;
     height: 100%;
+    padding: 8px;
+    gap: 6px;
   }
+  .aside h2 { font-size: 14px; }
+  .aside .field { margin: 0; }
+  .aside .field input { min-height: 32px; height: 32px; }
+  .aside .btn,
+  .aside .size,
+  .aside .swatch {
+    min-height: 32px;
+    min-width: 32px;
+    height: 32px;
+  }
+  .aside .swatch { width: 32px; }
+  .tools { order: -1; flex-shrink: 0; }
   .chat { min-height: 0; }
   .lobby { min-height: 0; padding-top: 0.5rem; padding-bottom: 0.5rem; }
 }

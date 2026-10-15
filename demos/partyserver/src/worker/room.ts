@@ -18,7 +18,7 @@ import {
   parseStroke,
   type RoomStatus,
 } from "../shared/protocol";
-import { frameCarriesJunk } from "../shared/yjs-guard";
+import { dropPendingUpdates, frameShouldReject } from "../shared/yjs-guard";
 
 type RoomMeta = {
   id: string;
@@ -103,8 +103,12 @@ export class BoardRoom extends YServer<Env> {
       connection.close(CLOSE_RATE, "slow down");
       return;
     }
-    if (frameCarriesJunk(message)) return;
+    if (frameShouldReject(this.document, message)) {
+      connection.close(CLOSE_FRAME, "bad update");
+      return;
+    }
     await super.onMessage(connection, message);
+    dropPendingUpdates(this.document);
   }
 
   override async onClose(connection: Connection, code: number, reason: string, wasClean: boolean): Promise<void> {

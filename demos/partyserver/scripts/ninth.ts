@@ -2,7 +2,7 @@
 // bun run scripts/ninth.ts [baseUrl]
 import YProvider from "y-partyserver/provider";
 import * as Y from "yjs";
-import { CLOSE_FULL, MAX_CONNECTIONS, PARTY, ROOM_ID, type CreatedRoom } from "../src/shared/protocol";
+import { CLOSE_FULL, MAX_CONNECTIONS, MAX_FRAME_BYTES, PARTY, ROOM_ID, type CreatedRoom } from "../src/shared/protocol";
 
 const DUMMY = "XXXX.DUMMY.TOKEN.XXXX";
 
@@ -27,20 +27,24 @@ function concatBytes(...parts: Uint8Array[]): Uint8Array {
   return out;
 }
 
+export function wrapSyncFrame(update: Uint8Array, inner = 2): Uint8Array {
+  return concatBytes(varUint(0), varUint(inner), varUint(update.byteLength), update);
+}
+
+function strokeValue(id: string, points: number[] = [100, 100, 4000, 7000]): string {
+  return JSON.stringify({ id, color: "#c2410c", size: 6, points, client: "smokecli" });
+}
+
 /** y-protocols sync frame: messageSync + messageYjsUpdate + length-prefixed update. */
 export function yjsStrokeFrame(id: string, points: number[]): Uint8Array {
   const doc = new Y.Doc();
-  doc.getMap("strokes").set(
-    id,
-    JSON.stringify({ id, color: "#c2410c", size: 6, points, client: "smokecli" }),
-  );
+  doc.getMap("strokes").set(id, strokeValue(id, points));
   const update = Y.encodeStateAsUpdate(doc);
   doc.destroy();
-  return concatBytes(varUint(0), varUint(2), varUint(update.byteLength), update);
+  return wrapSyncFrame(update);
 }
 
-/** Three-frame tombstone attack: 90 keys × 1400 chars, under the frame cap. */
-export function yjsJunkKeyFrame(keys = 90, keyLen = 1400): Uint8Array {
+export function yjsJunkKeyUpdate(keys = 90, keyLen = 1400): Uint8Array {
   const doc = new Y.Doc();
   const map = doc.getMap("strokes");
   for (let i = 0; i < keys; i++) {
@@ -49,7 +53,48 @@ export function yjsJunkKeyFrame(keys = 90, keyLen = 1400): Uint8Array {
   }
   const update = Y.encodeStateAsUpdate(doc);
   doc.destroy();
-  return concatBytes(varUint(0), varUint(2), varUint(update.byteLength), update);
+  return update;
+}
+
+/** Tombstone attack: 90 keys × 1400 chars. inner 2 = update, inner 1 = sync step 2. */
+export function yjsJunkKeyFrame(keys = 90, keyLen = 1400, inner = 2): Uint8Array {
+  return wrapSyncFrame(yjsJunkKeyUpdate(keys, keyLen), inner);
+}
+
+/** Valid first stroke, then junk keys from the same client as the next update. */
+export function yjsFollowOnJunkFrames(): { first: Uint8Array; junk: Uint8Array } {
+  const doc = new Y.Doc();
+  doc.clientID = 424242;
+  doc.getMap("strokes").set("follow01", strokeValue("follow01"));
+  const first = Y.encodeStateAsUpdate(doc);
+  const sv = Y.encodeStateVector(doc);
+  for (let i = 0; i < 90; i++) {
+    const key = `${i.toString(36).padStart(3, "0")}${"x".repeat(1400)}`.slice(0, 1400);
+    doc.getMap("strokes").set(key, "x");
+  }
+  const junk = Y.encodeStateAsUpdate(doc, sv);
+  doc.destroy();
+  return { first: wrapSyncFrame(first), junk: wrapSyncFrame(junk) };
+}
+
+/** Differential that starts past clock 0 so Yjs would hold it pending. */
+export function yjsSkipAheadFrame(minBytes = 200_000): Uint8Array {
+  const doc = new Y.Doc();
+  doc.clientID = 7777;
+  doc.getMap("strokes").set("skipaa", strokeValue("skipaa"));
+  const sv = Y.encodeStateVector(doc);
+  let i = 0;
+  let update = Y.encodeStateAsUpdate(doc, sv);
+  while (update.byteLength < minBytes && i < 400) {
+    const id = `sk${String(i).padStart(4, "0")}`;
+    doc.getMap("strokes").set(id, "x".repeat(900));
+    const next = Y.encodeStateAsUpdate(doc, sv);
+    if (next.byteLength > MAX_FRAME_BYTES) break;
+    update = next;
+    i += 1;
+  }
+  doc.destroy();
+  return wrapSyncFrame(update);
 }
 
 function sleep(ms: number): Promise<void> {

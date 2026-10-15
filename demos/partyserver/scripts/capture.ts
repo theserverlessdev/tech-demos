@@ -90,6 +90,15 @@ await wide.waitForTimeout(400);
 await wide.screenshot({ path: `${out.pathname}/board-932x430.png` });
 await widePhone.close();
 
+const narrowPhone = await browser.newContext({ viewport: { width: 667, height: 375 }, colorScheme: "dark" });
+await narrowPhone.addInitScript(dark);
+const narrow = await narrowPhone.newPage();
+await narrow.goto(roomUrl, { waitUntil: "domcontentloaded" });
+await narrow.locator("#canvas").waitFor();
+await narrow.waitForTimeout(400);
+await narrow.screenshot({ path: `${out.pathname}/board-667x375.png` });
+await narrowPhone.close();
+
 const video = pageA.video();
 await contextA.close();
 await contextB.close();
