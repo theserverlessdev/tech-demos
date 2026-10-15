@@ -47,6 +47,7 @@ This demo is a slice of [mirza-rizvi/ResolveHQ](https://github.com/mirza-rizvi/R
 - Per-visitor sandbox so Simulate inbound cannot hijack another tab. Messages carry `visitor_id`; seed status/`updated_at` stay locked.
 - Phone opens on the inbox; long subjects wrap; seed check is memoized; poll pauses when hidden.
 - Turnstile widget lives under the status strip so phones can mint a session from the inbox.
+- Hourly sweep deletes via subqueries (tickets last) and R2 batches of 1,000. Stale session cookies fall back to public seeds.
 
 ## Branding
 

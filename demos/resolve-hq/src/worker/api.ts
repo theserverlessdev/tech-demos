@@ -188,14 +188,30 @@ export async function handleApi(request: Request, env: Env, pathname: string): P
 
   assertSameOrigin(request);
   await ensureSeed(env);
-  const visitorId = method === "GET" || method === "HEAD" ? await readVisitor(request, env) : await requireSession(request, env);
+
+  if (method === "GET" || method === "HEAD") {
+    const visitorId = await readVisitor(request, env);
+    const detail = await getTicketDetail(env, ticketMatch.id, visitorId);
+    if (!detail) throw new HttpError(404, "not_found", "That ticket is gone.");
+    if (ticketMatch.rest === "") return json(detail);
+    const download = ticketMatch.rest.match(/^attachments\/([^/]+)$/);
+    if (download) {
+      const attId = decodePathPart(download[1]!);
+      if (!attId) throw new HttpError(404, "not_found", "That attachment is gone.");
+      const row = await getAttachment(env, detail.id, attId, visitorId);
+      if (!row) throw new HttpError(404, "not_found", "That attachment is gone.");
+      const object = await env.ATTACHMENTS.get(row.r2_key);
+      if (!object) throw new HttpError(404, "not_found", "The file bytes are missing from R2.");
+      return new Response(object.body, { headers: fileResponseHeaders(row) });
+    }
+    throw new HttpError(404, "not_found", "Unknown API route.");
+  }
+
+  const visitorId = await requireSession(request, env);
   const detail = await getTicketDetail(env, ticketMatch.id, visitorId);
   if (!detail) throw new HttpError(404, "not_found", "That ticket is gone.");
 
-  if (ticketMatch.rest === "" && method === "GET") return json(detail);
-
   if (ticketMatch.rest === "" && method === "PATCH") {
-    if (!visitorId) throw new HttpError(401, "session", "Complete the Turnstile check once so this browser can use the inbox.");
     if (isSeedTicket(detail.id)) throw new HttpError(403, "seed_readonly", "Seed ticket status, priority, and assignee are locked.");
     await writeSession(env, request);
     await limit(env.WRITE_LIMIT, request, "writes");
@@ -225,7 +241,6 @@ export async function handleApi(request: Request, env: Env, pathname: string): P
   }
 
   if (ticketMatch.rest === "replies" && method === "POST") {
-    if (!visitorId) throw new HttpError(401, "session", "Complete the Turnstile check once so this browser can use the inbox.");
     await writeSession(env, request);
     await limit(env.WRITE_LIMIT, request, "writes");
     const body = await readJson(request);
@@ -251,7 +266,6 @@ export async function handleApi(request: Request, env: Env, pathname: string): P
   }
 
   if (ticketMatch.rest === "draft" && method === "POST") {
-    if (!visitorId) throw new HttpError(401, "session", "Complete the Turnstile check once so this browser can use the inbox.");
     await writeSession(env, request);
     await limit(env.AI_LIMIT, request, "AI drafts");
     const body = await readJson(request);
@@ -261,7 +275,6 @@ export async function handleApi(request: Request, env: Env, pathname: string): P
   }
 
   if (ticketMatch.rest === "attachments" && method === "POST") {
-    if (!visitorId) throw new HttpError(401, "session", "Complete the Turnstile check once so this browser can use the inbox.");
     await writeSession(env, request);
     await limit(env.UPLOAD_LIMIT, request, "uploads");
     const declared = contentLength(request);
@@ -292,17 +305,6 @@ export async function handleApi(request: Request, env: Env, pathname: string): P
       now: Date.now(),
     });
     return json(attachment, 201);
-  }
-
-  const download = ticketMatch.rest.match(/^attachments\/([^/]+)$/);
-  if (download && method === "GET") {
-    const attId = decodePathPart(download[1]!);
-    if (!attId) throw new HttpError(404, "not_found", "That attachment is gone.");
-    const row = await getAttachment(env, detail.id, attId, visitorId);
-    if (!row) throw new HttpError(404, "not_found", "That attachment is gone.");
-    const object = await env.ATTACHMENTS.get(row.r2_key);
-    if (!object) throw new HttpError(404, "not_found", "The file bytes are missing from R2.");
-    return new Response(object.body, { headers: fileResponseHeaders(row) });
   }
 
   throw new HttpError(404, "not_found", "Unknown API route.");

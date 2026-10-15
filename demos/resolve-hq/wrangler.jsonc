@@ -59,8 +59,9 @@
     "ENVIRONMENT": "",
     "DAILY_DRAFT_CAP": "80",
     "IP_DRAFT_CAP": "8",
-    // Owner step — do not commit a real key here. Create a Turnstile widget that allows
-    // tech-demos.theserverless.dev and resolve-hq.tech-demos.theserverless.dev, then replace this.
+    // Owner: replace REPLACE_ME with the public Turnstile site key before deploy
+    // (same as the other demos). Widget hosts: tech-demos.theserverless.dev and
+    // resolve-hq.tech-demos.theserverless.dev.
     "TURNSTILE_SITE_KEY": "REPLACE_ME"
   },
   "routes": [

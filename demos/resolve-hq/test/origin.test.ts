@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { HttpError } from "../src/worker/errors";
 import { assertSameOrigin, decodePathPart, isLocalRequest } from "../src/worker/origin";
-import { cookiePath, mintSignedSession, readSessionParts, requireSession } from "../src/worker/session";
+import { cookiePath, mintSignedSession, readSessionParts, readVisitor, requireSession } from "../src/worker/session";
 
 const env = { SESSION_SECRET: "test-session-secret" } as Env;
 
@@ -75,6 +75,10 @@ describe("same-origin and session cookie", () => {
       headers: { cookie: fresh.cookie.split(";")[0]!, "cf-connecting-ip": "198.51.100.9" },
     });
     await expect(requireSession(moved, env)).rejects.toMatchObject({ code: "session_network" });
+
+    expect(await readVisitor(expired, env)).toBeNull();
+    expect(await readVisitor(moved, env)).toBeNull();
+    expect(await readVisitor(new Request("http://127.0.0.1:8787/api/tickets"), env)).toBeNull();
   });
 
   test("malformed percent-encoding is not a throw", () => {

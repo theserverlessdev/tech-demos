@@ -102,8 +102,13 @@ export async function requireSession(request: Request, env: Env, now = Date.now(
   return parts.id;
 }
 
-/** Valid cookie → visitor id. No cookie → null (public seeds). Bad cookie → 401. */
+/** Valid cookie → visitor id. Missing or stale cookie → null (public seeds). */
 export async function readVisitor(request: Request, env: Env, now = Date.now()): Promise<string | null> {
   if (!readSessionParts(request)) return null;
-  return requireSession(request, env, now);
+  try {
+    return await requireSession(request, env, now);
+  } catch (err) {
+    if (err instanceof HttpError && err.status === 401) return null;
+    throw err;
+  }
 }

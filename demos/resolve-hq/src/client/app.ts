@@ -79,6 +79,7 @@ function mountTurnstile(action: WidgetAction) {
       readyToken = null;
     },
   });
+  revealGate();
 }
 
 function takeToken(): Promise<string> {
@@ -89,6 +90,7 @@ function takeToken(): Promise<string> {
     return Promise.resolve(token);
   }
   return new Promise((resolve, reject) => {
+    revealGate();
     const timer = setTimeout(() => {
       tokenWaiter = null;
       reject(new Error("Complete the Turnstile check first."));
@@ -160,11 +162,23 @@ function relTime(ms: number): string {
   return new Date(ms).toLocaleDateString();
 }
 
+function revealGate() {
+  $("gate").scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
 function setHint(message: string, tone: "" | "ok" | "error" = "") {
   const el = $("hint");
+  const echo = $("composer-hint");
   el.textContent = message;
-  if (tone) el.dataset.tone = tone;
-  else delete el.dataset.tone;
+  echo.textContent = message;
+  if (tone) {
+    el.dataset.tone = tone;
+    echo.dataset.tone = tone;
+  } else {
+    delete el.dataset.tone;
+    delete echo.dataset.tone;
+  }
+  if (tone === "error" || (message && !tone)) revealGate();
 }
 
 function setDraftPath(source: DraftResult["source"] | null, model?: string) {
@@ -283,9 +297,12 @@ function renderThread() {
     empty.hidden = false;
     conv.hidden = true;
     $("composer-lede").textContent = "Select a ticket to write back. Draft reply asks Workers AI after Turnstile; local and unusable-model paths show a labelled stub.";
-    $("status").toggleAttribute("disabled", true);
-    $("priority").toggleAttribute("disabled", true);
-    $("assignee").toggleAttribute("disabled", true);
+    for (const id of ["status", "priority", "assignee"] as const) {
+      const el = $(id);
+      el.toggleAttribute("disabled", true);
+      el.classList.remove("is-locked");
+      el.title = "";
+    }
     return;
   }
   empty.hidden = true;
@@ -297,9 +314,12 @@ function renderThread() {
   fillSelect($("priority") as HTMLSelectElement, PRIORITIES, detail.priority);
   fillSelect($("assignee") as HTMLSelectElement, ASSIGNEES, detail.assignee ?? "", { "": "Unassigned" });
   const seedLocked = !detail.sandbox;
-  $("status").toggleAttribute("disabled", seedLocked);
-  $("priority").toggleAttribute("disabled", seedLocked);
-  $("assignee").toggleAttribute("disabled", seedLocked);
+  for (const id of ["status", "priority", "assignee"] as const) {
+    const el = $(id);
+    el.toggleAttribute("disabled", seedLocked);
+    el.classList.toggle("is-locked", seedLocked);
+    el.title = seedLocked ? "Seed tickets are locked" : "";
+  }
   renderFiles(detail.attachments);
   const ol = $("messages");
   ol.replaceChildren(
@@ -421,6 +441,9 @@ async function waitForQueue() {
     await refresh();
     if (!state.awaitingMessageId) return;
   }
+  state.awaitingTicketId = null;
+  state.awaitingMessageId = null;
+  updateStrip(state.tickets);
   setHint("The Queue is still draining. The ticket should appear on the next refresh.", "error");
 }
 
@@ -627,19 +650,18 @@ async function start() {
       health.session === "off"
         ? "Writes are off until Turnstile is configured."
         : `${health.budget.remaining} of ${health.budget.dailyCap} shared AI drafts left today${health.ai === "stub" ? " · local stub" : ""}.`;
+    await refresh();
+    if (!isPhone() && state.tickets[0]) await selectTicket(state.tickets[0].id, { user: true });
+    else showList();
     if (health.session === "off") {
       setHint("This slice is read-only until the owner sets TURNSTILE_SITE_KEY.", "error");
-      await refresh();
-      if (!isPhone() && state.tickets[0]) await selectTicket(state.tickets[0].id, { user: true });
-      else showList();
       startPolling();
       return;
     }
     if (state.siteKey && !state.testSiteKey) mountTurnstile("session");
     await ensureSession();
     await refresh();
-    if (!isPhone() && state.tickets[0]) await selectTicket(state.tickets[0].id, { user: true });
-    else showList();
+    if (!isPhone() && state.selectedId) await selectTicket(state.selectedId, { keepReply: true });
   } catch (err) {
     setHint(err instanceof ApiFailure ? err.message : err instanceof Error ? err.message : "Could not load tickets.", "error");
   }

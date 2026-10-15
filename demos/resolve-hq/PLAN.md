@@ -46,8 +46,11 @@ This is still a **small hosted slice**, not a vendor of [mirza-rizvi/ResolveHQ](
 - **S7** Honest copy: public original seed threads, private visitor writes (including on seeds), locked seed status/order, Turnstile, daily budget, local-dev stub.
 - **R1** `messages.visitor_id` (migration 0004); seed status/priority/assignee/`updated_at` locked.
 - **R2** `TURNSTILE_SITE_KEY` stays `REPLACE_ME` until the owner sets a widget. Seeds load without a session (read-only).
-- **R3** `#turnstile` and `#hint` sit under the status strip, not inside `.composer`.
+- **R3** `#turnstile` and `#hint` sit under the status strip; errors and Turnstile scroll that bar into view, and the composer mirrors the hint.
 - **R4** A `session*` 401 remints once and retries.
+- **N1** Sweep deletes via subqueries (tickets last) and R2 batches of 1,000.
+- **N3** Queue wait timeout clears the waiting state so polling resumes.
+- **N4/N5** Seeds load before session mint; stale cookies fall back to public seeds.
 
 ## Nits
 

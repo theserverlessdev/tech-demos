@@ -28,7 +28,7 @@ A support inbox on Cloudflare Workers. This is a **small demo** inspired by [mir
 
 - Email Routing is not wired. Inbound is `DEV_MAIL_MODE=queue`.
 - No OpenAI or Resend secret. Drafts use the Workers AI binding only.
-- Five seeded conversations are **public** (original thread only). Replies, inbound, and uploads you add are a **per-visitor sandbox** and are swept hourly (24 h TTL). Seed status, priority, assignee, and `updated_at` are locked.
+- Five seeded conversations are **public** (original thread only). Replies you add on those seeds are dropped on the hourly cron. Visitor-sandbox tickets and R2 uploads last 24 h. Seed status, priority, assignee, and `updated_at` are locked.
 - Draft, inbound, and upload are same-origin + Turnstile + session. The shared AI budget is 80 drafts/day (8/network).
 - Files are not permanent hosting: allowlisted types, `Content-Disposition: attachment`, `nosniff`, sandboxed CSP, CORP.
 
