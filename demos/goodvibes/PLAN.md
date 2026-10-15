@@ -42,5 +42,5 @@ browser ──HTTPS──> Worker
 
 ## Testing
 
-- `bun run typecheck` + `scripts/smoke.ts` (presence after leave, empty-room reset, no id takeover, speed clamp, one gold orb)
+- `bun run typecheck` + `scripts/smoke.ts` (presence after leave, empty-room reset, no id takeover, speed clamp, one gold orb, 1008 ghost gone while TCP stays open, deep-link backoff bounds)
 - 390×844 screenshot + video on the PR

@@ -35,11 +35,7 @@ Hub Graphite & Ember. Ember `#c2410c`, background `#0e0e11`. LogoMark SVG. No pu
 
 ## 2026-10-15
 
-PR #33 re-review. Every incoming frame (binary, oversized, or legal) is charged to the per-socket token bucket before any other return; a 1008 close silences that socket so later frames are ignored. Join is a single form submit plus an in-flight guard, so one tap no longer mints two tickets.
-
-## 2026-10-15
-
-PR #33 re-review. Every incoming frame (binary, oversized, or legal) is charged to the per-socket token bucket before any other return; a 1008 close silences that socket so later frames are ignored. Join is a single form submit plus an in-flight guard, so one tap no longer mints two tickets.
+PR #33 re-review. A 1008 or idle-kicked socket is marked closed and broadcast as a leave immediately, even if the client ignores Close — it no longer counts toward the room or the 2-per-IP cap. Deep links mint a ticket at most three times with bounded backoff, then strip `?room=` and show an error. A Turnstile re-solve does not overwrite a join warning. Every incoming frame is charged to the token bucket before any other return; later frames on a 1008'd socket are ignored. Join is a single form submit plus an in-flight guard.
 
 ## 2026-10-14
 

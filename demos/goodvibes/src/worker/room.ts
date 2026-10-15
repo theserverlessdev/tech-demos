@@ -94,6 +94,8 @@ export class VibeRoom extends DurableObject<Env> {
   private game: GameSnap = emptyGame();
   /** Sockets we already closed with 1008. workerd may still dispatch their frames. */
   private readonly silenced = new WeakSet<WebSocket>();
+  /** drop() already ran for this socket in this isolate (leave/presence sent). */
+  private readonly dropped = new WeakSet<WebSocket>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -139,18 +141,14 @@ export class VibeRoom extends DurableObject<Env> {
   }
 
   private acceptClient(request: Request): Response {
-    const sockets = this.ctx.getWebSockets();
-    if (sockets.length >= MAX_PLAYERS) {
+    const live = this.listedSockets();
+    if (live.length >= MAX_PLAYERS) {
       return this.rejectSocket("This room is full (8). Try another name.", 4001, "full");
     }
 
     const ipHash = request.headers.get("x-goodvibes-ip") || "";
     if (ipHash) {
-      let sameIp = 0;
-      for (const ws of sockets) {
-        const attached = ws.deserializeAttachment() as SocketState | null;
-        if (attached?.ipHash === ipHash) sameIp += 1;
-      }
+      const sameIp = live.filter((row) => row.state.ipHash === ipHash).length;
       if (sameIp >= MAX_SOCKETS_PER_IP) {
         return this.rejectSocket("This address already has 2 players in the room.", 4003, "ip");
       }
@@ -160,7 +158,7 @@ export class VibeRoom extends DurableObject<Env> {
     const id = crypto.randomUUID();
     const name = sanitizeName(request.headers.get("x-goodvibes-name"));
     const color = colorForId(id);
-    const spawn = spawnPoint(sockets.length, sockets.length + 1);
+    const spawn = spawnPoint(live.length, live.length + 1);
     const now = Date.now();
 
     const pair = new WebSocketPair();
@@ -215,7 +213,7 @@ export class VibeRoom extends DurableObject<Env> {
     const bad = typeof message !== "string" || message.length > FRAME_MAX_BYTES;
     ws.serializeAttachment(state);
     if (!allowed || bad) {
-      this.silence(ws, state, bad ? "bad frame" : "slow down");
+      await this.silence(ws, state, bad ? "bad frame" : "slow down");
       return;
     }
     state.lastSeen = now;
@@ -254,32 +252,34 @@ export class VibeRoom extends DurableObject<Env> {
     await this.drop(ws);
   }
 
-  private silence(ws: WebSocket, state: SocketState, reason: string): void {
-    state.closed = true;
-    this.silenced.add(ws);
-    try {
-      ws.serializeAttachment(state);
-    } catch {
-      /* closing */
-    }
-    try {
-      ws.close(1008, reason);
-    } catch {
-      /* already closed */
-    }
+  private silence(ws: WebSocket, _state: SocketState, reason: string): Promise<void> {
+    return this.drop(ws, 1008, reason);
   }
 
-  private async drop(ws: WebSocket): Promise<void> {
+  private async drop(ws: WebSocket, code = 1000, reason = "bye"): Promise<void> {
+    if (this.dropped.has(ws)) return;
+    this.dropped.add(ws);
     this.silenced.add(ws);
     const state = ws.deserializeAttachment() as SocketState | null;
+    const alreadyClosed = Boolean(state?.closed);
+    if (state && !state.closed) {
+      state.closed = true;
+      try {
+        ws.serializeAttachment(state);
+      } catch {
+        /* closing */
+      }
+    }
     try {
-      ws.close(1000, "bye");
+      ws.close(code, reason);
     } catch {
       /* echoing 1005/1006 throws */
     }
-    if (state?.id) this.broadcast({ type: "leave", id: state.id }, ws);
-    this.broadcast({ type: "presence", players: this.players(ws) }, ws);
-    if (this.ctx.getWebSockets().every((s) => s === ws)) {
+    if (!alreadyClosed && state?.id) {
+      this.broadcast({ type: "leave", id: state.id }, ws);
+      this.broadcast({ type: "presence", players: this.players() }, ws);
+    }
+    if (this.listedSockets().length === 0) {
       this.game = emptyGame();
       await this.ctx.storage.deleteAlarm();
       await this.ctx.storage.deleteAll();
@@ -389,7 +389,7 @@ export class VibeRoom extends DurableObject<Env> {
     for (const ws of this.ctx.getWebSockets()) {
       if (exclude && ws === exclude) continue;
       const state = ws.deserializeAttachment() as SocketState | null;
-      if (!state?.id || seen.has(state.id)) continue;
+      if (!state?.id || state.closed || seen.has(state.id)) continue;
       seen.add(state.id);
       out.push({ ws, state });
     }
@@ -437,7 +437,7 @@ export class VibeRoom extends DurableObject<Env> {
 
   private async armIdleAlarm(): Promise<void> {
     if (this.game.phase === "countdown" || this.game.phase === "playing") return;
-    if (this.ctx.getWebSockets().length === 0) return;
+    if (this.listedSockets().length === 0) return;
     const existing = await this.ctx.storage.getAlarm();
     const when = Date.now() + IDLE_CHECK_MS;
     if (existing && existing <= when) return;
@@ -448,12 +448,7 @@ export class VibeRoom extends DurableObject<Env> {
     if (this.game.phase !== "waiting" && this.game.phase !== "over") return;
     for (const { ws, state } of this.listedSockets()) {
       if (now - state.lastSeen <= IDLE_MS) continue;
-      try {
-        ws.close(1000, "idle");
-      } catch {
-        /* already closed */
-      }
-      await this.drop(ws);
+      await this.drop(ws, 1000, "idle");
     }
     await this.armIdleAlarm();
   }
@@ -463,6 +458,8 @@ export class VibeRoom extends DurableObject<Env> {
     for (const client of this.ctx.getWebSockets()) {
       if (client === except) continue;
       try {
+        const attached = client.deserializeAttachment() as SocketState | null;
+        if (attached?.closed) continue;
         client.send(data);
       } catch {
         /* dropped */

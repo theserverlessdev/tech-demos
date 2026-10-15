@@ -1,4 +1,7 @@
 // Smoke: bun run scripts/smoke.ts [baseUrl]
+import { createHash, randomBytes } from "node:crypto";
+import net from "node:net";
+import { DEEP_JOIN_MAX, deepBackoffMs, deepJoinExhausted, shouldKeepJoinError } from "../src/client/join-gate";
 import type { Health, JoinTicket, Orb, Player, PublicConfig, RoundState, ServerEvent } from "../src/shared/types";
 import { formatClock, sanitizeName } from "../src/shared/types";
 import { mintJoinTicket, verifyJoinTicket } from "../src/worker/ticket";
@@ -82,6 +85,136 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+function wsMaskFrame(opcode: number, payload: Buffer): Buffer {
+  const mask = randomBytes(4);
+  const masked = Buffer.from(payload);
+  for (let i = 0; i < masked.length; i++) masked[i]! ^= mask[i % 4]!;
+  let header: Buffer;
+  if (payload.length < 126) {
+    header = Buffer.alloc(2);
+    header[0] = 0x80 | opcode;
+    header[1] = 0x80 | payload.length;
+  } else if (payload.length < 65536) {
+    header = Buffer.alloc(4);
+    header[0] = 0x80 | opcode;
+    header[1] = 0x80 | 126;
+    header.writeUInt16BE(payload.length, 2);
+  } else {
+    header = Buffer.alloc(10);
+    header[0] = 0x80 | opcode;
+    header[1] = 0x80 | 127;
+    header.writeBigUInt64BE(BigInt(payload.length), 2);
+  }
+  return Buffer.concat([header, mask, masked]);
+}
+
+type RawWs = {
+  sendBinary: (bytes: Uint8Array) => void;
+  destroy: () => void;
+  waitHello: () => Promise<ServerEvent>;
+};
+
+/** Client that ignores Close frames so the TCP connection stays up (G1). */
+function openRawSocket(room: string, name: string, ticket: string): Promise<RawWs> {
+  const url = new URL(`${base.replace(/^http/, "ws")}/ws/${encodeURIComponent(room)}?${new URLSearchParams({ name, ticket })}`);
+  const key = randomBytes(16).toString("base64");
+  const expected = createHash("sha1").update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest("base64");
+  const origin = base.replace(/\/$/, "");
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const port = Number(url.port || (url.protocol === "wss:" ? 443 : 80));
+    const socket = net.connect({ host: url.hostname, port }, () => {
+      socket.write(
+        `GET ${url.pathname}${url.search} HTTP/1.1\r\n` +
+          `Host: ${url.host}\r\n` +
+          `Upgrade: websocket\r\n` +
+          `Connection: Upgrade\r\n` +
+          `Sec-WebSocket-Key: ${key}\r\n` +
+          `Sec-WebSocket-Version: 13\r\n` +
+          `Origin: ${origin}\r\n` +
+          `\r\n`,
+      );
+    });
+    let buf = Buffer.alloc(0);
+    let open = false;
+    let hello: ServerEvent | null = null;
+    let helloWait: ((event: ServerEvent) => void) | null = null;
+    const fail = (err: Error) => {
+      if (!settled) {
+        settled = true;
+        reject(err);
+      }
+      socket.destroy();
+    };
+    socket.setTimeout(12_000, () => {
+      if (!open) fail(new Error("raw socket handshake timeout"));
+    });
+    socket.on("data", (chunk) => {
+      buf = Buffer.concat([buf, chunk]);
+      if (!open) {
+        const idx = buf.indexOf("\r\n\r\n");
+        if (idx < 0) return;
+        const head = buf.subarray(0, idx).toString("utf8");
+        buf = buf.subarray(idx + 4);
+        if (!head.startsWith("HTTP/1.1 101") || !head.includes(expected)) {
+          fail(new Error(`upgrade failed: ${head.slice(0, 180)}`));
+          return;
+        }
+        open = true;
+        socket.setTimeout(0);
+        settled = true;
+        resolve({
+          sendBinary: (bytes) => {
+            socket.write(wsMaskFrame(2, Buffer.from(bytes)));
+          },
+          destroy: () => socket.destroy(),
+          waitHello: () => (hello ? Promise.resolve(hello) : new Promise((r) => { helloWait = r; })),
+        });
+      }
+      while (open && buf.length >= 2) {
+        const opcode = buf[0]! & 0x0f;
+        const second = buf[1]!;
+        const masked = (second & 0x80) !== 0;
+        let len = second & 0x7f;
+        let offset = 2;
+        if (len === 126) {
+          if (buf.length < 4) return;
+          len = buf.readUInt16BE(2);
+          offset = 4;
+        } else if (len === 127) {
+          if (buf.length < 10) return;
+          len = Number(buf.readBigUInt64BE(2));
+          offset = 10;
+        }
+        const maskLen = masked ? 4 : 0;
+        if (buf.length < offset + maskLen + len) return;
+        let payload = Buffer.from(buf.subarray(offset + maskLen, offset + maskLen + len));
+        if (masked) {
+          const mask = buf.subarray(offset, offset + 4);
+          for (let i = 0; i < payload.length; i++) payload[i]! ^= mask[i % 4]!;
+        }
+        buf = buf.subarray(offset + maskLen + len);
+        if (opcode === 0x8) continue;
+        if (opcode === 0x9) {
+          socket.write(wsMaskFrame(0xa, payload));
+          continue;
+        }
+        if (opcode !== 0x1) continue;
+        try {
+          const event = JSON.parse(payload.toString("utf8")) as ServerEvent;
+          if (event.type === "hello" && !hello) {
+            hello = event;
+            helloWait?.(event);
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+    socket.on("error", (err) => fail(err instanceof Error ? err : new Error(String(err))));
+  });
+}
+
 function waitClose(ws: WebSocket, ms = 8_000): Promise<{ code: number; reason: string }> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("close timeout")), ms);
@@ -103,6 +236,13 @@ check(
 );
 check("clock formats 75s as 1:15", formatClock(75) === "1:15", formatClock(75));
 check("unicode name is kept", sanitizeName("राहुल") === "राहुल" && sanitizeName("李雷") === "李雷" && sanitizeName("José") === "José");
+check(
+  "deep-link backoff is 0 then 400ms then 800ms",
+  deepBackoffMs(0) === 0 && deepBackoffMs(1) === 400 && deepBackoffMs(2) === 800,
+  [deepBackoffMs(0), deepBackoffMs(1), deepBackoffMs(2)],
+);
+check("deep-link ticket retries cap at 3", deepJoinExhausted(DEEP_JOIN_MAX - 1) === false && deepJoinExhausted(DEEP_JOIN_MAX) === true);
+check("Turnstile callback keeps a warn status", shouldKeepJoinError("warn") && !shouldKeepJoinError("ok") && !shouldKeepJoinError("idle"));
 
 {
   const secret = "smoke-join-secret";
@@ -277,6 +417,49 @@ check(
   overEnd instanceof Error === false && overEnd.code === 1008,
   overEnd instanceof Error ? overEnd : { code: overEnd.code, reason: overEnd.reason },
 );
+
+const ghostRoom = `g1-ghost-${Date.now()}`;
+const ticketWatch = (await mint(ghostRoom)).ticket;
+const watch = openSocket(ghostRoom, "Watch", ticketWatch);
+const helloWatch = await waitFor(watch, (e) => e.type === "hello").catch((err) => err as Error);
+check("G1 watcher receives hello", helloWatch instanceof Error === false && helloWatch.type === "hello", helloWatch);
+
+const ticketRaw = (await mint(ghostRoom)).ticket;
+const raw = await openRawSocket(ghostRoom, "Raw", ticketRaw).catch((err) => err as Error);
+check("G1 raw client upgrades", raw instanceof Error === false, raw instanceof Error ? raw.message : "ok");
+let rawYou: Player | null = null;
+if (!(raw instanceof Error)) {
+  const helloRaw = await raw.waitHello().catch((err) => err as Error);
+  check("G1 raw client receives hello", helloRaw instanceof Error === false && helloRaw.type === "hello", helloRaw);
+  rawYou = helloRaw instanceof Error || helloRaw.type !== "hello" ? null : helloRaw.you;
+  const ghostGone = waitFor(
+    watch,
+    (e) =>
+      (e.type === "leave" && e.id === rawYou?.id) ||
+      (e.type === "presence" && e.players.length === 1 && e.players[0]?.name === "Watch"),
+  );
+  raw.sendBinary(new Uint8Array(1));
+  const gone = await ghostGone.catch((err) => err as Error);
+  check(
+    "G1 1008 leave/presence drops Raw while TCP stays open",
+    gone instanceof Error === false,
+    gone instanceof Error ? gone.message : gone,
+  );
+
+  const ticketThird = (await mint(ghostRoom)).ticket;
+  const third = openSocket(ghostRoom, "Third", ticketThird);
+  const helloThird = await waitFor(third, (e) => e.type === "hello").catch((err) => err as Error);
+  const thirdPlayers =
+    helloThird instanceof Error || helloThird.type !== "hello" ? [] : helloThird.players.map((p: Player) => p.name);
+  check(
+    "G1 same-IP third join succeeds (closed Raw does not count)",
+    helloThird instanceof Error === false && helloThird.type === "hello" && !thirdPlayers.includes("Raw"),
+    helloThird instanceof Error ? helloThird.message : thirdPlayers,
+  );
+  third.close();
+  raw.destroy();
+}
+watch.close();
 
 if (failures) {
   console.error(`\n${failures} check(s) failed.`);

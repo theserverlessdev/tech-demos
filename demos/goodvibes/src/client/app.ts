@@ -10,6 +10,7 @@ import {
   type ServerEvent,
 } from "../shared/types";
 import { ArenaScene } from "./scene";
+import { DEEP_JOIN_MAX, deepBackoffMs, shouldKeepJoinError } from "./join-gate";
 
 const NAME_KEY = "goodvibes-name";
 
@@ -103,6 +104,8 @@ const state = {
   widget: null as TurnstileApi | null,
   config: null as PublicConfig | null,
   joining: false,
+  deepJoin: "idle" as "idle" | "pending" | "done",
+  deepAttempts: 0,
 };
 
 function serverNow(): number {
@@ -433,6 +436,63 @@ async function joinRoom(raw?: string): Promise<void> {
   }
 }
 
+function clearDeepLink(): void {
+  const url = new URL(location.href);
+  if (!url.searchParams.has("room")) return;
+  url.searchParams.delete("room");
+  history.replaceState(null, "", url);
+}
+
+function finishDeepFail(): void {
+  state.deepJoin = "done";
+  clearDeepLink();
+  setStatus("Could not get a join ticket for this link. Join from the lobby instead.", "warn");
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function waitForTurnstileToken(ms: number): Promise<boolean> {
+  const started = Date.now();
+  while (Date.now() - started < ms) {
+    if (!$("stage").hidden || state.deepJoin === "done") return false;
+    if (state.widget?.getResponse()) return true;
+    await sleep(50);
+  }
+  return Boolean(state.widget?.getResponse());
+}
+
+async function tryDeepJoin(room: string): Promise<void> {
+  if (state.deepJoin !== "idle" || !$("stage").hidden) return;
+  state.deepJoin = "pending";
+  try {
+    for (let attempt = 0; attempt < DEEP_JOIN_MAX; attempt++) {
+      if (!$("stage").hidden || state.deepJoin === "done") return;
+      if (attempt > 0) {
+        const delay = deepBackoffMs(attempt);
+        setStatus(`Could not join that room. Retrying (${attempt + 1}/${DEEP_JOIN_MAX})…`, "warn");
+        await sleep(delay);
+        if (!$("stage").hidden || state.deepJoin === "done") return;
+        const tokenReady = await waitForTurnstileToken(8_000);
+        if (!tokenReady) continue;
+      }
+      state.deepAttempts = attempt + 1;
+      await joinRoom(room);
+      if (!$("stage").hidden) {
+        state.deepJoin = "done";
+        return;
+      }
+    }
+    finishDeepFail();
+  } finally {
+    if (state.deepJoin === "pending") {
+      if ($("stage").hidden) finishDeepFail();
+      else state.deepJoin = "done";
+    }
+  }
+}
+
 function renderTurnstile(siteKey: string): Promise<TurnstileApi | null> {
   const slot = $("turnstile");
   return new Promise((resolve) => {
@@ -449,9 +509,11 @@ function renderTurnstile(siteKey: string): Promise<TurnstileApi | null> {
             ($("join") as HTMLButtonElement).disabled = false;
             ($("create") as HTMLButtonElement).disabled = false;
             if (!$("stage").hidden) return;
-            setStatus("Check passed. Join a room when you are ready.", "ok");
+            if (!shouldKeepJoinError($("status").dataset.kind)) {
+              setStatus("Check passed. Join a room when you are ready.", "ok");
+            }
             const deep = new URLSearchParams(location.search).get("room");
-            if (deep) void joinRoom(deep);
+            if (deep) void tryDeepJoin(deep);
           },
           "error-callback": () => setStatus("Turnstile could not check this browser.", "warn"),
         });
