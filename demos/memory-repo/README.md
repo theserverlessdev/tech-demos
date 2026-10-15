@@ -28,7 +28,7 @@ Inspired by [supermemoryai/memoryrepo](https://github.com/supermemoryai/memoryre
 
 - Four files, 12,000 characters each, 40 bullets per topic file (the oldest is evicted), messages of 800 characters, and 6 dreams per hour (the 7432 binding also caps bursts).
 - Turnstile is required before the repo is created. A missing secret fails closed. Chat and dream use the visitor cookie plus rate limits.
-- One browser gets 150 Workers AI turns per UTC day. The Worker as a whole stops at 300 AI calls per UTC day.
+- One browser gets 40 Workers AI turns per UTC day, so two visitors cannot spend the whole demo budget. The Worker as a whole stops at 300 AI calls per UTC day. If D1 migration `0002` (`ai_meter`) is missing, chat and dream return a clear 503 instead of a 502.
 - Workers AI writes the reply and the dream. A failed dream commits nothing. If chat's model output is unusable, obvious facts from the message can still be committed and the reply says it is a fallback. Questions are not treated as facts.
 - A dream asks for only the files that changed, with `max_tokens` 6000, which is enough for four topic files at the 40-bullet cap. Unusable JSON commits nothing.
 - This browser's Artifacts repo, FTS index, chat Durable Object, and D1 row are deleted 24 hours after the last message.

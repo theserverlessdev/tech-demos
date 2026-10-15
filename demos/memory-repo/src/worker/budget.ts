@@ -1,5 +1,22 @@
-export const DEFAULT_VISITOR_TURNS_PER_DAY = 150;
+/** One visitor cannot take more than this share of the global day. Two solves cannot exhaust the demo. */
+export const DEFAULT_VISITOR_TURNS_PER_DAY = 40;
 export const DEFAULT_AI_CALLS_PER_DAY = 300;
+
+export const METER_MISSING_MESSAGE =
+  "The AI budget table is missing. Apply D1 migration 0002 (ai_meter), then retry.";
+
+export class MeterMissingError extends Error {
+  constructor() {
+    super(METER_MISSING_MESSAGE);
+    this.name = "MeterMissingError";
+  }
+}
+
+export function isMeterMissingError(err: unknown): boolean {
+  if (err instanceof MeterMissingError) return true;
+  const text = err instanceof Error ? err.message : String(err);
+  return /no such table:\s*ai_meter/i.test(text) || text.includes("migration 0002");
+}
 
 export function utcDay(now = Date.now()): string {
   return new Date(now).toISOString().slice(0, 10);

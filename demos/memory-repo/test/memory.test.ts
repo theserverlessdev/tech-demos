@@ -61,6 +61,35 @@ const overflow = applyMemoryWrites(
 check(overflow.changed && overflow.message.includes("evicted 1"), overflow.message);
 check(!overflow.files["projects.md"].includes("Project number 0"), "the 41st bullet evicts the oldest");
 check(overflow.files["projects.md"].includes("Project number 40"), "the newest fact is kept");
+check(overflow.files["projects.md"].startsWith("# Projects"), "eviction keeps the topic heading");
+
+const withDreamProse = applyMemoryWrites(
+  {
+    ...seedFiles(),
+    "MEMORY.md": [
+      "# Memory",
+      "",
+      "Consolidated: prefers dark mode.",
+      "",
+      "- [people](people.md) — names and roles",
+      "- [preferences](preferences.md) — durable likes and dislikes",
+      "- [projects](projects.md) — work in progress",
+      "",
+      "## Recent",
+      "",
+      "- 2026-10-09 Prefers dark mode (preferences.md)",
+      "",
+    ].join("\n"),
+    "preferences.md": "# Preferences\n\n## UI\n\n- Prefers dark mode [source: chat; added: 2026-10-09]\n",
+  },
+  [{ path: "people.md", add: ["Name is Ankur"] }],
+  "2026-10-14",
+);
+check(withDreamProse.changed, "a later chat write still commits");
+check(withDreamProse.files["MEMORY.md"].includes("Consolidated: prefers dark mode."), "chat writes do not rebuild MEMORY.md from the template");
+check(withDreamProse.files["MEMORY.md"].includes("Name is Ankur"), "Recent is refreshed");
+check(withDreamProse.files["preferences.md"].includes("## UI"), "topic headings survive a chat write");
+check(withDreamProse.files["preferences.md"].includes("Prefers dark mode"), "existing bullets stay");
 
 const html = renderMarkdown(`# Memory\n\n- [people](people.md)\n\n<script>alert(1)</script>\n`);
 check(html.includes("&lt;script&gt;"), html);

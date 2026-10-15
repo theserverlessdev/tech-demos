@@ -106,4 +106,54 @@ if (kept.ok) {
   check(kept.files["preferences.md"] === remembered.files["preferences.md"] || kept.files["preferences.md"].includes("Preferences"), "unchanged files stay");
 }
 
+const overlapping = applyMemoryWrites(
+  seedFiles(),
+  [
+    { path: "preferences.md", add: ["Likes tea"] },
+    { path: "preferences.md", add: ["Likes jasmine tea"] },
+  ],
+  "2026-10-14",
+);
+check(overlapping.changed, "two overlapping preference bullets");
+const mergedTea = parseDream(
+  JSON.stringify({
+    message: "dream: merge tea",
+    why: "Fold likes tea into likes jasmine tea.",
+    files: {
+      "preferences.md": "# Preferences\n\n- Likes jasmine tea [source: chat; added: 2026-10-14]\n",
+    },
+  }),
+  overlapping.files,
+);
+check(mergedTea.ok, mergedTea.ok ? "ok" : mergedTea.reason);
+if (mergedTea.ok) {
+  check(mergedTea.files["preferences.md"].includes("jasmine"), "the richer bullet is kept");
+  check(!mergedTea.files["preferences.md"].includes("- Likes tea "), "the absorbed bullet is gone");
+  check(/merg/i.test(mergedTea.why), mergedTea.why);
+}
+
+const foldedName = parseDream(
+  JSON.stringify({
+    message: "dream: fold name",
+    why: "Keep Ankur as the visitor name.",
+    files: {
+      "people.md": "# People\n\n- Visitor name is Ankur Singh [source: dream; added: 2026-10-14]\n",
+    },
+  }),
+  remembered.files,
+);
+check(foldedName.ok, foldedName.ok ? "ok" : foldedName.reason);
+
+const lostDistinct = parseDream(
+  JSON.stringify({
+    message: "dream: drop tea",
+    why: "oops",
+    files: {
+      "preferences.md": "# Preferences\n\n- Prefers coffee [source: dream; added: 2026-10-14]\n",
+    },
+  }),
+  overlapping.files,
+);
+check(!lostDistinct.ok && lostDistinct.reason.includes("dropped"), lostDistinct.ok ? "ok" : lostDistinct.reason);
+
 console.log("dream tests passed");

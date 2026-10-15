@@ -44,7 +44,7 @@
     "VISITOR_TTL_HOURS": "24",
     "DREAM_INTERVAL_SECONDS": "14400",
     "DREAMS_PER_HOUR": "6",
-    "AI_TURNS_PER_VISITOR_DAY": "150",
+    "AI_TURNS_PER_VISITOR_DAY": "40",
     "AI_CALLS_PER_DAY": "300",
     // Empty in production. .dev.vars sets "local" so the Turnstile test secret
     // works under wrangler dev, which rewrites Host to the first route.

@@ -5,6 +5,7 @@ import { ChatAgent } from "./chat-agent";
 import { readVisitorId } from "./cookie";
 import { getVisitor, listExpired, type VisitorRow } from "./db";
 import type { DemoEnv } from "./env";
+import { chatFailure } from "./http-error";
 import { MemoryAgent, type Snapshot } from "./memory-agent";
 import { turnstileConfigured, verifyTurnstile } from "./turnstile";
 
@@ -121,20 +122,6 @@ export async function handleApi(request: Request, env: DemoEnv, path: string): P
   return withVisitor(request, response, visitor);
 }
 
-function safeApiMessage(err: unknown, fallback: string): string {
-  const text = err instanceof Error ? err.message : fallback;
-  if (
-    text.startsWith("This browser reached") ||
-    text.startsWith("The demo reached") ||
-    text.startsWith("Workers AI did not answer") ||
-    text.startsWith("Messages are limited") ||
-    text.startsWith("Memory changed during")
-  ) {
-    return text;
-  }
-  return fallback;
-}
-
 async function route(request: Request, env: DemoEnv, path: string, visitorId: string): Promise<Response> {
   if (request.method === "GET" && path === "/api/health") {
     await limit(env.READ_LIMIT, request, "Too many reads from this address. Wait a minute.");
@@ -245,9 +232,8 @@ async function chat(request: Request, env: DemoEnv, visitorId: string): Promise<
     const result: ChatResult = await chatAgent.turn({ visitorId, message: message.data });
     return json(result);
   } catch (err) {
-    const text = err instanceof Error ? err.message : "The chat turn failed.";
-    const status = text.includes("daily AI") ? 429 : text.includes("Workers AI") ? 503 : 502;
-    throw new HttpError(status, text.includes("daily AI") ? "budget" : "chat", safeApiMessage(err, "The chat turn failed."));
+    const failure = chatFailure(err);
+    throw new HttpError(failure.status, failure.code, failure.message);
   }
 }
 

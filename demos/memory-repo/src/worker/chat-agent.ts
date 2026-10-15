@@ -3,6 +3,7 @@ import type { ChatMessage, ChatResult, MemoryWrite, RecallHit } from "../shared/
 import { completeChat } from "./ai";
 import type { DemoEnv } from "./env";
 import { extractFacts, mergeWrites } from "./extract";
+import { purgeChatAgent } from "./lifecycle";
 import type { CommitWriteResult } from "./memory-agent";
 
 export type ChatState = { turns: number };
@@ -83,7 +84,7 @@ export class ChatAgent extends Agent<DemoEnv, ChatState> {
 
   @callable()
   async purge(): Promise<void> {
-    await this.destroy();
+    await purgeChatAgent(this);
   }
 
   @callable()

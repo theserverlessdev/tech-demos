@@ -1,4 +1,4 @@
-import { CONSUME_GLOBAL_AI_SQL, ROLLBACK_GLOBAL_AI_SQL } from "./budget";
+import { CONSUME_GLOBAL_AI_SQL, isMeterMissingError, MeterMissingError, ROLLBACK_GLOBAL_AI_SQL } from "./budget";
 import type { DemoEnv } from "./env";
 
 export type VisitorRow = {
@@ -75,7 +75,13 @@ export async function consumeGlobalAiCall(
   day: string,
   cap: number,
 ): Promise<{ ok: boolean; calls: number }> {
-  const row = await env.DB.prepare(CONSUME_GLOBAL_AI_SQL).bind(day).first<{ calls: number }>();
+  let row: { calls: number } | null;
+  try {
+    row = await env.DB.prepare(CONSUME_GLOBAL_AI_SQL).bind(day).first<{ calls: number }>();
+  } catch (err) {
+    if (isMeterMissingError(err)) throw new MeterMissingError();
+    throw err;
+  }
   const calls = row?.calls ?? 1;
   if (calls > cap) {
     await env.DB.prepare(ROLLBACK_GLOBAL_AI_SQL).bind(day).run();

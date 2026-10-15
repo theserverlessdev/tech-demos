@@ -20,6 +20,10 @@ This demo is an inspired-by slice of [supermemoryai/memoryrepo](https://github.c
 
 Long-term memory is a git repository of markdown. `MEMORY.md` is the index. Every memory write is a commit, and so is every dream. The history and the diff are the audit trail.
 
+## 2026-10-15
+
+Follow-ups on the audit fix: the dream validator accepts a merge when the dropped bullet's words remain in a kept line; chat writes replace only `## Recent` and `- ` bullets, so a dream summary and topic headings survive; phone landscape keeps a visible message list; B1/B2 tests call `wipeSession` and `staleDreamHead`; each visitor is capped at 40 AI turns per UTC day; a missing `ai_meter` table is a 503 that names migration 0002.
+
 ## 2026-10-14
 
 Audit fixes: expiry now destroys the chat Durable Object; dreams skip when memory moved during the model call; regex facts are fallback-only; chat writes keep `- ` bullets; chips honor in-flight; daily AI caps; `/api/health` is rate-limited and does not call Artifacts; dream `max_tokens` 6000 with changed-files-only JSON; phone composer sits under the Chat heading at 390px.

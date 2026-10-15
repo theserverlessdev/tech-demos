@@ -1,12 +1,21 @@
 import { Agent, type Connection, callable, getAgentByName } from "agents";
 import type { CommitDetail, DreamStep, DreamView, MemoryFile, MemoryWrite, RecallHit } from "../shared/types";
-import { atCap, DEFAULT_AI_CALLS_PER_DAY, DEFAULT_VISITOR_TURNS_PER_DAY, parseCap, utcDay } from "./budget";
+import {
+  atCap,
+  DEFAULT_AI_CALLS_PER_DAY,
+  DEFAULT_VISITOR_TURNS_PER_DAY,
+  isMeterMissingError,
+  METER_MISSING_MESSAGE,
+  parseCap,
+  utcDay,
+} from "./budget";
 import { consumeGlobalAiCall, deleteVisitor, touchVisitor, upsertVisitor } from "./db";
 import { artifactsBinding, type DemoEnv } from "./env";
 import type { FtsDb } from "./fts";
 import { ensureFts, recall as searchMemory, replaceIndexedFiles } from "./fts";
 import { completeDream } from "./ai";
 import { makeCommit, treeFromFiles } from "./git";
+import { DREAM_STALE_REASON, staleDreamHead, wipeSession } from "./lifecycle";
 import { applyMemoryWrites, isMemoryPath, MEMORY_AUTHOR, MEMORY_PATHS, seedFiles } from "./memory-files";
 import { changedFiles } from "./diff";
 import { serialQueue } from "./queue";
@@ -495,6 +504,9 @@ export class MemoryAgent extends Agent<DemoEnv, MemoryState> {
       }
     } catch (err) {
       this.ctx.storage.sql.exec("UPDATE ai_usage SET turns = MAX(0, turns - 1) WHERE day = ?", day);
+      if (isMeterMissingError(err)) {
+        return { ok: false, code: "meter_missing", message: METER_MISSING_MESSAGE };
+      }
       console.error(JSON.stringify({ event: "ai_meter_failed", error: String(err).slice(0, 180) }));
       return { ok: false, code: "global_budget", message: "The AI budget could not be checked. Try again." };
     }
@@ -655,22 +667,22 @@ export class MemoryAgent extends Agent<DemoEnv, MemoryState> {
       steps.push({ label: "Skip", detail: "Nothing was committed." });
       return this.dreamView({ status: "skipped", reason: parsed.reason, commitHash: null, message: null, steps });
     }
-    if (this.state.head !== headBefore) {
+    if (staleDreamHead(headBefore, this.state.head)) {
       steps.push({ label: "Skip", detail: "Memory changed during the dream." });
       return this.dreamView({
         status: "skipped",
-        reason: "Memory changed during the dream; nothing was committed.",
+        reason: DREAM_STALE_REASON,
         commitHash: null,
         message: null,
         steps,
       });
     }
     return this.enqueueWrite(async () => {
-      if (this.state.head !== headBefore) {
+      if (staleDreamHead(headBefore, this.state.head)) {
         steps.push({ label: "Skip", detail: "Memory changed during the dream." });
         return this.dreamView({
           status: "skipped",
-          reason: "Memory changed during the dream; nothing was committed.",
+          reason: DREAM_STALE_REASON,
           commitHash: null,
           message: null,
           steps,
@@ -843,25 +855,32 @@ export class MemoryAgent extends Agent<DemoEnv, MemoryState> {
   }
 
   private async wipe(): Promise<void> {
-    try {
-      const chat = await getAgentByName(this.env.ChatAgent, this.threadId());
-      await chat.purge();
-    } catch (err) {
-      console.error(JSON.stringify({ event: "chat_purge_failed", error: String(err).slice(0, 180) }));
-    }
     const repoName = this.state.repoName;
-    if (repoName && this.state.backend !== "local") {
-      const artifacts = artifactsBinding(this.env);
-      if (artifacts) {
+    const backend = this.state.backend;
+    await wipeSession({
+      purgeChat: async () => {
         try {
-          await artifacts.delete(repoName);
+          const chat = await getAgentByName(this.env.ChatAgent, this.threadId());
+          await chat.purge();
         } catch (err) {
-          const message = String(err);
-          if (!/not found|404/i.test(message)) throw err;
+          console.error(JSON.stringify({ event: "chat_purge_failed", error: String(err).slice(0, 180) }));
         }
-      }
-    }
-    await deleteVisitor(this.env, this.name);
-    await this.destroy();
+      },
+      deleteRepo:
+        repoName && backend !== "local"
+          ? async () => {
+              const artifacts = artifactsBinding(this.env);
+              if (!artifacts) return;
+              try {
+                await artifacts.delete(repoName);
+              } catch (err) {
+                const message = String(err);
+                if (!/not found|404/i.test(message)) throw err;
+              }
+            }
+          : undefined,
+      deleteVisitorRow: () => deleteVisitor(this.env, this.name),
+      destroyMemory: () => this.destroy(),
+    });
   }
 }
