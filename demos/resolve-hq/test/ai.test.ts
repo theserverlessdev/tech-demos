@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { normalizeDraft, usableDraft } from "../src/worker/ai";
+import { acceptGeneratedDraft, normalizeDraft, usableDraft } from "../src/worker/ai";
 
 describe("draft validator", () => {
   test("accepts a realistic greeting after stripping markdown and Subject", () => {
@@ -12,5 +12,13 @@ describe("draft validator", () => {
   test("rejects empty or leaked prompt text", () => {
     expect(usableDraft("Hi")).toBe(false);
     expect(usableDraft("Ticket JSON: {\"number\":1} output only the email")).toBe(false);
+  });
+
+  test("finish_reason length is unusable even when the greeting looks fine", () => {
+    const text =
+      "Hi Priya,\n\nThanks for writing in about the duplicate March charge. I can see INV-8841 on the ledger and I am checking the reversal window with finance before I promise a date.";
+    expect(usableDraft(text)).toBe(true);
+    expect(acceptGeneratedDraft(text, "length")).toBe(false);
+    expect(acceptGeneratedDraft(text, "stop")).toBe(true);
   });
 });

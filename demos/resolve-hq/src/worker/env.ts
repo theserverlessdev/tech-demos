@@ -22,6 +22,7 @@ declare global {
     SESSION_LIMIT: RateLimit;
     AI_LIMIT: RateLimit;
     UPLOAD_LIMIT: RateLimit;
+    HEALTH_LIMIT: RateLimit;
     AI_MODEL: string;
     DEV_MAIL_MODE: string;
     ENVIRONMENT: string;

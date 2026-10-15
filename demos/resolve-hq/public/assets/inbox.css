@@ -140,6 +140,13 @@ button { cursor: pointer; background: none; border: none; }
 .strip[data-state="live"] { background: var(--ok-soft); }
 .strip[data-state="live"] .strip__dot { background: var(--ok); }
 
+.gate {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+  padding: 8px 20px; border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.gate .hint { flex: 1; min-width: 12rem; margin: 0; }
+
 .layout {
   flex: 1;
   display: grid;
@@ -272,7 +279,7 @@ textarea:disabled { opacity: 0.55; }
   .layout[data-view="list"] .composer { display: none; }
   .layout[data-view="thread"] .list { display: none; }
   .conv__back { display: inline-flex; }
-  .btn, .filter, .conv__back { min-height: 44px; height: auto; }
+  .btn, .filter, .conv__back, .conv__meta select { min-height: 44px; height: auto; }
   .btn-icon { min-width: 44px; }
 }
 

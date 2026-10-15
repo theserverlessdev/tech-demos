@@ -44,8 +44,9 @@ This demo is a slice of [mirza-rizvi/ResolveHQ](https://github.com/mirza-rizvi/R
 
 - Draft / inbound / upload: same-origin, Turnstile, session, dedicated rate limits, daily budget.
 - Uploads: sniffed allowlist, attachment disposition, nosniff, CSP sandbox, CORP, size cap, 24 h sweep.
-- Per-visitor sandbox so Simulate inbound cannot hijack another tab.
+- Per-visitor sandbox so Simulate inbound cannot hijack another tab. Messages carry `visitor_id`; seed status/`updated_at` stay locked.
 - Phone opens on the inbox; long subjects wrap; seed check is memoized; poll pauses when hidden.
+- Turnstile widget lives under the status strip so phones can mint a session from the inbox.
 
 ## Branding
 

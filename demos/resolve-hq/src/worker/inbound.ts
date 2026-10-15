@@ -1,6 +1,6 @@
 import { FROM_EMAIL_RE, TICKET_ID_RE } from "../shared/limits";
 import type { InboundMail } from "../shared/types";
-import { getTicketByNumber, getTicketRow } from "./db";
+import { getTicketByNumber, getTicketRow, isSeedTicket } from "./db";
 import { PermanentInboundError } from "./errors";
 
 const SUBJECT_TOKEN = /\[#(\d+)\]/;
@@ -42,16 +42,21 @@ export async function ingestInbound(env: Env, mail: InboundMail): Promise<{ tick
   }
 
   if (existing) {
-    await env.DB.batch([
+    const statements = [
       env.DB.prepare(
-        `INSERT OR IGNORE INTO messages (id, ticket_id, author_kind, author_name, author_email, body, via, created_at)
-         VALUES (?, ?, 'customer', ?, ?, ?, 'queue', ?)`,
-      ).bind(messageId, existing.id, fromName, fromEmail, body, now),
-      env.DB.prepare(
-        `UPDATE tickets SET updated_at = ?, status = CASE WHEN status IN ('resolved', 'pending') THEN 'open' ELSE status END
-         WHERE id = ? AND (visitor_id IS NULL OR visitor_id = ?)`,
-      ).bind(now, existing.id, visitorId),
-    ]);
+        `INSERT OR IGNORE INTO messages (id, ticket_id, author_kind, author_name, author_email, body, via, created_at, visitor_id)
+         VALUES (?, ?, 'customer', ?, ?, ?, 'queue', ?, ?)`,
+      ).bind(messageId, existing.id, fromName, fromEmail, body, now, visitorId),
+    ];
+    if (!isSeedTicket(existing.id)) {
+      statements.push(
+        env.DB.prepare(
+          `UPDATE tickets SET updated_at = ?, status = CASE WHEN status IN ('resolved', 'pending') THEN 'open' ELSE status END
+           WHERE id = ? AND visitor_id = ?`,
+        ).bind(now, existing.id, visitorId),
+      );
+    }
+    await env.DB.batch(statements);
     return { ticketId: existing.id, created: false, number: existing.number };
   }
 
@@ -62,9 +67,9 @@ export async function ingestInbound(env: Env, mail: InboundMail): Promise<{ tick
        SELECT ?, COALESCE((SELECT MAX(number) FROM tickets), 1041) + 1, ?, ?, ?, 'open', ?, NULL, ?, ?, ?`,
     ).bind(ticketId, subject, fromName, fromEmail, priority, now, now, visitorId),
     env.DB.prepare(
-      `INSERT OR IGNORE INTO messages (id, ticket_id, author_kind, author_name, author_email, body, via, created_at)
-       VALUES (?, ?, 'customer', ?, ?, ?, 'queue', ?)`,
-    ).bind(messageId, ticketId, fromName, fromEmail, body, now),
+      `INSERT OR IGNORE INTO messages (id, ticket_id, author_kind, author_name, author_email, body, via, created_at, visitor_id)
+       VALUES (?, ?, 'customer', ?, ?, ?, 'queue', ?, ?)`,
+    ).bind(messageId, ticketId, fromName, fromEmail, body, now, visitorId),
   ]);
   const created = await getTicketRow(env, ticketId, visitorId);
   return { ticketId, created: true, number: created?.number ?? 0 };

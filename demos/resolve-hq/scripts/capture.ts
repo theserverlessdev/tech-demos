@@ -1,12 +1,30 @@
 // Local capture: bun run scripts/capture.ts [baseUrl]
-import { chromium } from "../../byok-playground/node_modules/playwright/index.mjs";
+import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 
 const base = (process.argv.find((arg) => arg.startsWith("http")) ?? "http://127.0.0.1:8787").replace(/\/$/, "");
 const out = new URL("../artifacts/", import.meta.url).pathname;
 
+const CHROME_CANDIDATES = [
+  process.env.CHROME_PATH,
+  process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
+  "/usr/bin/google-chrome",
+  "/usr/bin/chromium",
+  "/usr/bin/chromium-browser",
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+].filter((path): path is string => Boolean(path && existsSync(path)));
+
+async function loadChromium() {
+  try {
+    return (await import("playwright")).chromium;
+  } catch {
+    return (await import("../../byok-playground/node_modules/playwright/index.mjs")).chromium;
+  }
+}
+
+const chromium = await loadChromium();
 const browser = await chromium.launch({
-  executablePath: "/usr/bin/google-chrome",
+  executablePath: CHROME_CANDIDATES[0],
   headless: true,
   args: ["--no-sandbox", "--disable-dev-shm-usage"],
 });

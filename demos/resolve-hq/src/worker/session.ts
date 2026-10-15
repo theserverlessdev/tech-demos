@@ -1,4 +1,4 @@
-import { LIMITS, SESSION_COOKIE } from "../shared/limits";
+import { HUB_BASE_PATH, LIMITS, SESSION_COOKIE } from "../shared/limits";
 import { HttpError } from "./errors";
 import { clientIp } from "./origin";
 
@@ -52,10 +52,16 @@ export function mintSessionId(): string {
   return crypto.randomUUID().replaceAll("-", "");
 }
 
+export function cookiePath(request: Request): string {
+  const path = new URL(request.url).pathname;
+  if (path === HUB_BASE_PATH || path.startsWith(`${HUB_BASE_PATH}/`)) return HUB_BASE_PATH;
+  return "/";
+}
+
 export function sessionCookie(id: string, iat: number, nkey: string, mac: string, request: Request): string {
   const secure = new URL(request.url).protocol === "https:";
   const maxAge = Math.floor(LIMITS.sessionTtlMs / 1000);
-  const flags = ["HttpOnly", "SameSite=Lax", "Path=/", `Max-Age=${maxAge}`];
+  const flags = ["HttpOnly", "SameSite=Lax", `Path=${cookiePath(request)}`, `Max-Age=${maxAge}`];
   if (secure) flags.push("Secure");
   return `${SESSION_COOKIE}=${id}.${iat}.${b64url(nkey)}.${mac}; ${flags.join("; ")}`;
 }
@@ -94,4 +100,10 @@ export async function requireSession(request: Request, env: Env, now = Date.now(
     throw new HttpError(401, "session_network", "This network is new. Complete the Turnstile check again.");
   }
   return parts.id;
+}
+
+/** Valid cookie → visitor id. No cookie → null (public seeds). Bad cookie → 401. */
+export async function readVisitor(request: Request, env: Env, now = Date.now()): Promise<string | null> {
+  if (!readSessionParts(request)) return null;
+  return requireSession(request, env, now);
 }

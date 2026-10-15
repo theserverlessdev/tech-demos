@@ -72,6 +72,7 @@ function mountTurnstile(action: WidgetAction) {
   widgetId = apiRef.render(host, {
     sitekey: state.siteKey,
     action,
+    appearance: action === "session" ? "always" : "interaction-only",
     callback: onToken,
     "error-callback": () => setHint("Turnstile failed to load. Refresh and try again.", "error"),
     "expired-callback": () => {
@@ -116,7 +117,7 @@ async function token(action: WidgetAction): Promise<string | undefined> {
   });
 }
 
-async function api<T>(path: string, init: { method?: string; body?: unknown; form?: FormData } = {}): Promise<T> {
+async function api<T>(path: string, init: { method?: string; body?: unknown; form?: FormData; retried?: boolean } = {}): Promise<T> {
   const headers: Record<string, string> = {};
   let body: BodyInit | undefined;
   if (init.form) body = init.form;
@@ -132,7 +133,16 @@ async function api<T>(path: string, init: { method?: string; body?: unknown; for
   }
   if (path.includes("/attachments/") && res.ok && init.method === undefined) return res as T;
   const data = (await res.json().catch(() => null)) as { error?: { code: string; message: string } } | null;
-  if (!res.ok) throw new ApiFailure(res.status, data?.error?.code ?? "http", data?.error?.message ?? `HTTP ${res.status}`);
+  if (!res.ok) {
+    const code = data?.error?.code ?? "http";
+    if (res.status === 401 && code.startsWith("session") && !init.retried && path !== "/session") {
+      sessionReady = false;
+      if (state.siteKey && !state.testSiteKey) mountTurnstile("session");
+      await ensureSession();
+      return api<T>(path, { ...init, retried: true });
+    }
+    throw new ApiFailure(res.status, code, data?.error?.message ?? `HTTP ${res.status}`);
+  }
   return data as T;
 }
 
@@ -272,7 +282,10 @@ function renderThread() {
   if (!detail) {
     empty.hidden = false;
     conv.hidden = true;
-    $("composer-lede").textContent = "Select a ticket to write back. Draft reply asks Workers AI after Turnstile; a labelled stub is used if the model is unusable.";
+    $("composer-lede").textContent = "Select a ticket to write back. Draft reply asks Workers AI after Turnstile; local and unusable-model paths show a labelled stub.";
+    $("status").toggleAttribute("disabled", true);
+    $("priority").toggleAttribute("disabled", true);
+    $("assignee").toggleAttribute("disabled", true);
     return;
   }
   empty.hidden = true;
@@ -283,6 +296,10 @@ function renderThread() {
   fillSelect($("status") as HTMLSelectElement, STATUSES, detail.status);
   fillSelect($("priority") as HTMLSelectElement, PRIORITIES, detail.priority);
   fillSelect($("assignee") as HTMLSelectElement, ASSIGNEES, detail.assignee ?? "", { "": "Unassigned" });
+  const seedLocked = !detail.sandbox;
+  $("status").toggleAttribute("disabled", seedLocked);
+  $("priority").toggleAttribute("disabled", seedLocked);
+  $("assignee").toggleAttribute("disabled", seedLocked);
   renderFiles(detail.attachments);
   const ol = $("messages");
   ol.replaceChildren(
@@ -347,21 +364,38 @@ async function refresh() {
     const { tickets } = await api<{ tickets: TicketSummary[] }>("/tickets");
     const prevSelected = state.tickets.find((t) => t.id === state.selectedId);
     const nextIds = new Set(tickets.map((t) => t.id));
-    const awaiting = state.awaitingTicketId;
-    const created = awaiting ? tickets.find((t) => t.id === awaiting) : undefined;
+    const awaitingTicket = state.awaitingTicketId;
+    const awaitingMessage = state.awaitingMessageId;
     const nextSelected = tickets.find((t) => t.id === state.selectedId);
     const selectedChanged = Boolean(nextSelected && prevSelected && nextSelected.updatedAt !== prevSelected.updatedAt);
 
-    if (awaiting && created) {
-      state.awaitingTicketId = null;
-      state.awaitingMessageId = null;
-      setHint(`Queue consumer wrote #${created.number} in this browser's sandbox.`, "ok");
+    if (awaitingTicket && awaitingMessage) {
+      const created = tickets.find((t) => t.id === awaitingTicket);
+      if (created) {
+        try {
+          const detail = await api<TicketDetail>(`/tickets/${awaitingTicket}`);
+          if (detail.messages.some((m) => m.id === awaitingMessage)) {
+            state.awaitingTicketId = null;
+            state.awaitingMessageId = null;
+            setHint(`Queue consumer wrote #${created.number}${created.sandbox ? " in this browser's sandbox" : ""}.`, "ok");
+            state.tickets = tickets;
+            state.knownIds = nextIds;
+            state.detail = detail;
+            state.selectedId = created.id;
+            renderList();
+            updateStrip(tickets);
+            showThread();
+            renderThread();
+            return;
+          }
+        } catch {
+          /* consumer has not written the message yet */
+        }
+      }
       state.tickets = tickets;
       state.knownIds = nextIds;
       renderList();
       updateStrip(tickets);
-      showThread();
-      await selectTicket(created.id, { user: true });
       return;
     }
 
@@ -369,7 +403,8 @@ async function refresh() {
     state.knownIds = nextIds;
     renderList();
     updateStrip(tickets);
-    if (selectedChanged && state.selectedId && $("layout").dataset.view === "thread") {
+    const onThread = !isPhone() || $("layout").dataset.view === "thread";
+    if (selectedChanged && state.selectedId && onThread) {
       await selectTicket(state.selectedId, { keepReply: true });
     }
   } catch (err) {
@@ -384,7 +419,7 @@ async function waitForQueue() {
   for (let i = 0; i < 12; i++) {
     await new Promise((r) => setTimeout(r, 700));
     await refresh();
-    if (!state.awaitingTicketId) return;
+    if (!state.awaitingMessageId) return;
   }
   setHint("The Queue is still draining. The ticket should appear on the next refresh.", "error");
 }
@@ -531,7 +566,7 @@ $("send").addEventListener("click", async () => {
 });
 
 async function patchMeta() {
-  if (!state.detail) return;
+  if (!state.detail || !state.detail.sandbox) return;
   const status = ($("status") as HTMLSelectElement).value as TicketStatus;
   const priority = ($("priority") as HTMLSelectElement).value as TicketPriority;
   const assignee = ($("assignee") as HTMLSelectElement).value;
@@ -593,7 +628,11 @@ async function start() {
         ? "Writes are off until Turnstile is configured."
         : `${health.budget.remaining} of ${health.budget.dailyCap} shared AI drafts left today${health.ai === "stub" ? " · local stub" : ""}.`;
     if (health.session === "off") {
-      setHint("This slice is read-only until the owner sets Turnstile.", "error");
+      setHint("This slice is read-only until the owner sets TURNSTILE_SITE_KEY.", "error");
+      await refresh();
+      if (!isPhone() && state.tickets[0]) await selectTicket(state.tickets[0].id, { user: true });
+      else showList();
+      startPolling();
       return;
     }
     if (state.siteKey && !state.testSiteKey) mountTurnstile("session");

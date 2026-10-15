@@ -35,6 +35,11 @@ export function usableDraft(text: string): boolean {
   return true;
 }
 
+export function acceptGeneratedDraft(text: string, finishReason: string | null): boolean {
+  if (finishReason === "length") return false;
+  return usableDraft(text);
+}
+
 function fallbackDraft(ticket: TicketDetail): string {
   const first = ticket.customerName.split(/\s+/)[0] || "there";
   const who = ticket.assignee ?? "Support";
@@ -73,13 +78,12 @@ export async function draftReply(env: Env, ticket: TicketDetail): Promise<DraftR
         },
         { role: "user", content: `Ticket JSON:\n${JSON.stringify(payload)}\n\nWrite the email body now. Start with "Hi ${first},"` },
       ],
-      max_tokens: LIMITS.maxTokens,
       max_completion_tokens: LIMITS.maxTokens,
       temperature: 0.3,
       reasoning_effort: "low",
     } as never)) as ChatOutput;
     const generated = modelText(out);
-    if (usableDraft(generated.text)) {
+    if (acceptGeneratedDraft(generated.text, generated.finishReason)) {
       return { draft: generated.text, model: env.AI_MODEL, source: "workers-ai", finishReason: generated.finishReason };
     }
     console.warn(JSON.stringify({ event: "ai_draft_unusable", finishReason: generated.finishReason, chars: generated.text.length }));

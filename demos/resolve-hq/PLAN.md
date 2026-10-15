@@ -31,19 +31,23 @@ This is still a **small hosted slice**, not a vendor of [mirza-rizvi/ResolveHQ](
 
 ### B3 — Real draft, labelled path
 
-- Keep `@cf/zai-org/glm-5.3-flash` with `reasoning_effort: "low"` and `max_tokens` / `max_completion_tokens` 2,000 (reasoning cannot be disabled on this model).
+- Keep `@cf/zai-org/glm-5.3-flash` with `reasoning_effort: "low"` and `max_completion_tokens` 2,000 (no deprecated `max_tokens`; `finish_reason=length` is unusable).
 - UI shows **Path: Workers AI · &lt;model&gt;** or **Path: stub fallback**.
-- Smoke prints a loud `WARN` when `source=fallback`. Local `wrangler.local.jsonc` has no AI binding so `bun run dev` does not need `wrangler login`.
+- Smoke prints a loud `WARN` when `source=fallback`. Local `wrangler.local.jsonc` has no AI binding so `bun run dev` does not need `wrangler login`. Live Workers AI screenshot is an owner step.
 
 ## Should-fix
 
-- **S1** Per-visitor sandbox: inbound ids are minted on enqueue; consumer `INSERT OR IGNORE`; client auto-selects only its own awaiting id; visitor tickets are invisible to other sessions.
+- **S1** Per-visitor sandbox: inbound ids are minted on enqueue; consumer `INSERT OR IGNORE`; client waits on its own `messageId`; visitor tickets and visitor messages are invisible to other sessions.
 - **S2** Phone opens on the inbox; `data-view="thread"` is set only by user handlers.
 - **S3** Server caps + `overflow-wrap: anywhere` / `min-width: 0`.
-- **S4** Hourly cron (`23 * * * *`): drop stale visitor rows/objects, restore seed tickets, sweep R2.
+- **S4** Hourly cron (`23 * * * *`): drop stale visitor rows/objects, delete leftover `visitor_id IS NULL` non-seeds, prune `visitors`, restore seed fields including `updated_at`, sweep R2.
 - **S5** Validate inbound before `Queue.send`; consumer `ack()`s permanent junk.
 - **S6** Memoize `ensureSeed`; pause polling while the tab is hidden.
-- **S7** Honest copy: public shared seeds, private visitor writes, Turnstile, daily budget, local-dev cost.
+- **S7** Honest copy: public original seed threads, private visitor writes (including on seeds), locked seed status/order, Turnstile, daily budget, local-dev stub.
+- **R1** `messages.visitor_id` (migration 0004); seed status/priority/assignee/`updated_at` locked.
+- **R2** `TURNSTILE_SITE_KEY` stays `REPLACE_ME` until the owner sets a widget. Seeds load without a session (read-only).
+- **R3** `#turnstile` and `#hint` sit under the status strip, not inside `.composer`.
+- **R4** A `session*` 401 remints once and retries.
 
 ## Nits
 
@@ -55,4 +59,4 @@ Workers + Static Assets, D1, R2, Queue, Workers AI, RateLimit (7331 + 7530–753
 
 ## Owner steps (after merge)
 
-Listed in the PR: set `TURNSTILE_SITE_KEY`, `wrangler secret put` for `TURNSTILE_SECRET` and `SESSION_SECRET`, apply D1 migration `0003`, deploy. No new Cloudflare resources are created here.
+Listed in the PR: replace `REPLACE_ME` in `TURNSTILE_SITE_KEY`, `wrangler secret put` for `TURNSTILE_SECRET` and `SESSION_SECRET`, apply D1 migrations through `0004`, deploy. No new Cloudflare resources are created here.

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { HttpError } from "../src/worker/errors";
 import { assertSameOrigin, decodePathPart, isLocalRequest } from "../src/worker/origin";
-import { mintSignedSession, readSessionParts, requireSession } from "../src/worker/session";
+import { cookiePath, mintSignedSession, readSessionParts, requireSession } from "../src/worker/session";
 
 const env = { SESSION_SECRET: "test-session-secret" } as Env;
 
@@ -40,6 +40,13 @@ describe("same-origin and session cookie", () => {
     });
     expect(isLocalRequest(req)).toBe(true);
     expect(() => assertSameOrigin(req)).not.toThrow();
+  });
+
+  test("session cookie is scoped to the hub demo path", async () => {
+    expect(cookiePath(new Request("https://tech-demos.theserverless.dev/demos/resolve-hq/api/session"))).toBe("/demos/resolve-hq");
+    expect(cookiePath(new Request("https://resolve-hq.tech-demos.theserverless.dev/api/session"))).toBe("/");
+    const minted = await mintSignedSession(env, new Request("https://tech-demos.theserverless.dev/demos/resolve-hq/api/session"));
+    expect(minted.cookie).toContain("Path=/demos/resolve-hq");
   });
 
   test("writes require an HMAC-signed session cookie", async () => {

@@ -15,13 +15,27 @@ export const SEED_TICKETS: Array<{
   status: TicketStatus;
   priority: TicketPriority;
   assignee: string | null;
+  updatedAt: number;
 }> = [
-  { id: "tkt_billing", status: "open", priority: "high", assignee: "Maya Chen" },
-  { id: "tkt_sso", status: "pending", priority: "urgent", assignee: "Jordan Park" },
-  { id: "tkt_cron", status: "open", priority: "normal", assignee: null },
-  { id: "tkt_webhooks", status: "open", priority: "high", assignee: "Maya Chen" },
-  { id: "tkt_docs", status: "resolved", priority: "low", assignee: "Jordan Park" },
+  { id: "tkt_billing", status: "open", priority: "high", assignee: "Maya Chen", updatedAt: 1789027200000 },
+  { id: "tkt_sso", status: "pending", priority: "urgent", assignee: "Jordan Park", updatedAt: 1789106400000 },
+  { id: "tkt_cron", status: "open", priority: "normal", assignee: null, updatedAt: 1789178400000 },
+  { id: "tkt_webhooks", status: "open", priority: "high", assignee: "Maya Chen", updatedAt: 1789286400000 },
+  { id: "tkt_docs", status: "resolved", priority: "low", assignee: "Jordan Park", updatedAt: 1788912000000 },
 ];
+
+export const SEED_MESSAGE_IDS = [
+  "msg_billing_1",
+  "msg_billing_2",
+  "msg_sso_1",
+  "msg_sso_2",
+  "msg_cron_1",
+  "msg_cron_2",
+  "msg_webhooks_1",
+  "msg_webhooks_2",
+  "msg_docs_1",
+  "msg_docs_2",
+] as const;
 
 const SEED_IDS = SEED_TICKETS.map((t) => t.id);
 
@@ -51,6 +65,7 @@ type MessageRow = {
   body: string;
   via: MessageVia;
   created_at: number;
+  visitor_id: string | null;
 };
 
 type AttachmentRow = {
@@ -112,14 +127,20 @@ function toAttachment(row: AttachmentRow): Attachment {
   };
 }
 
-const LIST_SELECT = `
+function listSelect(visitorId: string | null): { sql: string; binds: string[] } {
+  const msgVis = visitorId ? "(m.visitor_id IS NULL OR m.visitor_id = ?)" : "m.visitor_id IS NULL";
+  const ticketVis = visitorId ? "(t.visitor_id IS NULL OR t.visitor_id = ?)" : "t.visitor_id IS NULL";
+  const sql = `
 SELECT t.id, t.number, substr(t.subject, 1, ${LIMITS.subjectChars}) AS subject, t.customer_name, t.customer_email, t.status, t.priority,
        t.assignee, t.created_at, t.updated_at, t.visitor_id,
-       (SELECT m.body FROM messages m WHERE m.ticket_id = t.id ORDER BY m.created_at DESC LIMIT 1) AS last_preview,
-       (SELECT m.via FROM messages m WHERE m.ticket_id = t.id ORDER BY m.created_at DESC LIMIT 1) AS last_via,
-       (SELECT COUNT(*) FROM messages m WHERE m.ticket_id = t.id) AS message_count
+       (SELECT m.body FROM messages m WHERE m.ticket_id = t.id AND ${msgVis} ORDER BY m.created_at DESC LIMIT 1) AS last_preview,
+       (SELECT m.via FROM messages m WHERE m.ticket_id = t.id AND ${msgVis} ORDER BY m.created_at DESC LIMIT 1) AS last_via,
+       (SELECT COUNT(*) FROM messages m WHERE m.ticket_id = t.id AND ${msgVis}) AS message_count
 FROM tickets t
+WHERE ${ticketVis}
 `;
+  return { sql, binds: visitorId ? [visitorId, visitorId, visitorId, visitorId] : [] };
+}
 
 let seeded: Promise<void> | undefined;
 
@@ -147,13 +168,10 @@ export function ensureSeed(env: Env): Promise<void> {
   return seeded;
 }
 
-function visibleClause(): string {
-  return "(t.visitor_id IS NULL OR t.visitor_id = ?)";
-}
-
-export async function listTickets(env: Env, visitorId: string): Promise<TicketSummary[]> {
-  const { results } = await env.DB.prepare(`${LIST_SELECT}WHERE ${visibleClause()} ORDER BY t.updated_at DESC LIMIT ${LIMITS.listLimit}`)
-    .bind(visitorId)
+export async function listTickets(env: Env, visitorId: string | null): Promise<TicketSummary[]> {
+  const { sql, binds } = listSelect(visitorId);
+  const { results } = await env.DB.prepare(`${sql} ORDER BY t.updated_at DESC LIMIT ${LIMITS.listLimit}`)
+    .bind(...binds)
     .all<TicketRow>();
   return (results ?? []).map((row) => {
     const summary = toSummary(row);
@@ -162,7 +180,7 @@ export async function listTickets(env: Env, visitorId: string): Promise<TicketSu
   });
 }
 
-export async function countTickets(env: Env, visitorId?: string): Promise<number> {
+export async function countTickets(env: Env, visitorId?: string | null): Promise<number> {
   if (!visitorId) {
     const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM tickets WHERE visitor_id IS NULL").first<{ n: number }>();
     return row?.n ?? 0;
@@ -173,31 +191,42 @@ export async function countTickets(env: Env, visitorId?: string): Promise<number
   return row?.n ?? 0;
 }
 
-export async function getTicketRow(env: Env, id: string, visitorId: string): Promise<TicketSummary | null> {
-  const row = await env.DB.prepare(`${LIST_SELECT}WHERE t.id = ? AND ${visibleClause()}`).bind(id, visitorId).first<TicketRow>();
+export async function getTicketRow(env: Env, id: string, visitorId: string | null): Promise<TicketSummary | null> {
+  const { sql, binds } = listSelect(visitorId);
+  const row = await env.DB.prepare(`${sql} AND t.id = ?`).bind(...binds, id).first<TicketRow>();
   if (!row) return null;
   const summary = toSummary(row);
   summary.lastPreview = previewOf(summary.lastPreview);
   return summary;
 }
 
-export async function getTicketByNumber(env: Env, number: number, visitorId: string): Promise<TicketSummary | null> {
-  const row = await env.DB.prepare("SELECT id FROM tickets WHERE number = ? AND (visitor_id IS NULL OR visitor_id = ?)")
-    .bind(number, visitorId)
-    .first<{ id: string }>();
+export async function getTicketByNumber(env: Env, number: number, visitorId: string | null): Promise<TicketSummary | null> {
+  const row = visitorId
+    ? await env.DB.prepare("SELECT id FROM tickets WHERE number = ? AND (visitor_id IS NULL OR visitor_id = ?)")
+        .bind(number, visitorId)
+        .first<{ id: string }>()
+    : await env.DB.prepare("SELECT id FROM tickets WHERE number = ? AND visitor_id IS NULL").bind(number).first<{ id: string }>();
   if (!row) return null;
   return getTicketRow(env, row.id, visitorId);
 }
 
-export async function getTicketDetail(env: Env, id: string, visitorId: string): Promise<TicketDetail | null> {
+export async function getTicketDetail(env: Env, id: string, visitorId: string | null): Promise<TicketDetail | null> {
   const ticket = await getTicketRow(env, id, visitorId);
   if (!ticket) return null;
-  const messages = await env.DB.prepare("SELECT * FROM messages WHERE ticket_id = ? ORDER BY created_at ASC").bind(id).all<MessageRow>();
-  const attachments = await env.DB.prepare(
-    "SELECT * FROM attachments WHERE ticket_id = ? AND (visitor_id IS NULL OR visitor_id = ?) ORDER BY created_at ASC",
-  )
-    .bind(id, visitorId)
-    .all<AttachmentRow>();
+  const messages = visitorId
+    ? await env.DB.prepare("SELECT * FROM messages WHERE ticket_id = ? AND (visitor_id IS NULL OR visitor_id = ?) ORDER BY created_at ASC")
+        .bind(id, visitorId)
+        .all<MessageRow>()
+    : await env.DB.prepare("SELECT * FROM messages WHERE ticket_id = ? AND visitor_id IS NULL ORDER BY created_at ASC").bind(id).all<MessageRow>();
+  const attachments = visitorId
+    ? await env.DB.prepare(
+        "SELECT * FROM attachments WHERE ticket_id = ? AND (visitor_id IS NULL OR visitor_id = ?) ORDER BY created_at ASC",
+      )
+        .bind(id, visitorId)
+        .all<AttachmentRow>()
+    : await env.DB.prepare("SELECT * FROM attachments WHERE ticket_id = ? AND visitor_id IS NULL ORDER BY created_at ASC")
+        .bind(id)
+        .all<AttachmentRow>();
   return {
     ...ticket,
     messages: (messages.results ?? []).map(toMessage),
@@ -210,6 +239,7 @@ export async function addMessage(
   input: {
     id: string;
     ticketId: string;
+    visitorId: string | null;
     authorKind: "customer" | "agent";
     authorName: string;
     authorEmail: string | null;
@@ -221,14 +251,26 @@ export async function addMessage(
 ): Promise<void> {
   const statements = [
     env.DB.prepare(
-      `INSERT INTO messages (id, ticket_id, author_kind, author_name, author_email, body, via, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(input.id, input.ticketId, input.authorKind, input.authorName, input.authorEmail, input.body, input.via, input.now),
+      `INSERT INTO messages (id, ticket_id, author_kind, author_name, author_email, body, via, created_at, visitor_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      input.id,
+      input.ticketId,
+      input.authorKind,
+      input.authorName,
+      input.authorEmail,
+      input.body,
+      input.via,
+      input.now,
+      input.visitorId,
+    ),
   ];
-  if (input.reopen) {
-    statements.push(env.DB.prepare("UPDATE tickets SET status = 'open', updated_at = ? WHERE id = ?").bind(input.now, input.ticketId));
-  } else {
-    statements.push(env.DB.prepare("UPDATE tickets SET updated_at = ? WHERE id = ?").bind(input.now, input.ticketId));
+  if (!isSeedTicket(input.ticketId)) {
+    if (input.reopen) {
+      statements.push(env.DB.prepare("UPDATE tickets SET status = 'open', updated_at = ? WHERE id = ?").bind(input.now, input.ticketId));
+    } else {
+      statements.push(env.DB.prepare("UPDATE tickets SET updated_at = ? WHERE id = ?").bind(input.now, input.ticketId));
+    }
   }
   await env.DB.batch(statements);
 }
@@ -242,10 +284,11 @@ export async function patchTicket(
 ): Promise<TicketSummary | null> {
   const current = await getTicketRow(env, id, visitorId);
   if (!current) return null;
+  if (isSeedTicket(id)) return current;
   const status = patch.status ?? current.status;
   const priority = patch.priority ?? current.priority;
   const assignee = patch.assignee === undefined ? current.assignee : patch.assignee;
-  await env.DB.prepare("UPDATE tickets SET status = ?, priority = ?, assignee = ?, updated_at = ? WHERE id = ? AND (visitor_id IS NULL OR visitor_id = ?)")
+  await env.DB.prepare("UPDATE tickets SET status = ?, priority = ?, assignee = ?, updated_at = ? WHERE id = ? AND visitor_id = ?")
     .bind(status, priority, assignee, now, id, visitorId)
     .run();
   return getTicketRow(env, id, visitorId);
@@ -264,13 +307,16 @@ export async function insertAttachment(
     now: number;
   },
 ): Promise<Attachment> {
-  await env.DB.batch([
+  const statements = [
     env.DB.prepare(
       `INSERT INTO attachments (id, ticket_id, visitor_id, r2_key, filename, content_type, size, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(input.id, input.ticketId, input.visitorId, input.r2Key, input.filename, input.contentType, input.size, input.now),
-    env.DB.prepare("UPDATE tickets SET updated_at = ? WHERE id = ?").bind(input.now, input.ticketId),
-  ]);
+  ];
+  if (!isSeedTicket(input.ticketId)) {
+    statements.push(env.DB.prepare("UPDATE tickets SET updated_at = ? WHERE id = ?").bind(input.now, input.ticketId));
+  }
+  await env.DB.batch(statements);
   return {
     id: input.id,
     ticketId: input.ticketId,
@@ -281,10 +327,13 @@ export async function insertAttachment(
   };
 }
 
-export async function getAttachment(env: Env, ticketId: string, attachmentId: string, visitorId: string): Promise<AttachmentRow | null> {
-  return env.DB.prepare(
-    "SELECT * FROM attachments WHERE id = ? AND ticket_id = ? AND (visitor_id IS NULL OR visitor_id = ?)",
-  )
+export async function getAttachment(env: Env, ticketId: string, attachmentId: string, visitorId: string | null): Promise<AttachmentRow | null> {
+  if (!visitorId) {
+    return env.DB.prepare("SELECT * FROM attachments WHERE id = ? AND ticket_id = ? AND visitor_id IS NULL")
+      .bind(attachmentId, ticketId)
+      .first<AttachmentRow>();
+  }
+  return env.DB.prepare("SELECT * FROM attachments WHERE id = ? AND ticket_id = ? AND (visitor_id IS NULL OR visitor_id = ?)")
     .bind(attachmentId, ticketId, visitorId)
     .first<AttachmentRow>();
 }

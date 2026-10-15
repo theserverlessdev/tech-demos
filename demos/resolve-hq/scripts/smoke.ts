@@ -51,7 +51,11 @@ if (!cookie.startsWith("rhq_session=")) {
 }
 
 const nosession = await call<{ tickets: TicketSummary[] }>("/tickets");
-check("ticket list requires a session", nosession.status === 401, nosession.status);
+check(
+  "ticket list without a session is public seeds only",
+  nosession.status === 200 && Boolean(nosession.data?.tickets.length) && (nosession.data?.tickets.every((t) => !t.sandbox) ?? false),
+  { status: nosession.status, count: nosession.data?.tickets.length, sandbox: nosession.data?.tickets.map((t) => t.sandbox) },
+);
 
 const list = await call<{ tickets: TicketSummary[] }>("/tickets", { cookie });
 check("lists at least 5 tickets", list.status === 200 && (list.data?.tickets.length ?? 0) >= 5, list.data?.tickets.length);
@@ -67,11 +71,27 @@ if (!billing) {
 const badId = await fetch(`${base}/api/tickets/%E0%A4%A`, { headers: { origin, cookie } });
 check("malformed ticket id is 404 not 500", badId.status === 404, badId.status);
 
+const seedPatch = await call(`/tickets/${billing.id}`, { method: "PATCH", cookie, body: { status: "resolved" } });
+check("seed ticket status is locked", seedPatch.status === 403, seedPatch.status);
+
 const detail = await call<TicketDetail>(`/tickets/${billing.id}`, { cookie });
 check("ticket 1042 has a thread and a seed attachment", Boolean(detail.data && detail.data.messages.length >= 2 && detail.data.attachments.length >= 1), {
   messages: detail.data?.messages.length,
   attachments: detail.data?.attachments.length,
 });
+
+const seedReply = await call<TicketDetail>(`/tickets/${billing.id}/replies`, {
+  method: "POST",
+  cookie,
+  body: { body: "Smoke private note on the public seed. Other visitors must not see this." },
+});
+check("agent reply on a seed is stored for this visitor", seedReply.status === 201 && (seedReply.data?.messages.some((m) => m.body.includes("Smoke private note")) ?? false), seedReply.status);
+const publicThread = await call<TicketDetail>(`/tickets/${billing.id}`);
+check(
+  "other visitors do not see the seed reply",
+  publicThread.status === 200 && (publicThread.data?.messages.every((m) => !m.body.includes("Smoke private note")) ?? false),
+  { status: publicThread.status, bodies: publicThread.data?.messages.map((m) => m.body.slice(0, 40)) },
+);
 
 const att = detail.data?.attachments[0];
 if (att) {

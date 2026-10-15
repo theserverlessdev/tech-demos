@@ -46,7 +46,8 @@
     { "name": "WRITE_LIMIT", "namespace_id": "7331", "simple": { "limit": 20, "period": 60 } },
     { "name": "SESSION_LIMIT", "namespace_id": "7530", "simple": { "limit": 10, "period": 60 } },
     { "name": "AI_LIMIT", "namespace_id": "7531", "simple": { "limit": 5, "period": 60 } },
-    { "name": "UPLOAD_LIMIT", "namespace_id": "7532", "simple": { "limit": 6, "period": 60 } }
+    { "name": "UPLOAD_LIMIT", "namespace_id": "7532", "simple": { "limit": 6, "period": 60 } },
+    { "name": "HEALTH_LIMIT", "namespace_id": "7533", "simple": { "limit": 30, "period": 60 } }
   ],
   "triggers": { "crons": ["23 * * * *"] },
   "secrets": { "required": ["TURNSTILE_SECRET", "SESSION_SECRET"] },
@@ -58,8 +59,9 @@
     "ENVIRONMENT": "",
     "DAILY_DRAFT_CAP": "80",
     "IP_DRAFT_CAP": "8",
-    // Owner: set to a widget that allows tech-demos.theserverless.dev and resolve-hq.tech-demos.theserverless.dev.
-    "TURNSTILE_SITE_KEY": ""
+    // Owner step — do not commit a real key here. Create a Turnstile widget that allows
+    // tech-demos.theserverless.dev and resolve-hq.tech-demos.theserverless.dev, then replace this.
+    "TURNSTILE_SITE_KEY": "REPLACE_ME"
   },
   "routes": [
     { "pattern": "tech-demos.theserverless.dev/demos/resolve-hq*", "zone_name": "theserverless.dev" },

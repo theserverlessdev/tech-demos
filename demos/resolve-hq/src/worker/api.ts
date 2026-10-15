@@ -10,6 +10,7 @@ import {
   getAttachment,
   getTicketDetail,
   insertAttachment,
+  isSeedTicket,
   listTickets,
   patchTicket,
 } from "./db";
@@ -18,7 +19,7 @@ import { HttpError } from "./errors";
 import { fileResponseHeaders, safeFilename, sniffUpload } from "./files";
 import { validateInboundFields } from "./inbound";
 import { assertSameOrigin, contentLength, decodePathPart, limit } from "./origin";
-import { finish, mintSignedSession, requireSession } from "./session";
+import { finish, mintSignedSession, readVisitor, requireSession } from "./session";
 import { aiStatus, isTestSiteKey, requireTurnstile, sessionGate } from "./turnstile";
 
 export { HttpError };
@@ -99,10 +100,11 @@ async function writeSession(env: Env, request: Request): Promise<string> {
 }
 
 export async function handleApi(request: Request, env: Env, pathname: string): Promise<Response> {
-  await ensureSeed(env);
   const method = request.method;
 
   if (pathname === "/api/health" && method === "GET") {
+    await limit(env.HEALTH_LIMIT, request, "health checks");
+    await ensureSeed(env);
     const siteKey = publicSiteKey(env);
     const dailyCap = parseCap(env.DAILY_DRAFT_CAP, LIMITS.dailyDraftCap);
     const used = await usedToday(env);
@@ -137,8 +139,12 @@ export async function handleApi(request: Request, env: Env, pathname: string): P
     return finish(json({ ok: true, visitorId: minted.id }), minted.cookie);
   }
 
+  if (method !== "GET" && method !== "HEAD") assertSameOrigin(request);
+
   if (pathname === "/api/tickets" && method === "GET") {
-    const visitorId = await requireSession(request, env);
+    assertSameOrigin(request);
+    await ensureSeed(env);
+    const visitorId = await readVisitor(request, env);
     return json({ tickets: await listTickets(env, visitorId) });
   }
 
@@ -180,13 +186,17 @@ export async function handleApi(request: Request, env: Env, pathname: string): P
   if (!ticketMatch) throw new HttpError(404, "not_found", "Unknown API route.");
   if (!ticketMatch.id) throw new HttpError(404, "not_found", "That ticket is gone.");
 
-  const visitorId = await requireSession(request, env);
+  assertSameOrigin(request);
+  await ensureSeed(env);
+  const visitorId = method === "GET" || method === "HEAD" ? await readVisitor(request, env) : await requireSession(request, env);
   const detail = await getTicketDetail(env, ticketMatch.id, visitorId);
   if (!detail) throw new HttpError(404, "not_found", "That ticket is gone.");
 
   if (ticketMatch.rest === "" && method === "GET") return json(detail);
 
   if (ticketMatch.rest === "" && method === "PATCH") {
+    if (!visitorId) throw new HttpError(401, "session", "Complete the Turnstile check once so this browser can use the inbox.");
+    if (isSeedTicket(detail.id)) throw new HttpError(403, "seed_readonly", "Seed ticket status, priority, and assignee are locked.");
     await writeSession(env, request);
     await limit(env.WRITE_LIMIT, request, "writes");
     const body = await readJson(request);
@@ -215,6 +225,7 @@ export async function handleApi(request: Request, env: Env, pathname: string): P
   }
 
   if (ticketMatch.rest === "replies" && method === "POST") {
+    if (!visitorId) throw new HttpError(401, "session", "Complete the Turnstile check once so this browser can use the inbox.");
     await writeSession(env, request);
     await limit(env.WRITE_LIMIT, request, "writes");
     const body = await readJson(request);
@@ -225,6 +236,7 @@ export async function handleApi(request: Request, env: Env, pathname: string): P
     await addMessage(env, {
       id: newId("msg"),
       ticketId: detail.id,
+      visitorId,
       authorKind: "agent",
       authorName: detail.assignee ?? "Unassigned agent",
       authorEmail: null,
@@ -232,13 +244,14 @@ export async function handleApi(request: Request, env: Env, pathname: string): P
       via: "agent",
       now,
     });
-    if (typeof body.status === "string" && STATUSES.has(body.status as TicketStatus)) {
+    if (!isSeedTicket(detail.id) && typeof body.status === "string" && STATUSES.has(body.status as TicketStatus)) {
       await patchTicket(env, detail.id, visitorId, { status: body.status as TicketStatus }, now);
     }
     return json(await getTicketDetail(env, detail.id, visitorId), 201);
   }
 
   if (ticketMatch.rest === "draft" && method === "POST") {
+    if (!visitorId) throw new HttpError(401, "session", "Complete the Turnstile check once so this browser can use the inbox.");
     await writeSession(env, request);
     await limit(env.AI_LIMIT, request, "AI drafts");
     const body = await readJson(request);
@@ -248,6 +261,7 @@ export async function handleApi(request: Request, env: Env, pathname: string): P
   }
 
   if (ticketMatch.rest === "attachments" && method === "POST") {
+    if (!visitorId) throw new HttpError(401, "session", "Complete the Turnstile check once so this browser can use the inbox.");
     await writeSession(env, request);
     await limit(env.UPLOAD_LIMIT, request, "uploads");
     const declared = contentLength(request);

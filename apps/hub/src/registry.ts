@@ -155,14 +155,14 @@ export const demos: DemoEntry[] = [
   {
     slug: "resolve-hq",
     title: "ResolveHQ",
-    description: "A support inbox: public seeds, a per-visitor sandbox, and a labelled AI draft.",
+    description: "A support inbox: public seeds, a per-visitor sandbox, and a labelled AI-or-stub draft.",
     demonstrates:
-      "A Worker coordinates D1 tickets, R2 attachments, and a Queue consumer that turns a simulated inbound email into a ticket. Draft reply is same-origin, Turnstile-gated, session-bound, rate-limited, and budgeted; the page shows whether Workers AI or the stub path ran. Seed tickets are public. Simulate inbound, replies, and uploads stay in this browser and reset on an hourly cron. There is no live mail exchanger.",
+      "A Worker coordinates D1 tickets, R2 attachments, and a Queue consumer that turns a simulated inbound email into a ticket. Draft reply is same-origin, Turnstile-gated, session-bound, rate-limited, and budgeted; the composer labels Workers AI vs stub. Local bun run dev uses the stub (no AI binding). Live Workers AI needs the owner-deployed binding. Seed tickets are public (original thread). Your replies, inbound, and uploads stay in this browser and reset hourly. Seed status is locked.",
     capabilities: [
-      "Open a seeded ticket and read the thread",
+      "Open a seeded ticket and read the original thread",
       "Attach a PNG, JPEG, PDF, or text file; it downloads as an attachment and expires",
       "Simulate inbound mail; only this browser sees the new ticket",
-      "Ask for a draft reply and see Path: Workers AI or Path: stub fallback",
+      "Ask for a draft reply and see Path: Workers AI or Path: stub fallback (local is stub)",
     ],
     useCases: [
       "A small inbox without a live mail route yet",
