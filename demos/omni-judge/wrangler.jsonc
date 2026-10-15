@@ -15,7 +15,7 @@
     {
       "binding": "DB",
       "database_name": "tech-demos-omni-judge",
-      "database_id": "00000000-0000-4000-8000-000000007451",
+      "database_id": "268d17af-2a56-4565-bdb7-7fbf71a22bea",
       "migrations_dir": "migrations"
     }
   ],
@@ -43,7 +43,7 @@
     // works under wrangler dev, which rewrites Host to the first route.
     // "local" also skips Workers AI and returns the labelled stub.
     "ENVIRONMENT": "",
-    "TURNSTILE_SITE_KEY": "REPLACE_ME"
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFXRuxaIlcSffdZ4"
   },
   "secrets": { "required": ["TURNSTILE_SECRET", "IP_HASH_SECRET"] },
   "routes": [
