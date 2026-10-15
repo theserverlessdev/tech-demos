@@ -54,6 +54,10 @@ const companyBrainFallbackSource = standalone("company-brain");
 // pattern as resolve-hq: the zone route wins, and this source only redirects if that route is missing.
 const clefGateFallbackSource = standalone("clef-gate");
 
+// omni-judge is a standalone Worker (ASSETS, AI, DB, MEDIA, JUDGE/UPLOAD/COMPARE limits, cron, Turnstile).
+// Same pattern as resolve-hq: the zone route wins, and this source only redirects if that route is missing.
+const omniJudgeFallbackSource = standalone("omni-judge");
+
 // tanbase is a standalone Worker (ASSETS, AI, DB, FILES, BOARD, SPLIT_TASK, WRITE_LIMIT, UPLOAD_LIMIT, AI_LIMIT, cron, Turnstile).
 // The zone route wins; this source only redirects if that route is missing.
 const tanbaseFallbackSource = standalone("tanbase");
@@ -421,6 +425,30 @@ export const demos: DemoEntry[] = [
     tags: ["artifacts", "agents-sdk", "workers-ai", "d1", "turnstile", "durable-objects"],
     kind: "standalone",
     source: memoryRepoFallbackSource,
+  },
+  {
+    slug: "omni-judge",
+    title: "Omni Judge",
+    description: "One Clef-omni call scores a photo, a voice note, or a short video.",
+    demonstrates:
+      "A single Workers AI call to Clef-omni reads the media and returns a probability for every allowed answer. Upload bytes are sniffed for type, size, and duration, stored in R2 under an unguessable id, and deleted after 24 hours. Judgments live in D1. A comparison can time Whisper or a vision model plus Clef on the same image or audio.",
+    capabilities: [
+      "Snap a photo, record a voice note, or film up to 10 seconds",
+      "Start from a bundled sample",
+      "Pick a preset checklist or write up to five questions",
+      "Read the probability for every option, the top answer, and the latency",
+      "Compare with the classic chain on an image or a voice note",
+      "Review recent judgments from this browser",
+    ],
+    useCases: [
+      "Voicemail triage",
+      "Upload moderation",
+      "Field-inspection checklists",
+      "Support-call routing",
+    ],
+    tags: ["workers-ai", "d1", "r2", "turnstile", "cron"],
+    kind: "standalone",
+    source: omniJudgeFallbackSource,
   },
 ];
 
