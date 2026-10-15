@@ -2,8 +2,9 @@ import { getAgentByName } from "agents";
 import { z } from "zod";
 import type { ChatMessage, ChatResult, CommitDetail, DreamView, SessionPayload, StatePayload } from "../shared/types";
 import { ChatAgent } from "./chat-agent";
+import { readVisitorId } from "./cookie";
 import { getVisitor, listExpired, type VisitorRow } from "./db";
-import { artifactsBinding, type DemoEnv } from "./env";
+import type { DemoEnv } from "./env";
 import { MemoryAgent, type Snapshot } from "./memory-agent";
 import { turnstileConfigured, verifyTurnstile } from "./turnstile";
 
@@ -18,7 +19,6 @@ export class HttpError extends Error {
 }
 
 const COOKIE = "mr_vid";
-const VISITOR = /^[a-f0-9]{32}$/;
 const HASH = /^[a-f0-9]{40}$/;
 
 const TurnstileSchema = z.string().trim().min(1).max(2048);
@@ -36,15 +36,7 @@ function clientIp(request: Request): string {
 }
 
 function readVisitor(request: Request): string | null {
-  const header = request.headers.get("cookie") ?? "";
-  for (const part of header.split(";")) {
-    const [name, ...rest] = part.trim().split("=");
-    if (name === COOKIE) {
-      const value = decodeURIComponent(rest.join("="));
-      return VISITOR.test(value) ? value : null;
-    }
-  }
-  return null;
+  return readVisitorId(request.headers.get("cookie") ?? "", COOKIE);
 }
 
 function cookiePath(url: URL): string {
@@ -129,8 +121,25 @@ export async function handleApi(request: Request, env: DemoEnv, path: string): P
   return withVisitor(request, response, visitor);
 }
 
+function safeApiMessage(err: unknown, fallback: string): string {
+  const text = err instanceof Error ? err.message : fallback;
+  if (
+    text.startsWith("This browser reached") ||
+    text.startsWith("The demo reached") ||
+    text.startsWith("Workers AI did not answer") ||
+    text.startsWith("Messages are limited") ||
+    text.startsWith("Memory changed during")
+  ) {
+    return text;
+  }
+  return fallback;
+}
+
 async function route(request: Request, env: DemoEnv, path: string, visitorId: string): Promise<Response> {
-  if (request.method === "GET" && path === "/api/health") return health(env);
+  if (request.method === "GET" && path === "/api/health") {
+    await limit(env.READ_LIMIT, request, "Too many reads from this address. Wait a minute.");
+    return health(env);
+  }
   if (request.method === "GET" && path === "/api/session") {
     await limit(env.READ_LIMIT, request, "Too many reads from this address. Wait a minute.");
     return session(env, visitorId);
@@ -154,17 +163,7 @@ async function health(env: DemoEnv): Promise<Response> {
   } catch {
     d1 = false;
   }
-  let artifacts: "ok" | "unavailable" = "unavailable";
-  const binding = artifactsBinding(env);
-  if (binding) {
-    try {
-      await binding.list({ limit: 1 });
-      artifacts = "ok";
-    } catch {
-      artifacts = "unavailable";
-    }
-  }
-  return json({ ok: d1, d1, artifacts, turnstile: turnstileConfigured(env) });
+  return json({ ok: d1, d1, turnstile: turnstileConfigured(env) });
 }
 
 async function session(env: DemoEnv, visitorId: string): Promise<Response> {
@@ -227,7 +226,8 @@ async function state(request: Request, env: DemoEnv, visitorId: string): Promise
     snapshot = await memory.snapshot();
     messages = await chatAgent.transcript();
   } catch (err) {
-    throw new HttpError(502, "artifacts", err instanceof Error ? err.message : "The memory repo could not be read.");
+    console.error(JSON.stringify({ event: "state_failed", error: String(err).slice(0, 180) }));
+    throw new HttpError(502, "artifacts", "The memory repo could not be read.");
   }
   const payload: StatePayload = { ...snapshot, messages };
   return json(payload);
@@ -246,8 +246,8 @@ async function chat(request: Request, env: DemoEnv, visitorId: string): Promise<
     return json(result);
   } catch (err) {
     const text = err instanceof Error ? err.message : "The chat turn failed.";
-    const status = text.includes("Workers AI") ? 503 : 502;
-    throw new HttpError(status, "chat", text);
+    const status = text.includes("daily AI") ? 429 : text.includes("Workers AI") ? 503 : 502;
+    throw new HttpError(status, text.includes("daily AI") ? "budget" : "chat", safeApiMessage(err, "The chat turn failed."));
   }
 }
 
@@ -260,7 +260,8 @@ async function dream(request: Request, env: DemoEnv, visitorId: string): Promise
   try {
     result = await memory.runDream("now");
   } catch (err) {
-    throw new HttpError(502, "dream", err instanceof Error ? err.message : "The dream failed.");
+    console.error(JSON.stringify({ event: "dream_failed", error: String(err).slice(0, 180) }));
+    throw new HttpError(502, "dream", "The dream failed.");
   }
   return json(result);
 }
@@ -274,7 +275,8 @@ async function commitDiff(request: Request, env: DemoEnv, visitorId: string, has
     const detail: CommitDetail = await memory.diff(hash);
     return json(detail);
   } catch (err) {
-    throw new HttpError(404, "not_found", err instanceof Error ? err.message : "That commit is not in this repo.");
+    console.error(JSON.stringify({ event: "diff_failed", error: String(err).slice(0, 180) }));
+    throw new HttpError(404, "not_found", "That commit is not in this repo.");
   }
 }
 
@@ -285,12 +287,6 @@ export async function cleanupExpired(env: DemoEnv): Promise<{ deleted: number }>
     try {
       const memory = await memoryStub(env, row.id);
       await memory.forcePurge();
-      try {
-        const chatAgent = await chatStub(env, row.id);
-        await chatAgent.purge();
-      } catch (err) {
-        console.error(JSON.stringify({ event: "cleanup_chat_failed", error: String(err).slice(0, 160) }));
-      }
       deleted += 1;
     } catch (err) {
       console.error(JSON.stringify({ event: "cleanup_visitor_failed", error: String(err).slice(0, 180) }));

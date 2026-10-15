@@ -1,5 +1,5 @@
 import type { MemoryPath } from "../shared/types";
-import { isMemoryPath, MAX_FILE_CHARS, MAX_FILES, MEMORY_PATHS } from "./memory-files";
+import { bulletKey, isMemoryPath, MAX_FILE_CHARS, MAX_FILES, MEMORY_PATHS, parseBullets, TOPIC_PATHS } from "./memory-files";
 import { extractJson, oneLine, stripThinking } from "./model-text";
 
 export type DreamOk = {
@@ -14,6 +14,19 @@ export type DreamNo = { ok: false; reason: string };
 function normalized(body: string): string {
   const text = body.replace(/\r\n/g, "\n").trim();
   return text.endsWith("\n") ? text : `${text}\n`;
+}
+
+function overlayCurrent(current: Record<string, string>): Record<MemoryPath, string> {
+  const files = {} as Record<MemoryPath, string>;
+  for (const path of MEMORY_PATHS) {
+    const existing = current[path] ?? "";
+    files[path] = existing ? normalized(existing) : "";
+  }
+  return files;
+}
+
+function hasForbiddenListMarkers(body: string): boolean {
+  return body.split("\n").some((line) => /^\s*[*] /.test(line) || /^\s*\d+\.\s/.test(line));
 }
 
 /** Accept a full-file consolidation, or a reason to commit nothing. */
@@ -37,14 +50,14 @@ export function parseDream(raw: string, current: Record<string, string>): DreamO
     return { ok: false, reason: "The model omitted the files object, so nothing was committed." };
   }
   const entries = Object.entries(filesRaw as Record<string, unknown>);
-  if (entries.length !== MAX_FILES) {
+  if (entries.length === 0 || entries.length > MAX_FILES) {
     return {
       ok: false,
-      reason: `The model returned ${entries.length} files, and this demo keeps exactly ${MAX_FILES}, so nothing was committed.`,
+      reason: `The model returned ${entries.length} files, and this demo keeps 1–${MAX_FILES}, so nothing was committed.`,
     };
   }
 
-  const files = {} as Record<MemoryPath, string>;
+  const files = overlayCurrent(current);
   for (const [path, body] of entries) {
     if (!isMemoryPath(path)) {
       return { ok: false, reason: `The model used ${path}, which is outside the memory tree, so nothing was committed.` };
@@ -55,6 +68,9 @@ export function parseDream(raw: string, current: Record<string, string>): DreamO
     const text = normalized(body);
     if (text.trim().length === 0) return { ok: false, reason: "A memory file was empty, so nothing was committed." };
     if (text.length > MAX_FILE_CHARS) return { ok: false, reason: "A memory file was too large, so nothing was committed." };
+    if (hasForbiddenListMarkers(text)) {
+      return { ok: false, reason: "A memory file used * or numbered lists instead of - bullets, so nothing was committed." };
+    }
     files[path] = text;
   }
   for (const path of MEMORY_PATHS) {
@@ -63,6 +79,18 @@ export function parseDream(raw: string, current: Record<string, string>): DreamO
   const index = files["MEMORY.md"];
   if (!index.includes("people.md") || !index.includes("preferences.md") || !index.includes("projects.md")) {
     return { ok: false, reason: "MEMORY.md dropped the topic links, so nothing was committed." };
+  }
+  if (!index.includes("## Recent")) {
+    return { ok: false, reason: "MEMORY.md dropped the Recent section, so nothing was committed." };
+  }
+  for (const path of TOPIC_PATHS) {
+    const before = new Set(parseBullets(current[path] ?? "").map(bulletKey));
+    const after = new Set(parseBullets(files[path]).map(bulletKey));
+    for (const key of before) {
+      if (!after.has(key)) {
+        return { ok: false, reason: `A dream dropped a ${path} fact, so nothing was committed.` };
+      }
+    }
   }
 
   const same = MEMORY_PATHS.every((path) => (current[path] ?? "").replace(/\s+$/g, "") === files[path].replace(/\s+$/g, ""));

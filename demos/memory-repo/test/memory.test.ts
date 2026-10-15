@@ -42,6 +42,26 @@ check(chips.some((write) => write.path === "preferences.md" && write.add.some((f
 check(chips.some((write) => write.path === "people.md"), "name lands in people.md");
 check(chips.some((write) => write.path === "projects.md" && write.add.some((fact) => /cloudflare/i.test(fact))), "work lands in projects.md");
 
+check(extractFacts("What should I do next?").length === 0, "questions are not memories");
+check(extractFacts("You should know I hate meetings.").every((write) => write.path !== "projects.md"), "you-should is not a project fact");
+const hate = extractFacts("You should know I hate meetings.");
+check(hate.some((write) => write.path === "preferences.md" && write.add.some((fact) => /meetings/i.test(fact))), JSON.stringify(hate));
+
+const overflow = applyMemoryWrites(
+  (() => {
+    let files = seedFiles();
+    for (let i = 0; i < 40; i++) {
+      files = applyMemoryWrites(files, [{ path: "projects.md", add: [`Project number ${i}`] }], "2026-10-14").files;
+    }
+    return files;
+  })(),
+  [{ path: "projects.md", add: ["Project number 40"] }],
+  "2026-10-14",
+);
+check(overflow.changed && overflow.message.includes("evicted 1"), overflow.message);
+check(!overflow.files["projects.md"].includes("Project number 0"), "the 41st bullet evicts the oldest");
+check(overflow.files["projects.md"].includes("Project number 40"), "the newest fact is kept");
+
 const html = renderMarkdown(`# Memory\n\n- [people](people.md)\n\n<script>alert(1)</script>\n`);
 check(html.includes("&lt;script&gt;"), html);
 check(!html.includes("<script>"), "markdown cannot inject a tag");

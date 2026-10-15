@@ -31,15 +31,16 @@ function errorResponse(err: unknown): Response {
   return Response.json({ error: { code: "internal", message: "The server failed. Try again." } }, { status: 500 });
 }
 
+const PAGE_PATHS = new Set(["/", "/index.html", "/favicon.svg"]);
+
 async function serveAsset(request: Request, env: DemoEnv, path: string): Promise<Response> {
   if (request.method !== "GET" && request.method !== "HEAD") return new Response("Method not allowed", { status: 405 });
+  if (!PAGE_PATHS.has(path) && !path.startsWith("/assets/")) {
+    return new Response("Not found", { status: 404, headers: { "cache-control": "no-store" } });
+  }
   const assetUrl = new URL(request.url);
   assetUrl.pathname = path === "/" ? "/index.html" : path;
-  let res = await env.ASSETS.fetch(new Request(assetUrl, { method: request.method, headers: request.headers }));
-  if (res.status === 404 && !path.startsWith("/assets/")) {
-    assetUrl.pathname = "/index.html";
-    res = await env.ASSETS.fetch(new Request(assetUrl, { method: request.method, headers: request.headers }));
-  }
+  const res = await env.ASSETS.fetch(new Request(assetUrl, { method: request.method, headers: request.headers }));
   const headers = new Headers(res.headers);
   headers.set("x-content-type-options", "nosniff");
   headers.set("referrer-policy", "no-referrer");

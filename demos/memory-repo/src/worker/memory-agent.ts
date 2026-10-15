@@ -1,7 +1,7 @@
-import { Agent, type Connection, callable } from "agents";
+import { Agent, type Connection, callable, getAgentByName } from "agents";
 import type { CommitDetail, DreamStep, DreamView, MemoryFile, MemoryWrite, RecallHit } from "../shared/types";
-import { deleteVisitor, touchVisitor, upsertVisitor } from "./db";
-import { parseDream } from "./dream";
+import { atCap, DEFAULT_AI_CALLS_PER_DAY, DEFAULT_VISITOR_TURNS_PER_DAY, parseCap, utcDay } from "./budget";
+import { consumeGlobalAiCall, deleteVisitor, touchVisitor, upsertVisitor } from "./db";
 import { artifactsBinding, type DemoEnv } from "./env";
 import type { FtsDb } from "./fts";
 import { ensureFts, recall as searchMemory, replaceIndexedFiles } from "./fts";
@@ -9,7 +9,9 @@ import { completeDream } from "./ai";
 import { makeCommit, treeFromFiles } from "./git";
 import { applyMemoryWrites, isMemoryPath, MEMORY_AUTHOR, MEMORY_PATHS, seedFiles } from "./memory-files";
 import { changedFiles } from "./diff";
+import { serialQueue } from "./queue";
 import { asCommits, commitFiles, headCommit, readFilesAt, revokeQuiet, toSummary, tokenPlaintext, withRepo } from "./repo";
+import { joinSentences } from "./text";
 
 export type MemoryState = {
   provisioned: boolean;
@@ -94,6 +96,8 @@ function parseSteps(raw: string): DreamStep[] {
  */
 export class MemoryAgent extends Agent<DemoEnv, MemoryState> {
   initialState: MemoryState = { ...EMPTY };
+  private readonly enqueueWrite = serialQueue();
+  private provisioning: Promise<ProvisionResult> | null = null;
 
   override async onStart(): Promise<void> {
     ensureFts(this.fts());
@@ -117,6 +121,10 @@ export class MemoryAgent extends Agent<DemoEnv, MemoryState> {
       message TEXT,
       steps TEXT NOT NULL,
       created_at INTEGER NOT NULL
+    )`);
+    this.ctx.storage.sql.exec(`CREATE TABLE IF NOT EXISTS ai_usage (
+      day TEXT PRIMARY KEY,
+      turns INTEGER NOT NULL
     )`);
   }
 
@@ -254,6 +262,25 @@ export class MemoryAgent extends Agent<DemoEnv, MemoryState> {
   @callable()
   async provision(): Promise<ProvisionResult> {
     if (this.state.provisioned && this.state.repoName && this.state.remote) {
+      await this.touch();
+      return {
+        ok: true,
+        repoName: this.state.repoName,
+        remote: this.state.remote,
+        head: this.state.head,
+        expiresAt: this.state.expiresAt,
+        threadId: this.threadId(),
+      };
+    }
+    this.provisioning ??= this.doProvision().finally(() => {
+      this.provisioning = null;
+    });
+    return this.provisioning;
+  }
+
+  private async doProvision(): Promise<ProvisionResult> {
+    if (this.state.provisioned && this.state.repoName && this.state.remote) {
+      await this.touch();
       return {
         ok: true,
         repoName: this.state.repoName,
@@ -274,11 +301,13 @@ export class MemoryAgent extends Agent<DemoEnv, MemoryState> {
     }
     let remote = "";
     let seedToken = "";
+    let createdHere = false;
     try {
       const created = await artifacts.create(repoName, {
         description: "tech-demos memory-repo",
         setDefaultBranch: "main",
       });
+      createdHere = true;
       remote = created.remote ?? "";
       if (created.token) seedToken = tokenPlaintext(created.token);
     } catch (err) {
@@ -325,7 +354,7 @@ export class MemoryAgent extends Agent<DemoEnv, MemoryState> {
       }
     } catch (err) {
       console.error(JSON.stringify({ event: "seed_commit_failed", error: String(err).slice(0, 180) }));
-      if (artifacts) {
+      if (createdHere && artifacts) {
         try {
           await artifacts.delete(repoName);
         } catch {
@@ -399,6 +428,10 @@ export class MemoryAgent extends Agent<DemoEnv, MemoryState> {
   @callable()
   async commitWrites(input: { writes: MemoryWrite[]; summary: string }): Promise<CommitWriteResult> {
     if (!this.state.provisioned) return { ok: false, code: "not_ready", message: "Open a memory repo first." };
+    return this.enqueueWrite(() => this.commitWritesLocked(input));
+  }
+
+  private async commitWritesLocked(input: { writes: MemoryWrite[]; summary: string }): Promise<CommitWriteResult> {
     const writes = Array.isArray(input.writes) ? input.writes.slice(0, 6) : [];
     const date = new Date().toISOString().slice(0, 10);
     const next = applyMemoryWrites(this.fileMap(), writes, date);
@@ -427,9 +460,45 @@ export class MemoryAgent extends Agent<DemoEnv, MemoryState> {
         paths: next.added.map((write) => write.path),
       };
     } catch (err) {
-      const message = err instanceof Error ? err.message : "The memory commit failed.";
-      return { ok: false, code: "commit", message };
+      console.error(JSON.stringify({ event: "commit_failed", error: String(err).slice(0, 180) }));
+      return { ok: false, code: "commit", message: "The memory commit failed." };
     }
+  }
+
+  @callable()
+  async consumeAiTurn(): Promise<{ ok: true } | { ok: false; code: string; message: string }> {
+    const day = utcDay();
+    const visitorCap = parseCap(this.env.AI_TURNS_PER_VISITOR_DAY, DEFAULT_VISITOR_TURNS_PER_DAY);
+    const row = this.ctx.storage.sql.exec<{ turns: number }>("SELECT turns FROM ai_usage WHERE day = ?", day).toArray()[0];
+    const turns = row?.turns ?? 0;
+    if (atCap(turns, visitorCap)) {
+      return {
+        ok: false,
+        code: "visitor_budget",
+        message: `This browser reached its daily AI limit (${visitorCap} turns). Try tomorrow.`,
+      };
+    }
+    this.ctx.storage.sql.exec(
+      "INSERT INTO ai_usage (day, turns) VALUES (?, 1) ON CONFLICT(day) DO UPDATE SET turns = turns + 1",
+      day,
+    );
+    const globalCap = parseCap(this.env.AI_CALLS_PER_DAY, DEFAULT_AI_CALLS_PER_DAY);
+    try {
+      const global = await consumeGlobalAiCall(this.env, day, globalCap);
+      if (!global.ok) {
+        this.ctx.storage.sql.exec("UPDATE ai_usage SET turns = MAX(0, turns - 1) WHERE day = ?", day);
+        return {
+          ok: false,
+          code: "global_budget",
+          message: `The demo reached its daily AI budget (${globalCap} calls). Try tomorrow.`,
+        };
+      }
+    } catch (err) {
+      this.ctx.storage.sql.exec("UPDATE ai_usage SET turns = MAX(0, turns - 1) WHERE day = ?", day);
+      console.error(JSON.stringify({ event: "ai_meter_failed", error: String(err).slice(0, 180) }));
+      return { ok: false, code: "global_budget", message: "The AI budget could not be checked. Try again." };
+    }
+    return { ok: true };
   }
 
   @callable()
@@ -464,6 +533,12 @@ export class MemoryAgent extends Agent<DemoEnv, MemoryState> {
   @callable()
   async forcePurge(): Promise<void> {
     if (!this.state.provisioned) {
+      try {
+        const chat = await getAgentByName(this.env.ChatAgent, this.threadId());
+        await chat.purge();
+      } catch (err) {
+        console.error(JSON.stringify({ event: "chat_purge_failed", error: String(err).slice(0, 180) }));
+      }
       await deleteVisitor(this.env, this.name);
       return;
     }
@@ -516,27 +591,42 @@ export class MemoryAgent extends Agent<DemoEnv, MemoryState> {
 
   private async executeDream(trigger: "alarm" | "now"): Promise<DreamView> {
     if (!this.state.provisioned) {
-      return this.recordDream({
+      return this.dreamView({
         status: "skipped",
         reason: "Open a memory repo first.",
         commitHash: null,
         message: null,
         steps: [],
+        persist: false,
       });
     }
     const cap = dreamsPerHour(this.env);
     const steps: DreamStep[] = [];
     if (this.dreamsThisHour() >= cap) {
       steps.push({ label: "Cap", detail: `${cap} dreams already ran in the last hour.` });
-      return this.recordDream({
+      return this.dreamView({
         status: "skipped",
         reason: `Dream cap is ${cap} per hour, so nothing was committed.`,
         commitHash: null,
         message: null,
         steps,
+        persist: false,
+      });
+    }
+    const budget = await this.consumeAiTurn();
+    if (!budget.ok) {
+      steps.push({ label: "Budget", detail: budget.message });
+      return this.dreamView({
+        status: "skipped",
+        reason: budget.message,
+        commitHash: null,
+        message: null,
+        steps,
+        persist: false,
       });
     }
     const files = this.fileMap();
+    const headBefore = this.state.head;
     steps.push({ label: "Read memory files", detail: MEMORY_PATHS.join(", ") });
     const summaries = this.recentSummaries();
     steps.push({
@@ -548,60 +638,76 @@ export class MemoryAgent extends Agent<DemoEnv, MemoryState> {
       parsed = await completeDream(this.env, { files, summaries }, files);
       steps.push({ label: "Ask Workers AI to consolidate", detail: parsed.ok ? parsed.why : parsed.reason });
     } catch (err) {
-      const detail = err instanceof Error ? err.message : "Workers AI failed";
-      steps.push({ label: "Ask Workers AI to consolidate", detail });
-      const dream = this.recordDream({
+      console.error(JSON.stringify({ event: "dream_model_failed", error: String(err).slice(0, 180) }));
+      steps.push({ label: "Ask Workers AI to consolidate", detail: "Workers AI failed" });
+      return this.dreamView({
         status: "skipped",
-        reason: `${detail} Nothing was committed.`,
+        reason: joinSentences("Workers AI failed", "Nothing was committed"),
         commitHash: null,
         message: null,
         steps,
       });
-      return dream;
     }
     if (!parsed.ok) {
       if (trigger === "alarm" && parsed.reason.includes("match the current")) {
         this.setState({ ...this.state, lastDreamAt: Date.now() });
       }
       steps.push({ label: "Skip", detail: "Nothing was committed." });
-      return this.recordDream({ status: "skipped", reason: parsed.reason, commitHash: null, message: null, steps });
+      return this.dreamView({ status: "skipped", reason: parsed.reason, commitHash: null, message: null, steps });
     }
-    const checked = parseDream(JSON.stringify({ message: parsed.message, why: parsed.why, files: parsed.files }), files);
-    if (!checked.ok) {
-      steps.push({ label: "Skip", detail: checked.reason });
-      return this.recordDream({ status: "skipped", reason: checked.reason, commitHash: null, message: null, steps });
-    }
-    try {
-      const hash = await this.push(checked.files, checked.message);
-      replaceIndexedFiles(this.fts(), checked.files, Date.now());
-      this.setState({ ...this.state, head: hash, lastDreamAt: Date.now() });
-      steps.push({ label: "Commit", detail: `${hash.slice(0, 7)} ${checked.message}` });
-      await this.touch();
-      return this.recordDream({
-        status: "committed",
-        reason: checked.why,
-        commitHash: hash,
-        message: checked.message,
-        steps,
-      });
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : "The commit failed";
-      steps.push({ label: "Commit failed", detail });
-      return this.recordDream({
+    if (this.state.head !== headBefore) {
+      steps.push({ label: "Skip", detail: "Memory changed during the dream." });
+      return this.dreamView({
         status: "skipped",
-        reason: `${detail} Nothing was committed.`,
+        reason: "Memory changed during the dream; nothing was committed.",
         commitHash: null,
         message: null,
         steps,
       });
     }
+    return this.enqueueWrite(async () => {
+      if (this.state.head !== headBefore) {
+        steps.push({ label: "Skip", detail: "Memory changed during the dream." });
+        return this.dreamView({
+          status: "skipped",
+          reason: "Memory changed during the dream; nothing was committed.",
+          commitHash: null,
+          message: null,
+          steps,
+        });
+      }
+      try {
+        const hash = await this.push(parsed.files, parsed.message);
+        replaceIndexedFiles(this.fts(), parsed.files, Date.now());
+        this.setState({ ...this.state, head: hash, lastDreamAt: Date.now() });
+        steps.push({ label: "Commit", detail: `${hash.slice(0, 7)} ${parsed.message}` });
+        await this.touch();
+        return this.dreamView({
+          status: "committed",
+          reason: parsed.why,
+          commitHash: hash,
+          message: parsed.message,
+          steps,
+        });
+      } catch (err) {
+        console.error(JSON.stringify({ event: "dream_commit_failed", error: String(err).slice(0, 180) }));
+        steps.push({ label: "Commit failed", detail: "The memory commit failed." });
+        return this.dreamView({
+          status: "skipped",
+          reason: joinSentences("The memory commit failed", "Nothing was committed"),
+          commitHash: null,
+          message: null,
+          steps,
+        });
+      }
+    });
   }
 
   private async push(files: Record<string, string>, message: string): Promise<string> {
     if (this.state.backend === "local") return this.writeLocalCommit(files, message, this.state.head);
     const artifacts = artifactsBinding(this.env);
     if (!artifacts) throw new Error("Artifacts is not available.");
-    const parent = await withRepo(artifacts, this.state.repoName, async (repo) => (await headCommit(repo))?.hash ?? null);
+    const parent = this.state.head;
     const minted = await withRepo(artifacts, this.state.repoName, (repo) => repo.createToken("write", 120));
     const token = tokenPlaintext(minted);
     try {
@@ -643,16 +749,23 @@ export class MemoryAgent extends Agent<DemoEnv, MemoryState> {
 
   private dreamsThisHour(): number {
     const since = Date.now() - 60 * 60 * 1000;
-    const row = this.ctx.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM dream_log WHERE created_at > ?", since).one();
+    const row = this.ctx.storage.sql
+      .exec<{ n: number }>(
+        "SELECT COUNT(*) AS n FROM dream_log WHERE created_at > ? AND steps LIKE ?",
+        since,
+        "%Ask Workers AI to consolidate%",
+      )
+      .one();
     return row?.n ?? 0;
   }
 
-  private recordDream(entry: {
+  private dreamView(entry: {
     status: DreamView["status"];
     reason: string;
     commitHash: string | null;
     message: string | null;
     steps: DreamStep[];
+    persist?: boolean;
   }): DreamView {
     const view: DreamView = {
       id: crypto.randomUUID(),
@@ -663,6 +776,7 @@ export class MemoryAgent extends Agent<DemoEnv, MemoryState> {
       steps: entry.steps,
       createdAt: Date.now(),
     };
+    if (entry.persist === false) return view;
     this.ctx.storage.sql.exec(
       "INSERT INTO dream_log (id, status, reason, commit_hash, message, steps, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
       view.id,
@@ -729,6 +843,12 @@ export class MemoryAgent extends Agent<DemoEnv, MemoryState> {
   }
 
   private async wipe(): Promise<void> {
+    try {
+      const chat = await getAgentByName(this.env.ChatAgent, this.threadId());
+      await chat.purge();
+    } catch (err) {
+      console.error(JSON.stringify({ event: "chat_purge_failed", error: String(err).slice(0, 180) }));
+    }
     const repoName = this.state.repoName;
     if (repoName && this.state.backend !== "local") {
       const artifacts = artifactsBinding(this.env);
@@ -742,11 +862,6 @@ export class MemoryAgent extends Agent<DemoEnv, MemoryState> {
       }
     }
     await deleteVisitor(this.env, this.name);
-    this.ctx.storage.sql.exec("DELETE FROM files");
-    this.ctx.storage.sql.exec("DELETE FROM memory_fts");
-    this.ctx.storage.sql.exec("DELETE FROM summaries");
-    this.ctx.storage.sql.exec("DELETE FROM dream_log");
-    this.ctx.storage.sql.exec("DELETE FROM local_commits");
-    this.setState({ ...EMPTY });
+    await this.destroy();
   }
 }

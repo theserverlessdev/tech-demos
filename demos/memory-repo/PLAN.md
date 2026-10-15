@@ -11,7 +11,8 @@ Show one anonymous visitor that an agent's long-term memory can be plain markdow
 - MemoryAgent (one SQLite Durable Object per visitor) owns the repo, the FTS5 index, and a 4-hour dream alarm.
 - Dream now, or the alarm, asks Workers AI for consolidated files. Unusable output commits nothing and says why.
 - UI: chat, memory tree plus rendered files, commit log and unified diff. Phone layout is tabs.
-- A cron and a Durable Object alarm delete the repo and rows 24 hours after the last activity.
+- A cron and a Durable Object alarm delete the repo, the chat Durable Object (`deleteAll`/`destroy`), and rows 24 hours after the last activity.
+- Repo mutations are serialized. A dream records `head` before the model call and skips if it moved. Push uses `state.head` as the parent.
 
 ## Out of scope
 
@@ -22,7 +23,7 @@ Alchemy, email login, notes editor, graph view, cost ledger, OpenRouter, isomorp
 - Workers + Static Assets and the Agents SDK, because that is the sibling pattern for a Durable Object per tenant.
 - Artifacts plus Git smart HTTP, copied from the repo-per-agent approach, because the binding reads trees and mints tokens and the commit itself is a pack push.
 - D1 for the visitor row the cron sweeps. FTS5 lives in the MemoryAgent SQLite database.
-- Workers AI (`@cf/zai-org/glm-5.3-flash`) for chat and dreams. Turnstile and four rate-limit namespaces (7431–7434) gate the public routes.
+- Workers AI (`@cf/zai-org/glm-5.3-flash`) for chat and dreams. Turnstile and four rate-limit namespaces (7431–7434) gate the public routes. Per-visitor SQLite and a D1 `ai_meter` row cap daily AI calls. New rate-limit ids, if any, start at 7490.
 
 ## Tasks
 

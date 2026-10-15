@@ -1,6 +1,6 @@
 # Memory repo
 
-Live at [tech-demos.theserverless.dev/demos/memory-repo](https://tech-demos.theserverless.dev/demos/memory-repo/) after deploy.
+Live at [tech-demos.theserverless.dev/demos/memory-repo](https://tech-demos.theserverless.dev/demos/memory-repo/). Self-hosters: deploy with the steps below.
 
 An agent's long-term memory is plain markdown in a git repo. Every fact is a commit. A dream merges, dedupes, and rewrites those files, and the diff shows what changed.
 
@@ -8,7 +8,7 @@ Inspired by [supermemoryai/memoryrepo](https://github.com/supermemoryai/memoryre
 
 ## What this demonstrates
 
-**Pattern.** One ChatAgent Durable Object per thread recalls an FTS5 index, then Workers AI replies. One MemoryAgent per anonymous visitor owns an Artifacts git repo of markdown (`MEMORY.md` plus `people.md`, `preferences.md`, and `projects.md`). Every memory write is a commit through Git smart HTTP. A 4-hour alarm, or Dream now, asks Workers AI to consolidate the files. If that output is unusable, nothing is committed and the page says why. A cron deletes the repo and the D1 row 24 hours after the last message.
+**Pattern.** One ChatAgent Durable Object per thread recalls an FTS5 index, then Workers AI replies. One MemoryAgent per anonymous visitor owns an Artifacts git repo of markdown (`MEMORY.md` plus `people.md`, `preferences.md`, and `projects.md`). Every memory write is a commit through Git smart HTTP. A 4-hour alarm, or Dream now, asks Workers AI to consolidate the files. If that output is unusable, nothing is committed and the page says why. A cron and a Durable Object alarm delete the repo, the chat Durable Object, and the D1 row 24 hours after the last message.
 
 **What you can do**
 
@@ -26,15 +26,17 @@ Inspired by [supermemoryai/memoryrepo](https://github.com/supermemoryai/memoryre
 
 **Limits**
 
-- Four files, 12,000 characters each, messages of 800 characters, and 6 dreams per hour (the 7432 binding also caps bursts).
+- Four files, 12,000 characters each, 40 bullets per topic file (the oldest is evicted), messages of 800 characters, and 6 dreams per hour (the 7432 binding also caps bursts).
 - Turnstile is required before the repo is created. A missing secret fails closed. Chat and dream use the visitor cookie plus rate limits.
-- Workers AI writes the reply and the dream. A failed dream commits nothing. If chat's model output is unusable, obvious facts from the message can still be committed and the reply says it is a fallback.
-- This browser's Artifacts repo, FTS index, chat, and D1 row are deleted 24 hours after the last message.
+- One browser gets 150 Workers AI turns per UTC day. The Worker as a whole stops at 300 AI calls per UTC day.
+- Workers AI writes the reply and the dream. A failed dream commits nothing. If chat's model output is unusable, obvious facts from the message can still be committed and the reply says it is a fallback. Questions are not treated as facts.
+- A dream asks for only the files that changed, with `max_tokens` 6000, which is enough for four topic files at the 40-bullet cap. Unusable JSON commits nothing.
+- This browser's Artifacts repo, FTS index, chat Durable Object, and D1 row are deleted 24 hours after the last message.
 
 ## What is real
 
 - Artifacts namespace `tech-demos` (shared with repo-per-agent). The binding creates the repo, reads the tree and the log, and mints a short-lived write token. The commit itself is a Git smart HTTP push.
-- D1 stores the visitor row the cron sweeps. The MemoryAgent SQLite database holds the FTS5 index, summaries, and the dream log.
+- D1 stores the visitor row the cron sweeps and the global `ai_meter` row. The MemoryAgent SQLite database holds the FTS5 index, summaries, the dream log, and the per-visitor daily AI counter.
 - The dream alarm is Agents SDK `schedule()` (it owns the Durable Object alarm). A 15-minute cron is the backstop that deletes expired repos.
 
 ## Run locally
@@ -54,9 +56,9 @@ The Artifacts binding in `wrangler.jsonc` is `remote: true`, and Workers AI is r
 
 `bun run typecheck` runs `wrangler types` before `tsc`, so a clean clone does not need a committed `worker-configuration.d.ts`.
 
-## Deploy
+## Deploy (self-hosters)
 
-Do not deploy from this PR until the resources below exist. From this folder, with the owner account (unset any other API token):
+This demo is already live on the tech-demos account. To run your own copy, from this folder, with that account (unset any other API token):
 
 ```bash
 bunx wrangler d1 create tech-demos-memory-repo
@@ -74,9 +76,9 @@ A brand-new Worker with `secrets.required` needs a first deploy before `wrangler
 | D1 database | `tech-demos-memory-repo` | **Exists.** `database_id` in `wrangler.jsonc` is `a4810d2e-56d9-424f-a9f8-93cdbb41a42c`. Self-hosters: `wrangler d1 create tech-demos-memory-repo` and paste that id over the one in `wrangler.jsonc`. |
 | Turnstile widget | `tech-demos-memory-repo` | **Exists.** Hostnames: `tech-demos.theserverless.dev`, `memory-repo.tech-demos.theserverless.dev`. `TURNSTILE_SITE_KEY` is `0x4AAAAAAFR__jdvlvsysD_8`. Self-hosters: create a widget for those hostnames, put the site key in `TURNSTILE_SITE_KEY`, and put the secret with `wrangler secret put TURNSTILE_SECRET`. |
 | Artifacts namespace | `tech-demos` | Shared with repo-per-agent. Create it only if this account does not already have it. |
-| Rate-limit namespaces | `7431` chat, `7432` dream, `7433` create, `7434` read | Created when this Worker is deployed. They do not overlap the ids already in the repo. |
+| Rate-limit namespaces | `7431` chat, `7432` dream, `7433` create, `7434` read | Created when this Worker is deployed. They do not overlap the ids already in the repo. New ids must be 7490+. |
 | Durable Object classes | `ChatAgent`, `MemoryAgent` | Created by the `v1` migration on deploy. |
-| Routes | `tech-demos.theserverless.dev/demos/memory-repo*` and `memory-repo.tech-demos.theserverless.dev/*` | Applied on deploy. The zone is `theserverless.dev`. |
+| Routes | `tech-demos.theserverless.dev/demos/memory-repo`, `/demos/memory-repo/*`, and `memory-repo.tech-demos.theserverless.dev/*` | Applied on deploy. The zone is `theserverless.dev`. `workers_dev` is off. |
 
 Production fails closed when `TURNSTILE_SECRET` is missing, and it rejects the always-pass test secret unless `ENVIRONMENT` is `local`.
 
@@ -88,6 +90,6 @@ After the Worker is deployed, redeploy `apps/hub` so the gallery card is not onl
 src/worker/   ChatAgent, MemoryAgent, git push, D1, Turnstile
 src/client/   chat, memory tree, commit diff
 public/       Graphite & Ember page
-migrations/   visitors
+migrations/   visitors, ai_meter
 test/         memory writes, dream parsing, FTS recall
 ```

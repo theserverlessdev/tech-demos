@@ -101,14 +101,18 @@ export type WriteResult = {
   added: MemoryWrite[];
 };
 
-export function commitMessage(writes: MemoryWrite[]): string {
+export function commitMessage(writes: MemoryWrite[], evicted = 0): string {
   const bullets = writes.flatMap((write) => write.add.map(stripProvenance));
+  let message: string;
   if (bullets.length === 1) {
     const text = bullets[0] ?? "a fact";
     const subject = text.length > 54 ? `${text.slice(0, 51)}…` : text;
-    return `Remember: ${subject}`;
+    message = `Remember: ${subject}`;
+  } else {
+    message = `Remember ${bullets.length} facts`;
   }
-  return `Remember ${bullets.length} facts`;
+  if (evicted > 0) message = `${message} (evicted ${evicted})`;
+  return message;
 }
 
 function overlay(current: Record<string, string>): Record<MemoryPath, string> {
@@ -135,6 +139,7 @@ export function applyMemoryWrites(current: Record<string, string>, writes: Memor
 
   const added: MemoryWrite[] = [];
   let count = 0;
+  let evicted = 0;
   for (const path of TOPIC_PATHS) {
     const incoming = grouped.get(path) ?? [];
     if (incoming.length === 0) continue;
@@ -153,6 +158,7 @@ export function applyMemoryWrites(current: Record<string, string>, writes: Memor
       count += 1;
     }
     if (fresh.length === 0) continue;
+    if (existing.length > MAX_BULLETS_PER_FILE) evicted += existing.length - MAX_BULLETS_PER_FILE;
     files[path] = topicFile(path, existing.slice(-MAX_BULLETS_PER_FILE));
     added.push({ path, add: fresh });
   }
@@ -168,5 +174,11 @@ export function applyMemoryWrites(current: Record<string, string>, writes: Memor
   for (const path of MEMORY_PATHS) {
     if (files[path].length > MAX_FILE_CHARS) return { files: overlay(current), changed: false, message: "", added: [] };
   }
-  return { files, changed: true, message: commitMessage(added), added };
+  return { files, changed: true, message: commitMessage(added, evicted), added };
+}
+
+/** FTS indexes facts, not the MEMORY.md template boilerplate. */
+export function indexableBody(path: string, body: string): string {
+  if (path === "MEMORY.md") return parseRecent(body).join("\n");
+  return parseBullets(body).join("\n");
 }

@@ -1,5 +1,5 @@
 import { parseDream } from "../src/worker/dream";
-import { seedFiles } from "../src/worker/memory-files";
+import { applyMemoryWrites, seedFiles } from "../src/worker/memory-files";
 import { check } from "./assert";
 
 const current = seedFiles();
@@ -52,5 +52,58 @@ const dropped = parseDream(
   current,
 );
 check(!dropped.ok && dropped.reason.includes("topic links"), dropped.ok ? "" : dropped.reason);
+
+const remembered = applyMemoryWrites(current, [{ path: "people.md", add: ["Name is Ankur"] }], "2026-10-14");
+check(remembered.changed, "fixture person");
+const stars = parseDream(
+  JSON.stringify({
+    message: "dream: stars",
+    why: "wrong list",
+    files: { "people.md": "# People\n\n* Name is Ankur [source: chat; added: 2026-10-14]\n" },
+  }),
+  remembered.files,
+);
+check(!stars.ok && (stars.reason.includes("numbered lists") || stars.reason.includes("*")), stars.ok ? "" : stars.reason);
+
+const lost = parseDream(
+  JSON.stringify({
+    message: "dream: drop ankur",
+    why: "oops",
+    files: { "people.md": "# People\n\n- Nothing here yet.\n" },
+  }),
+  remembered.files,
+);
+check(!lost.ok && lost.reason.includes("dropped"), lost.ok ? "" : lost.reason);
+
+const partial = parseDream(
+  JSON.stringify({
+    message: "tidy people",
+    why: "Keep the fact, rewrite the heading spacing.",
+    files: {
+      "people.md": remembered.files["people.md"].replace("# People", "# People"),
+    },
+  }),
+  remembered.files,
+);
+check(!partial.ok && partial.reason.includes("match the current"), partial.ok ? "" : partial.reason);
+
+const kept = parseDream(
+  JSON.stringify({
+    message: "tidy people",
+    why: "Keep Ankur and note the role.",
+    files: {
+      "people.md": remembered.files["people.md"].replace(
+        "Name is Ankur [source: chat; added: 2026-10-14]",
+        "Name is Ankur [source: chat; added: 2026-10-14]\n- Builds Workers demos [source: dream; added: 2026-10-14]",
+      ),
+    },
+  }),
+  remembered.files,
+);
+check(kept.ok, kept.ok ? "ok" : kept.reason);
+if (kept.ok) {
+  check(kept.files["people.md"].includes("Name is Ankur"), "partial dream keeps the old bullet");
+  check(kept.files["preferences.md"] === remembered.files["preferences.md"] || kept.files["preferences.md"].includes("Preferences"), "unchanged files stay");
+}
 
 console.log("dream tests passed");

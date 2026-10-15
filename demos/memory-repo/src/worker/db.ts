@@ -1,3 +1,4 @@
+import { CONSUME_GLOBAL_AI_SQL, ROLLBACK_GLOBAL_AI_SQL } from "./budget";
 import type { DemoEnv } from "./env";
 
 export type VisitorRow = {
@@ -66,4 +67,19 @@ export async function listExpired(env: DemoEnv, now: number, limit: number): Pro
     .bind(now, limit)
     .all<VisitorRecord>();
   return results.map(mapRow);
+}
+
+/** Atomically increment the global daily AI counter. Rolls back when the cap is exceeded. */
+export async function consumeGlobalAiCall(
+  env: DemoEnv,
+  day: string,
+  cap: number,
+): Promise<{ ok: boolean; calls: number }> {
+  const row = await env.DB.prepare(CONSUME_GLOBAL_AI_SQL).bind(day).first<{ calls: number }>();
+  const calls = row?.calls ?? 1;
+  if (calls > cap) {
+    await env.DB.prepare(ROLLBACK_GLOBAL_AI_SQL).bind(day).run();
+    return { ok: false, calls: Math.max(0, calls - 1) };
+  }
+  return { ok: true, calls };
 }

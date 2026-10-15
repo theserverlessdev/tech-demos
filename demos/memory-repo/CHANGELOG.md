@@ -12,13 +12,17 @@ This demo is an inspired-by slice of [supermemoryai/memoryrepo](https://github.c
 - Topic files are flat: `people.md`, `preferences.md`, `projects.md`. No per-person paths, notes editor, or graph view.
 - A dream is one Workers AI call that returns the consolidated files. Unusable output commits nothing and the page says why. Upstream dreams with a tool loop.
 - Commits go out as Git packs over smart HTTP, the same path as repo-per-agent. The Artifacts binding creates the repo, reads the tree, and mints the write token.
-- Turnstile gates repo creation. Rate limits are chat `7431`, dream `7432`, create `7433`, and read `7434`.
-- The repo, the FTS index, the chat, and the D1 row are deleted 24 hours after the last message.
+- Turnstile gates repo creation. Rate limits are chat `7431`, dream `7432`, create `7433`, and read `7434`. New ids start at 7490.
+- The repo, the FTS index, the chat Durable Object, and the D1 row are deleted 24 hours after the last message.
 - Graphite & Ember UI. No React, no Quartz graph, no Pierre diffs.
 
 ## Same idea
 
 Long-term memory is a git repository of markdown. `MEMORY.md` is the index. Every memory write is a commit, and so is every dream. The history and the diff are the audit trail.
+
+## 2026-10-14
+
+Audit fixes: expiry now destroys the chat Durable Object; dreams skip when memory moved during the model call; regex facts are fallback-only; chat writes keep `- ` bullets; chips honor in-flight; daily AI caps; `/api/health` is rate-limited and does not call Artifacts; dream `max_tokens` 6000 with changed-files-only JSON; phone composer sits under the Chat heading at 390px.
 
 ## 2026-10-09
 

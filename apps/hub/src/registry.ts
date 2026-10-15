@@ -405,7 +405,7 @@ export const demos: DemoEntry[] = [
     title: "Memory repo",
     description: "An agent's memory is markdown in a git repo. Facts and dreams are commits you can diff.",
     demonstrates:
-      "One ChatAgent Durable Object per visitor recalls an FTS5 index, then Workers AI replies. One MemoryAgent per visitor owns an Artifacts git repo of markdown. Every memory write is a commit, and a dream alarm consolidates the files into another commit. If the model output is unusable, nothing is committed. The repo and rows are deleted 24 h after the last activity.",
+      "One ChatAgent Durable Object per visitor recalls an FTS5 index, then Workers AI replies. One MemoryAgent per visitor owns an Artifacts git repo of markdown. Every memory write is a commit, and a dream alarm consolidates the files into another commit. If the dream's output is unusable, nothing is committed. The repo, chat, and rows are deleted 24 h after the last activity.",
     capabilities: [
       "Pass Turnstile and open a memory repo for this browser",
       "State a name, preference, or project and see the commit",

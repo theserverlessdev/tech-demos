@@ -39,4 +39,21 @@ check(person.some((hit) => hit.path === "people.md"), JSON.stringify(person));
 const none = recall(db, "zzzzqq", 5);
 check(none.length === 0, "unknown words recall nothing");
 
+const boilerplate = recall(db, "names and roles", 5);
+check(!boilerplate.some((hit) => hit.snippet.toLowerCase().includes("names and roles")), JSON.stringify(boilerplate));
+
+const empty = new Database(":memory:");
+const emptyDb: FtsDb = {
+  exec(sql, ...params) {
+    empty.query(sql).run(...params);
+  },
+  all(sql, ...params) {
+    return empty.query(sql).all(...params) as Record<string, unknown>[];
+  },
+};
+ensureFts(emptyDb);
+replaceIndexedFiles(emptyDb, seedFiles(), 1);
+const seedHit = recall(emptyDb, "names and roles", 5);
+check(seedHit.length === 0, "empty memory does not recall the template");
+
 console.log("fts tests passed");

@@ -31,8 +31,20 @@ function splitPreference(fact: string): string[] {
   return parts.length >= 2 && parts.every((part) => part.length <= 80) ? parts : [cleanFact(fact)];
 }
 
+const INTERROGATIVE = /^(what|why|how|when|where|who|which|whose|whom|is|are|do|does|did|can|could|would|will|should)\b/i;
+const BAD_SHOULD_SUBJECT = /^(i|you|we|they|it|what|which|how|who|why|when|where)$/i;
+
+/** Questions are not memories. Used so regex fallback does not commit "What should I do next?". */
+export function isQuestion(message: string): boolean {
+  const text = message.trim();
+  if (!text) return false;
+  if (text.endsWith("?")) return true;
+  return INTERROGATIVE.test(text);
+}
+
 /** Pull obvious durable facts out of a message so a chip still becomes a commit if the model omits them. */
 export function extractFacts(message: string): MemoryWrite[] {
+  if (isQuestion(message)) return [];
   const writes: MemoryWrite[] = [];
   const name = /\bmy name is\s+([A-Za-z][A-Za-z'-]{1,40})\b/i.exec(message);
   if (name?.[1]) pushFact(writes, "people.md", `Name is ${cleanFact(name[1])}`);
@@ -51,7 +63,9 @@ export function extractFacts(message: string): MemoryWrite[] {
   if (building?.[1]) pushFact(writes, "projects.md", `Working on ${cleanFact(building[1])}`);
 
   const should = /\b([A-Za-z0-9][\w .-]{2,48}?) should\s+([^.!\n]{3,100})/i.exec(message);
-  if (should?.[1] && should[2]) pushFact(writes, "projects.md", `${cleanFact(should[1])} should ${cleanFact(should[2])}`);
+  if (should?.[1] && should[2] && !BAD_SHOULD_SUBJECT.test(cleanFact(should[1]))) {
+    pushFact(writes, "projects.md", `${cleanFact(should[1])} should ${cleanFact(should[2])}`);
+  }
 
   return writes;
 }
