@@ -122,19 +122,14 @@ Owner rules do not apply to your instance. You get the full product: Email Worke
 This needs **Workers Paid** (`cpu_ms` 5000; Free is 10 ms CPU). `deploy` builds, applies D1 migrations, then deploys. Do not run it before D1 exists.
 
 1. Click **Deploy to Cloudflare** in the README (uses `wrangler.jsonc` and the `deploy` script). The button provisions D1 (the template omits `database_id` so wrangler can create it) and an R2 bucket, then `deploy` applies migrations.
-2. If you copied the folder instead of using the button, create R2 (required — blobs are not stored in D1), then deploy. Do **not** `d1 create` a second database if the button already bound one.
+2. If you copied the folder instead of using the button, create R2 and D1, then deploy. Do **not** `d1 create` a second database if the button already bound one.
 
 ```bash
 bunx wrangler r2 bucket create temp-email
 # If you pick another name, set r2_buckets[0].bucket_name in wrangler.jsonc.
-bun run deploy   # build, remote D1 migrations, wrangler deploy
-```
-
-If you are not using the button and wrangler has not created D1 yet:
-
-```bash
 bunx wrangler d1 create temp-email
-# Paste the printed database_id into wrangler.jsonc, then bun run deploy.
+# Lookup is by name; pasting database_id into wrangler.jsonc is optional.
+bun run deploy   # build, remote D1 migrations, wrangler deploy
 ```
 
 3. Set vars: `MAIL_DOMAIN`, `PUBLIC_ORIGIN`, `HOSTED_MODE=false`, `TURNSTILE_SITE_KEY`.

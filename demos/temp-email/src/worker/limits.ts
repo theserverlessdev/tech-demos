@@ -12,6 +12,8 @@ export const SNIPPET_CHARS = 160;
 export const SNIPPET_SOURCE_MAX = 2048;
 export const MAX_HEADER_CHARS = 2048;
 export const MAX_ATTACHMENTS = 20;
+/** Content-Disposition filename / filename* — keep R2 metadata under the 8 KB header budget. */
+export const MAX_DISPOSITION_FILENAME = 255;
 
 export function clipChars(value: string | null | undefined, max = MAX_HEADER_CHARS): string | null {
   if (value == null || value === "") return null;

@@ -1,5 +1,5 @@
 import type { AttachmentMeta } from "../shared/types";
-import { clipChars, MAX_ATTACHMENTS } from "./limits";
+import { clipChars, MAX_ATTACHMENTS, MAX_DISPOSITION_FILENAME } from "./limits";
 
 function safeFilename(name: string | null | undefined): string {
   const base = (name ?? "attachment").split(/[/\\]/).pop() || "attachment";
@@ -7,8 +7,8 @@ function safeFilename(name: string | null | undefined): string {
   return cleaned || "attachment";
 }
 
-function contentDisposition(filename: string | null): string {
-  const raw = filename || "attachment";
+export function contentDisposition(filename: string | null): string {
+  const raw = (filename || "attachment").slice(0, MAX_DISPOSITION_FILENAME);
   const ascii = raw.replace(/[^\x20-\x7E]+/g, "_").replace(/["\\]/g, "_") || "attachment";
   return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(raw)}`;
 }

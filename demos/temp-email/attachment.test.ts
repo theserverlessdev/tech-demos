@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { clipAttachmentPart, storeAttachments } from "./src/worker/attachments.ts";
-import { MAX_ATTACHMENTS, MAX_HEADER_CHARS } from "./src/worker/limits.ts";
+import { clipAttachmentPart, contentDisposition, storeAttachments } from "./src/worker/attachments.ts";
+import { MAX_ATTACHMENTS, MAX_DISPOSITION_FILENAME, MAX_HEADER_CHARS } from "./src/worker/limits.ts";
 
 function mockBucket(): R2Bucket {
   const objects = new Map<string, ArrayBuffer | string>();
@@ -30,6 +30,13 @@ test("attachment filename and mimeType cap at 2 KB", () => {
   expect(meta.filename?.length).toBe(MAX_HEADER_CHARS);
   expect(meta.mimeType.length).toBe(MAX_HEADER_CHARS);
   expect(meta.disposition?.length).toBe(MAX_HEADER_CHARS);
+});
+
+test("Content-Disposition filename clips to 255 characters", () => {
+  const disp = contentDisposition("x".repeat(MAX_HEADER_CHARS + 40));
+  const star = disp.match(/filename\*=UTF-8''([^;]+)/)?.[1] ?? "";
+  expect(decodeURIComponent(star).length).toBe(MAX_DISPOSITION_FILENAME);
+  expect(disp.length).toBeLessThan(8192);
 });
 
 test("storeAttachments keeps at most 20 parts and clips metadata", async () => {
