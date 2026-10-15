@@ -1,9 +1,7 @@
 import { Agent, callable } from "agents";
 import type { RunResult } from "../shared/types";
-import { proposeEdit } from "./ai";
-import { getTask, insertActivity } from "./db";
 import type { DemoEnv } from "./env";
-import { commitFiles, headCommit, readFilesAt, revokeQuiet, tokenPlaintext, withRepo } from "./repo";
+import { AgentBusyError, executeRun, type RunInput } from "./run";
 
 export type AgentState = {
   phase: "ready" | "running" | "error";
@@ -12,29 +10,24 @@ export type AgentState = {
   lastError: string | null;
 };
 
-type RunInput = { visitorId: string; taskId: string; instruction: string };
+export { AgentBusyError, AgentBudgetError, executeRun, type RunInput } from "./run";
 
 /**
  * One Durable Object per task. The instance name is the task id.
- * Git bytes stay in that task's Artifacts repo; this object only remembers the run phase.
+ * Git bytes stay in that task's Artifacts repo. This object serializes runs and remembers phase.
  */
 export class TaskAgent extends Agent<DemoEnv, AgentState> {
   initialState: AgentState = { phase: "ready", runs: 0, lastCommit: null, lastError: null };
   #busy = false;
 
   @callable()
-  async attach(): Promise<{ name: string }> {
-    return { name: this.name };
-  }
-
-  @callable()
   async runTurn(input: RunInput): Promise<RunResult> {
     if (input.taskId !== this.name) throw new Error("This agent does not own that task.");
-    if (this.#busy) throw new Error("This agent is already writing a commit.");
+    if (this.#busy) throw new AgentBusyError();
     this.#busy = true;
     this.setState({ ...this.state, phase: "running", lastError: null });
     try {
-      const result = await this.#commit(input);
+      const result = await executeRun(this.env, input);
       this.setState({ phase: "ready", runs: this.state.runs + 1, lastCommit: result.hash, lastError: null });
       return result;
     } catch (err) {
@@ -46,50 +39,19 @@ export class TaskAgent extends Agent<DemoEnv, AgentState> {
     }
   }
 
-  async #commit(input: RunInput): Promise<RunResult> {
-    const now = Date.now();
-    const task = await getTask(this.env, input.visitorId, input.taskId, now);
-    if (!task) throw new Error("This task is gone.");
+  @callable()
+  async snapshot(): Promise<AgentState> {
+    return this.state;
+  }
 
-    const current = await withRepo(this.env.ARTIFACTS, task.repoName, async (repo) => {
-      const head = await headCommit(repo);
-      if (!head) throw new Error("The repository has no commits yet.");
-      const files = await readFilesAt(repo, head.hash);
-      return { parent: head.hash, files };
-    });
-
-    const snapshot: Record<string, string> = {};
-    for (const [path, content] of current.files) snapshot[path] = content;
-    const edit = await proposeEdit(this.env, input.instruction, snapshot);
-    if (snapshot[edit.path] === edit.content) {
-      throw new Error("Workers AI returned the file unchanged, so nothing was committed.");
+  /** Drop SQLite storage for this instance. Called from the cron after the repo is deleted. */
+  @callable()
+  async purge(): Promise<void> {
+    const destroy = (this as unknown as { destroy?: () => Promise<void> }).destroy;
+    if (typeof destroy === "function") {
+      await destroy.call(this);
+      return;
     }
-    snapshot[edit.path] = edit.content;
-
-    const minted = await withRepo(this.env.ARTIFACTS, task.repoName, (repo) => repo.createToken("write", 120));
-    const token = tokenPlaintext(minted);
-    try {
-      const hash = await commitFiles({
-        artifacts: this.env.ARTIFACTS,
-        repoName: task.repoName,
-        remote: task.remote,
-        token,
-        parent: current.parent,
-        files: snapshot,
-        message: edit.message,
-      });
-      await insertActivity(this.env, {
-        id: crypto.randomUUID(),
-        taskId: task.id,
-        kind: "commit",
-        commitHash: hash,
-        message: edit.message,
-        createdAt: Date.now(),
-      });
-      console.log(JSON.stringify({ event: "agent_commit", task: task.id, path: edit.path }));
-      return { hash, message: edit.message, path: edit.path };
-    } finally {
-      await revokeQuiet(this.env.ARTIFACTS, task.repoName, token);
-    }
+    await this.ctx.storage.deleteAll();
   }
 }

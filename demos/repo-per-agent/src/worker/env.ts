@@ -8,6 +8,7 @@ export type ArtifactsRepo = {
   log(opts?: { ref?: string; limit?: number; offset?: number }): Promise<CommitMeta[]>;
   readCommit(hash: string): Promise<CommitMeta | null>;
   readTree(hash: string): Promise<TreeEntry[] | null>;
+  readBlob(hash: string): Promise<Blob | null>;
   readFile(args: { ref: string; path: string }): Promise<Blob | null>;
   [Symbol.dispose]?: () => void;
   [Symbol.asyncDispose]?: () => Promise<void>;
@@ -47,6 +48,9 @@ export type ArtifactsBinding = {
 export interface DemoEnv extends Env {
   /** Production secret. Not a wrangler var, so generated Env omits it. Missing means Turnstile fails closed. */
   TURNSTILE_SECRET?: string;
+  ENVIRONMENT?: string;
+  /** Local harness only. Skip the Durable Object and run the commit path in-process. */
+  DIRECT_RUN?: string;
 }
 
 export type { ActivityRow, CommitSummary, TaskSummary };

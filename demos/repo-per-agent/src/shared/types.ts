@@ -39,6 +39,8 @@ export type TaskDetail = {
   task: TaskSummary;
   commits: CommitSummary[];
   activity: ActivityRow[];
+  /** The agent serializes runs for its repo. Phase is ready when you are looking at the page. */
+  agent?: { runs: number; phase: "ready" | "running" | "error" };
 };
 
 export type CommitDetail = {

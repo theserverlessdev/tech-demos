@@ -6,7 +6,7 @@ This demo is an inspired-by slice of [choyiny/gitorange](https://github.com/choy
 
 - One anonymous task, one Agents SDK Durable Object, one Artifacts repository. No orgs, invites, or personal access tokens.
 - The agent commits Workers AI edits to `README.md`, `NOTES.md`, and `src/task.ts` only.
-- The UI is a commit log and a unified diff, plus a 10-minute read-only clone token.
+- The UI is a commit log and a line diff, plus a 10-minute read-only clone token.
 - D1 stores tasks and an activity log. A 15-minute cron deletes expired repos and their rows (6 hours, 3 repos per browser).
 - Turnstile and Workers rate limits sit on create and run. Token mint is rate limited and tied to the visitor cookie.
 - No pull requests, Actions, Containers, Git LFS, Email Sending, or OAuth MCP server.
@@ -14,6 +14,10 @@ This demo is an inspired-by slice of [choyiny/gitorange](https://github.com/choy
 ## Same idea
 
 Repositories are Artifacts repos. Git clients clone them with a repo-scoped token. The worker pushes commits as Git packs over smart HTTP, which is the Artifacts data plane.
+
+## 2026-10-15
+
+Audit fixes. GLM-5.3-flash call uses `reasoning_effort: "low"`, `max_tokens: 4096`, and `response_format` json_schema. Local `bun test` proves create → run → line diff with a fake Artifacts store. Task view uses `minmax(0, 1fr)` so a 390px phone no longer grows a horizontal scrollbar. Turnstile waits for `api.js` onload. `/api/health` is rate-limited and checks D1 only. Commit views are cached. Create no longer wakes a Durable Object; cron destroys expired agents, loops for ~20s, and backs off failed deletes. Repo cap is an atomic insert plus a 300-repo ceiling. Smoke deletes the repo it created.
 
 ## 2026-10-09
 

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { DemoEnv } from "./env";
-import { isEditablePath, type EditablePath } from "./files";
+import { EDITABLE_PATHS, isEditablePath, type EditablePath } from "./files";
 
 const EditSchema = z.object({
   path: z.string(),
@@ -10,10 +10,46 @@ const EditSchema = z.object({
 
 export type FileEdit = { path: EditablePath; content: string; message: string };
 
-type ChatOutput = {
-  choices?: { message?: { content?: string | null } }[];
+export const EDIT_JSON_SCHEMA = {
+  name: "file_edit",
+  strict: true,
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["path", "content", "message"],
+    properties: {
+      path: { type: "string", enum: [...EDITABLE_PATHS] },
+      content: { type: "string", minLength: 1, maxLength: 6000 },
+      message: { type: "string", minLength: 1, maxLength: 72 },
+    },
+  },
+} as const;
+
+/** GLM-5.3-flash: reasoning cannot be disabled; default is max. low + 4096 leaves room for a full-file body. */
+export const MODEL_OPTIONS = {
+  max_tokens: 4096,
+  temperature: 0.2,
+  reasoning_effort: "low" as const,
+  response_format: { type: "json_schema" as const, json_schema: EDIT_JSON_SCHEMA },
+};
+
+export const SYSTEM_PROMPT =
+  'You edit one file in a tiny git repo. Reply with JSON only: {"path":"README.md"|"NOTES.md"|"src/task.ts","content":"the entire new file","message":"commit subject"}. content is the full file, not a diff. message is one line, at most 72 characters. Do not add other paths.';
+
+export type ChatOutput = {
+  choices?: { finish_reason?: string | null; message?: { content?: string | null } }[];
   response?: string;
 };
+
+export function buildModelInput(instruction: string, files: Record<string, string>) {
+  return {
+    messages: [
+      { role: "system" as const, content: SYSTEM_PROMPT },
+      { role: "user" as const, content: JSON.stringify({ instruction, files }) },
+    ],
+    ...MODEL_OPTIONS,
+  };
+}
 
 function stripThinking(text: string): string {
   const end = text.lastIndexOf("</think>");
@@ -21,7 +57,16 @@ function stripThinking(text: string): string {
   return answer.replace(/<think>[\s\S]*?(<\/think>|$)/g, "").trim();
 }
 
-function modelText(out: ChatOutput): string {
+export function modelExhausted(out: ChatOutput): boolean {
+  const choice = out.choices?.[0];
+  if (choice?.finish_reason === "length") return true;
+  const content = choice?.message?.content;
+  if (content === null) return true;
+  return false;
+}
+
+export function modelText(out: ChatOutput): string {
+  if (modelExhausted(out)) throw new ModelEditError("the model ran out of tokens");
   const fromChoice = out.choices?.[0]?.message?.content;
   const raw = typeof fromChoice === "string" && fromChoice.trim() ? fromChoice : typeof out.response === "string" ? out.response : "";
   return stripThinking(raw);
@@ -40,23 +85,10 @@ export class ModelEditError extends Error {}
 
 /** Ask Workers AI for one full-file replacement. Throws instead of inventing a commit. */
 export async function proposeEdit(env: DemoEnv, instruction: string, files: Record<string, string>): Promise<FileEdit> {
-  const payload = { instruction, files };
+  const input = buildModelInput(instruction, files);
   let out: ChatOutput;
   try {
-    // Workers AI types omit chat_template_kwargs; glm-5.3-flash otherwise spends the budget on a think block.
-    out = (await env.AI.run(env.AI_MODEL, {
-      messages: [
-        {
-          role: "system",
-          content:
-            'You edit one file in a tiny git repo. Reply with JSON only: {"path":"README.md"|"NOTES.md"|"src/task.ts","content":"the entire new file","message":"commit subject"}. content is the full file, not a diff. message is one line, at most 72 characters. Do not add other paths.',
-        },
-        { role: "user", content: JSON.stringify(payload) },
-      ],
-      max_tokens: 1800,
-      temperature: 0.2,
-      chat_template_kwargs: { enable_thinking: false },
-    } as never)) as ChatOutput;
+    out = (await env.AI.run(env.AI_MODEL, input as never)) as ChatOutput;
   } catch (err) {
     throw new ModelEditError(`Workers AI request failed: ${err instanceof Error ? err.message : "unknown"}`);
   }
@@ -65,7 +97,8 @@ export async function proposeEdit(env: DemoEnv, instruction: string, files: Reco
   try {
     parsed = EditSchema.parse(extractJson(modelText(out)));
   } catch (err) {
-    throw new ModelEditError(`Workers AI returned an unusable edit: ${err instanceof Error ? err.message : "invalid"}`);
+    const detail = err instanceof ModelEditError ? err.message : err instanceof Error ? err.message : "invalid";
+    throw new ModelEditError(`Workers AI returned an unusable edit: ${detail}`);
   }
   if (!isEditablePath(parsed.path)) throw new ModelEditError("Workers AI chose a path outside the task tree.");
   if (parsed.content.includes("\0")) throw new ModelEditError("Workers AI returned a binary file.");

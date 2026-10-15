@@ -4,6 +4,13 @@ type ApiError = { error?: { message?: string; code?: string } };
 type TurnstileApi = {
   render: (el: HTMLElement, opts: { sitekey: string; action: string; callback: (token: string) => void; "expired-callback"?: () => void }) => string;
   reset: (id: string) => void;
+  remove: (id: string) => void;
+};
+
+type TurnstileWindow = Window & {
+  turnstile?: Partial<TurnstileApi>;
+  onRepoPerAgentTurnstileLoad?: () => void;
+  __turnstileReady?: Promise<void>;
 };
 
 const $ = <T extends HTMLElement>(id: string) => {
@@ -23,9 +30,41 @@ let createWidget = "";
 let runWidget = "";
 let revealed = false;
 
-function turnstile(): TurnstileApi | null {
-  const api = (window as Window & { turnstile?: TurnstileApi }).turnstile;
-  return api?.render ? api : null;
+function turnstileWin(): TurnstileWindow {
+  return window as TurnstileWindow;
+}
+
+function turnstileApi(): TurnstileApi | null {
+  const api = turnstileWin().turnstile;
+  if (typeof api?.render !== "function" || typeof api.reset !== "function") return null;
+  return api as TurnstileApi;
+}
+
+function turnstileOnload(): Promise<void> {
+  const w = turnstileWin();
+  if (w.__turnstileReady) return w.__turnstileReady;
+  w.__turnstileReady = new Promise((resolve) => {
+    const prev = w.onRepoPerAgentTurnstileLoad;
+    w.onRepoPerAgentTurnstileLoad = () => {
+      prev?.();
+      resolve();
+    };
+  });
+  return w.__turnstileReady;
+}
+
+async function whenTurnstile(): Promise<TurnstileApi | null> {
+  const loaded = turnstileOnload();
+  const deadline = Date.now() + 8000;
+  while (Date.now() < deadline) {
+    const api = turnstileApi();
+    if (api) return api;
+    await Promise.race([loaded.then(() => undefined), new Promise<void>((resolve) => setTimeout(resolve, 50))]);
+    const after = turnstileApi();
+    if (after) return after;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return turnstileApi();
 }
 
 async function call<T>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
@@ -35,8 +74,15 @@ async function call<T>(path: string, init?: { method?: string; body?: unknown })
     headers: init?.body ? { "content-type": "application/json" } : undefined,
     body: init?.body ? JSON.stringify(init.body) : undefined,
   });
-  const data = (await res.json()) as T & ApiError;
-  if (!res.ok) throw new Error(data.error?.message || `Request failed (${res.status})`);
+  const text = await res.text();
+  let data: (T & ApiError) | null = null;
+  try {
+    data = JSON.parse(text) as T & ApiError;
+  } catch {
+    data = null;
+  }
+  if (!res.ok) throw new Error(data?.error?.message || `Request failed (${res.status})`);
+  if (!data) throw new Error(`Request failed (${res.status})`);
   return data;
 }
 
@@ -118,37 +164,54 @@ async function openCommit(hash: string, button: HTMLButtonElement) {
   if (!selected) return;
   for (const node of document.querySelectorAll(".commit")) node.classList.remove("is-on");
   button.classList.add("is-on");
-  const detail = await call<CommitDetail>(`/tasks/${selected}/commits/${hash}`);
-  paintDiff(detail);
+  try {
+    const detail = await call<CommitDetail>(`/tasks/${selected}/commits/${hash}`);
+    paintDiff(detail);
+  } catch (err) {
+    hint("run-hint", err instanceof Error ? err.message : "Could not load that commit.", true);
+  }
 }
 
 async function openTask(id: string) {
   selected = id;
   location.hash = id;
   renderTasks();
-  const detail = await call<TaskDetail>(`/tasks/${id}`);
-  commits = detail.commits;
-  $("hero").hidden = true;
-  $("detail").hidden = false;
-  $("detail-id").textContent = detail.task.id;
-  $("detail-title").textContent = detail.task.title;
-  $("detail-expires").textContent = when(detail.task.expiresAt);
-  $("detail-remote").textContent = detail.task.remote;
-  $("token-box").hidden = true;
-  renderCommits();
-  const first = document.querySelector<HTMLButtonElement>(".commit");
-  if (first && commits[0]) await openCommit(commits[0].hash, first);
-  else {
-    $("diff-meta").textContent = "No commits yet.";
-    $("diff-code").replaceChildren();
+  try {
+    const detail = await call<TaskDetail>(`/tasks/${id}`);
+    commits = detail.commits;
+    $("hero").hidden = true;
+    $("detail").hidden = false;
+    $("detail-id").textContent = detail.task.id;
+    $("detail-title").textContent = detail.task.title;
+    $("detail-expires").textContent = when(detail.task.expiresAt);
+    $("detail-remote").textContent = detail.task.remote;
+    const runs = detail.agent?.runs ?? detail.activity.filter((row) => row.kind === "commit").length;
+    $("detail-agent").textContent = `The agent serializes runs for this repo. ${runs} agent commit${runs === 1 ? "" : "s"} so far.`;
+    $("token-box").hidden = true;
+    renderCommits();
+    const first = document.querySelector<HTMLButtonElement>(".commit");
+    if (first && commits[0]) await openCommit(commits[0].hash, first);
+    else {
+      $("diff-meta").textContent = "No commits yet.";
+      $("diff-code").replaceChildren();
+    }
+    await mountRun();
+  } catch (err) {
+    hint("run-hint", err instanceof Error ? err.message : "Could not load the task.", true);
   }
-  mountRun();
 }
 
-function mountWidget(el: HTMLElement, action: string, onToken: (token: string) => void): string {
-  const api = turnstile();
+async function mountWidget(el: HTMLElement, action: string, onToken: (token: string) => void, previous?: string): Promise<string> {
+  const api = await whenTurnstile();
   const siteKey = session?.siteKey;
   if (!api || !siteKey) return "";
+  if (previous && api.remove) {
+    try {
+      api.remove(previous);
+    } catch {
+      // Widget already gone.
+    }
+  }
   el.replaceChildren();
   return api.render(el, {
     sitekey: siteKey,
@@ -158,24 +221,29 @@ function mountWidget(el: HTMLElement, action: string, onToken: (token: string) =
   });
 }
 
-function mountCreate() {
+async function mountCreate() {
   createToken = "";
-  createWidget = mountWidget($("create-turnstile"), "create-task", (token) => {
+  createWidget = await mountWidget($("create-turnstile"), "create-task", (token) => {
     createToken = token;
-  });
+  }, createWidget);
 }
 
-function mountRun() {
+async function mountRun() {
   runToken = "";
-  runWidget = mountWidget($("run-turnstile"), "run-agent", (token) => {
-    runToken = token;
-  });
+  runWidget = await mountWidget(
+    $("run-turnstile"),
+    "run-agent",
+    (token) => {
+      runToken = token;
+    },
+    runWidget,
+  );
 }
 
-function resetWidget(id: string, remount: () => void) {
-  const api = turnstile();
+async function resetWidget(id: string, remount: () => Promise<void>) {
+  const api = turnstileApi();
   if (api && id) api.reset(id);
-  else remount();
+  else await remount();
 }
 
 async function boot() {
@@ -185,7 +253,7 @@ async function boot() {
   const ttlHours = Math.round((session.ttlSeconds || 0) / 3600);
   $("strip-text").textContent = `Each task gets its own git repo. This browser can hold ${session.maxTasks} live repos. They expire after ${ttlHours} hours.`;
   renderTasks();
-  mountCreate();
+  await mountCreate();
   const hash = location.hash.replace("#", "");
   if (session.tasks.some((task: TaskSummary) => task.id === hash)) await openTask(hash);
 }
@@ -217,7 +285,7 @@ $("create-form").addEventListener("submit", async (event) => {
   } finally {
     button.disabled = false;
     createToken = "";
-    resetWidget(createWidget, mountCreate);
+    await resetWidget(createWidget, mountCreate);
   }
 });
 
@@ -241,12 +309,15 @@ $("run-form").addEventListener("submit", async (event) => {
   } finally {
     button.disabled = false;
     runToken = "";
-    resetWidget(runWidget, mountRun);
+    await resetWidget(runWidget, mountRun);
   }
 });
 
 $("token-btn").addEventListener("click", async () => {
   if (!selected) return;
+  const button = $<HTMLButtonElement>("token-btn");
+  if (button.disabled) return;
+  button.disabled = true;
   hint("run-hint", "Minting a read token…");
   try {
     const minted = await call<CloneToken>(`/tasks/${selected}/token`, { method: "POST", body: {} });
@@ -260,6 +331,8 @@ $("token-btn").addEventListener("click", async () => {
     hint("run-hint", "Read token ready for 10 minutes.");
   } catch (err) {
     hint("run-hint", err instanceof Error ? err.message : "Token failed.", true);
+  } finally {
+    button.disabled = false;
   }
 });
 
