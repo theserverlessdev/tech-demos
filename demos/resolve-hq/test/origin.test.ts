@@ -25,6 +25,14 @@ describe("same-origin and session cookie", () => {
     expect(() => assertSameOrigin(req)).not.toThrow();
   });
 
+  test("an Origin mismatch wins over a spoofed Sec-Fetch-Site", () => {
+    const req = new Request("https://resolve-hq.tech-demos.theserverless.dev/api/inbound", {
+      method: "POST",
+      headers: { origin: "https://evil.example", "sec-fetch-site": "same-origin" },
+    });
+    expect(() => assertSameOrigin(req)).toThrow(HttpError);
+  });
+
   test("local wrangler rewritten host still accepts a localhost origin", () => {
     const req = new Request("https://tech-demos.theserverless.dev/demos/resolve-hq/api/inbound", {
       method: "POST",

@@ -20,14 +20,15 @@ export function clientIp(request: Request): string {
 }
 
 export function assertSameOrigin(request: Request): void {
-  const site = (request.headers.get("sec-fetch-site") ?? "").toLowerCase();
-  if (site === "same-origin") return;
   const origin = request.headers.get("origin");
   if (origin) {
     const url = new URL(request.url);
     if (origin === url.origin) return;
     if (isLocalRequest(request) && /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return;
+    throw new HttpError(403, "origin", "Same-origin required.");
   }
+  const site = (request.headers.get("sec-fetch-site") ?? "").toLowerCase();
+  if (site === "same-origin") return;
   throw new HttpError(403, "origin", "Same-origin required.");
 }
 
