@@ -345,7 +345,7 @@ function renderChipGroups(host: HTMLElement, kind: "sample" | "preset"): void {
 
 function renderPresets(): void {
   renderChipGroups(presetsEl, "preset");
-  renderChipGroups(samplesEl, "sample");
+  samplesEl.replaceChildren();
   const first = PRESETS[0]!;
   markPresets(first.id);
   showPresetCopy(first);

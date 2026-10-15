@@ -482,7 +482,7 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
 
     const media = { kind: sniffed.kind, contentType: sniffed.contentType, bytes, durationMs: sniffed.durationMs };
     mediaBase64(media);
-    const omni = await runOmni(env, media, validated.questions, omniId);
+    const omni = await runOmni(env, media, validated.questions, omniId, sampleId);
     if (!omni.ok) {
       await failJudgment(env, omniId, omni.message);
     } else {

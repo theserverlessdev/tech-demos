@@ -9,10 +9,10 @@ export async function runModel(env: Env, model: string, input: unknown): Promise
   return run(model, input);
 }
 
-export async function runOmni(env: Env, media: OmniMedia, questions: ChoiceQuestion[], seed: string): Promise<{ ok: true; result: JudgmentResult } | { ok: false; message: string }> {
+export async function runOmni(env: Env, media: OmniMedia, questions: ChoiceQuestion[], seed: string, sampleId?: string | null): Promise<{ ok: true; result: JudgmentResult } | { ok: false; message: string }> {
   if (environmentName(env) === "local") {
     const started = Date.now();
-    const answers = stubAnswers(questions, seed);
+    const answers = stubAnswers(questions, seed, sampleId);
     const result: JudgmentResult = {
       answers,
       latencyMs: Math.max(1, Date.now() - started),
