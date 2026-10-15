@@ -1,12 +1,26 @@
-import { getAgentByName } from "agents";
 import { z } from "zod";
 import type { CommitDetail, RunResult, TaskDetail } from "../shared/types";
-import { TaskAgent } from "./agent";
-import { countLiveTasks, deleteTaskRows, getTask, insertActivity, insertTask, listActivity, listExpired, listTasks } from "./db";
+import { executeRun } from "./run";
+import { readCommitCache, writeCommitCache } from "./cache";
+import {
+  bumpCleanup,
+  countAllLiveTasks,
+  deleteTaskRows,
+  expireTaskNow,
+  getTask,
+  insertActivity,
+  listActivity,
+  listCommitSummaries,
+  listExpired,
+  listTasks,
+  markAgentStarted,
+  reserveTask,
+  updateTaskRemote,
+} from "./db";
 import { changedFiles } from "./diff";
 import type { DemoEnv } from "./env";
 import { seedFiles } from "./files";
-import { asCommits, commitFiles, headCommit, readFilesAt, revokeQuiet, toSummary, tokenPlaintext, withRepo } from "./repo";
+import { asCommits, commitFiles, readFilesAt, revokeQuiet, tokenExpiresAt, tokenPlaintext, withRepo } from "./repo";
 import { turnstileConfigured, verifyTurnstile } from "./turnstile";
 
 export class HttpError extends Error {
@@ -26,6 +40,7 @@ const TASK_ID = /^task-[a-f0-9]{16}$/;
 
 const COOKIE = "rpa_vid";
 const VISITOR = /^[a-f0-9]{32}$/;
+const BODY_LIMIT = 8_000;
 
 function json(data: unknown, status = 200, extra?: Headers): Response {
   const headers = extra ?? new Headers();
@@ -38,13 +53,23 @@ function clientIp(request: Request): string {
   return request.headers.get("cf-connecting-ip") || "local";
 }
 
-function numbers(env: DemoEnv): { ttl: number; maxTasks: number } {
+function numbers(env: DemoEnv): { ttl: number; maxTasks: number; maxLive: number } {
   const ttl = Number(env.TASK_TTL_SECONDS);
   const maxTasks = Number(env.MAX_TASKS_PER_VISITOR);
+  const maxLive = Number(env.MAX_LIVE_REPOS);
   return {
     ttl: Number.isFinite(ttl) && ttl > 0 ? ttl : 21_600,
     maxTasks: Number.isFinite(maxTasks) && maxTasks > 0 ? maxTasks : 3,
+    maxLive: Number.isFinite(maxLive) && maxLive > 0 ? maxLive : 300,
   };
+}
+
+function safeDecode(value: string): string | null {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return null;
+  }
 }
 
 function readVisitor(request: Request): string | null {
@@ -52,8 +77,8 @@ function readVisitor(request: Request): string | null {
   for (const part of header.split(";")) {
     const [name, ...rest] = part.trim().split("=");
     if (name === COOKIE) {
-      const value = decodeURIComponent(rest.join("="));
-      return VISITOR.test(value) ? value : null;
+      const value = safeDecode(rest.join("="));
+      return value && VISITOR.test(value) ? value : null;
     }
   }
   return null;
@@ -95,8 +120,12 @@ async function limit(binding: RateLimit, request: Request): Promise<void> {
 }
 
 async function readBody(request: Request): Promise<unknown> {
+  const declared = Number(request.headers.get("content-length") ?? "");
+  if (Number.isFinite(declared) && declared > BODY_LIMIT) {
+    throw new HttpError(413, "too_large", "The request body is too large.");
+  }
   const text = await request.text();
-  if (text.length > 8_000) throw new HttpError(413, "too_large", "The request body is too large.");
+  if (text.length > BODY_LIMIT) throw new HttpError(413, "too_large", "The request body is too large.");
   if (!text.trim()) return {};
   try {
     return JSON.parse(text) as unknown;
@@ -123,9 +152,9 @@ async function requireTurnstile(env: DemoEnv, request: Request, token: unknown, 
 function taskIdFrom(path: string): { id: string; rest: string } | null {
   const match = path.match(/^\/api\/tasks\/([^/]+)(?:\/(.*))?$/);
   if (!match) return null;
-  const id = decodeURIComponent(match[1] ?? "");
-  if (!TASK_ID.test(id)) return null;
-  return { id, rest: match[2] ?? "" };
+  const raw = safeDecode(match[1] ?? "");
+  if (!raw || !TASK_ID.test(raw)) return null;
+  return { id: raw, rest: match[2] ?? "" };
 }
 
 async function requireTask(env: DemoEnv, visitorId: string, id: string) {
@@ -141,8 +170,9 @@ export async function handleApi(request: Request, env: DemoEnv, path: string): P
 }
 
 async function route(request: Request, env: DemoEnv, path: string, visitorId: string): Promise<Response> {
-  if (request.method === "GET" && path === "/api/health") return health(env);
+  if (request.method === "GET" && path === "/api/health") return health(request, env);
   if (request.method === "GET" && path === "/api/session") return session(request, env, visitorId);
+  if (request.method === "POST" && path === "/api/dev/purge") return purgeVisitor(request, env, visitorId);
   if (request.method === "POST" && path === "/api/tasks") return createTask(request, env, visitorId);
 
   const taskPath = taskIdFrom(path);
@@ -156,16 +186,10 @@ async function route(request: Request, env: DemoEnv, path: string, visitorId: st
   throw new HttpError(404, "not_found", "Unknown API path.");
 }
 
-async function health(env: DemoEnv): Promise<Response> {
+async function health(request: Request, env: DemoEnv): Promise<Response> {
+  await limit(env.READ_LIMIT, request);
   await env.DB.prepare("SELECT 1 AS ok").first();
-  let artifacts = "ok";
-  try {
-    await env.ARTIFACTS.list({ limit: 1 });
-  } catch (err) {
-    artifacts = "error";
-    console.error(JSON.stringify({ event: "artifacts_health_failed", error: String(err).slice(0, 200) }));
-  }
-  return json({ ok: artifacts === "ok", artifacts, turnstile: turnstileConfigured(env) });
+  return json({ ok: true });
 }
 
 async function session(request: Request, env: DemoEnv, visitorId: string): Promise<Response> {
@@ -188,15 +212,23 @@ async function createTask(request: Request, env: DemoEnv, visitorId: string): Pr
   const title = TitleSchema.safeParse(field(body, "title"));
   if (!title.success) throw new HttpError(400, "bad_title", "Give the task a title, up to 80 characters.");
 
-  const { ttl, maxTasks } = numbers(env);
+  const { ttl, maxTasks, maxLive } = numbers(env);
   const now = Date.now();
-  if ((await countLiveTasks(env, visitorId, now)) >= maxTasks) {
+  const id = `task-${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;
+  const reserved = await reserveTask(
+    env,
+    { id, visitorId, repoName: id, title: title.data, remote: "", createdAt: now, expiresAt: now + ttl * 1000 },
+    maxTasks,
+    maxLive,
+  );
+  if (!reserved) {
+    if ((await countAllLiveTasks(env, now)) >= maxLive) {
+      throw new HttpError(429, "repo_cap", "The demo is at its live-repo ceiling. Wait for a task to expire.");
+    }
     throw new HttpError(429, "repo_cap", `This browser already has ${maxTasks} live repos. Wait for one to expire.`);
   }
 
-  const id = `task-${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;
   let seedToken = "";
-  let inserted = false;
   let created = false;
   try {
     const repo = await env.ARTIFACTS.create(id, {
@@ -216,33 +248,39 @@ async function createTask(request: Request, env: DemoEnv, visitorId: string): Pr
       files: seedFiles(title.data),
       message: "Seed the task repository",
     });
-    const expiresAt = now + ttl * 1000;
-    await insertTask(env, { id, visitorId, repoName: id, title: title.data, remote, createdAt: now, expiresAt });
-    inserted = true;
+    await updateTaskRemote(env, id, remote);
     await insertActivity(env, {
       id: crypto.randomUUID(),
       taskId: id,
       kind: "created",
       commitHash: hash,
-      message: "Repository created",
+      message: "Seed the task repository",
       createdAt: now,
     });
-    await wakeAgent(env, id);
     console.log(JSON.stringify({ event: "task_created", task: id }));
-    return json({ id, title: title.data, remote, createdAt: now, expiresAt, seed: hash }, 201);
+    return json({ id, title: title.data, remote, createdAt: now, expiresAt: now + ttl * 1000, seed: hash }, 201);
   } catch (err) {
+    let repoGone = false;
     if (created) {
       try {
         await env.ARTIFACTS.delete(id);
-      } catch {
-        // Deleting a repo we failed to seed is best-effort. The binding may be the failure.
+        repoGone = true;
+      } catch (deleteErr) {
+        console.error(JSON.stringify({ event: "task_create_delete_failed", task: id, error: String(deleteErr).slice(0, 200) }));
+        repoGone = false;
       }
     }
-    if (inserted) {
+    if (repoGone) {
       try {
         await deleteTaskRows(env, id);
       } catch {
-        // The row is expired by the cron if this delete fails.
+        // The reserved row is expired by the cron if this delete fails.
+      }
+    } else {
+      try {
+        await expireTaskNow(env, id);
+      } catch {
+        // TTL still expires the row; cron will see it then.
       }
     }
     if (err instanceof HttpError) throw err;
@@ -257,30 +295,34 @@ async function createTask(request: Request, env: DemoEnv, visitorId: string): Pr
   }
 }
 
-function taskAgent(env: DemoEnv, id: string) {
-  return getAgentByName<DemoEnv, TaskAgent>(env.TaskAgent, id);
+function isLocalDev(env: DemoEnv): boolean {
+  return env.DIRECT_RUN === "1" || env.ENVIRONMENT === "local";
 }
 
-async function wakeAgent(env: DemoEnv, id: string): Promise<void> {
-  try {
-    const agent = await taskAgent(env, id);
-    await agent.attach();
-  } catch (err) {
-    console.error(JSON.stringify({ event: "agent_wake_failed", task: id, error: String(err).slice(0, 200) }));
-  }
+async function taskAgent(env: DemoEnv, id: string) {
+  const { getAgentByName } = await import("agents");
+  const { TaskAgent } = await import("./agent");
+  return getAgentByName<DemoEnv, InstanceType<typeof TaskAgent>>(env.TaskAgent, id);
+}
+
+async function purgeVisitor(request: Request, env: DemoEnv, visitorId: string): Promise<Response> {
+  if (!isLocalDev(env)) throw new HttpError(404, "not_found", "Unknown API path.");
+  await limit(env.CREATE_LIMIT, request);
+  await env.DB.prepare("UPDATE tasks SET expires_at = 0, next_attempt_at = 0 WHERE visitor_id = ?").bind(visitorId).run();
+  const result = await cleanupExpired(env);
+  return json(result);
 }
 
 async function taskDetail(request: Request, env: DemoEnv, visitorId: string, id: string): Promise<Response> {
   await limit(env.READ_LIMIT, request);
   const task = await requireTask(env, visitorId, id);
-  const [activity, commits] = await Promise.all([
-    listActivity(env, id),
-    withRepo(env.ARTIFACTS, task.repoName, async (repo) => asCommits(await repo.log({ ref: "main", limit: 20 })).map(toSummary)),
-  ]);
+  const [activity, commits] = await Promise.all([listActivity(env, id), listCommitSummaries(env, id)]);
+  const runs = activity.filter((row) => row.kind === "commit").length;
   const body: TaskDetail = {
     task: { id: task.id, title: task.title, remote: task.remote, createdAt: task.createdAt, expiresAt: task.expiresAt },
     commits,
     activity,
+    agent: { runs },
   };
   return json(body);
 }
@@ -288,13 +330,19 @@ async function taskDetail(request: Request, env: DemoEnv, visitorId: string, id:
 async function commitDetail(request: Request, env: DemoEnv, visitorId: string, id: string, hash: string): Promise<Response> {
   await limit(env.READ_LIMIT, request);
   const task = await requireTask(env, visitorId, id);
+  const cached = await readCommitCache(task.repoName, hash);
+  if (cached) return json(cached);
+
   const detail = await withRepo(env.ARTIFACTS, task.repoName, async (repo) => {
-    const history = asCommits(await repo.log({ ref: "main", limit: 20 }));
-    const commit = history.find((item) => item.hash === hash) ?? asCommits([await repo.readCommit(hash)])[0];
+    const commit = asCommits([await repo.readCommit(hash)])[0];
     if (!commit || commit.hash !== hash) return null;
-    const after = await readFilesAt(repo, hash);
+    const after = await readFilesAt(repo, hash, commit.treeHash);
     const parent = commit.parents[0] ?? null;
-    const before = parent ? await readFilesAt(repo, parent) : new Map<string, string>();
+    let before = new Map<string, string>();
+    if (parent) {
+      const parentCommit = asCommits([await repo.readCommit(parent)])[0];
+      before = parentCommit ? await readFilesAt(repo, parent, parentCommit.treeHash) : new Map();
+    }
     return { commit, before, after, parent };
   });
   if (!detail) throw new HttpError(404, "not_found", "That commit is not on main.");
@@ -304,6 +352,7 @@ async function commitDetail(request: Request, env: DemoEnv, visitorId: string, i
     parent: detail.parent,
     files: changedFiles(detail.before, detail.after),
   };
+  await writeCommitCache(task.repoName, hash, body);
   return json(body);
 }
 
@@ -316,26 +365,40 @@ async function runTask(request: Request, env: DemoEnv, visitorId: string, id: st
   const instruction = InstructionSchema.safeParse(field(body, "instruction"));
   if (!instruction.success) throw new HttpError(400, "bad_instruction", "Tell the agent what to change, up to 500 characters.");
 
-  const agent = await taskAgent(env, id);
+  await markAgentStarted(env, id);
+  const input = { visitorId, taskId: id, instruction: instruction.data };
   try {
-    const result = await agent.runTurn({ visitorId, taskId: id, instruction: instruction.data });
+    const result = env.DIRECT_RUN === "1" ? await executeRun(env, input) : await (await taskAgent(env, id)).runTurn(input);
     return json(result satisfies RunResult);
   } catch (err) {
-    const message = err instanceof Error ? err.message : "The agent run failed.";
-    console.error(JSON.stringify({ event: "agent_run_failed", task: id, error: message.slice(0, 240) }));
-    throw new HttpError(502, "agent_failed", message.slice(0, 240));
+    throw httpFromRunError(id, err);
   }
+}
+
+function errorCode(err: unknown): string | undefined {
+  if (!err || typeof err !== "object") return undefined;
+  const code = (err as { code?: unknown }).code;
+  return typeof code === "string" ? code : undefined;
+}
+
+/** Map by `code`. Durable Object RPC keeps own properties and drops `instanceof`. */
+export function httpFromRunError(taskId: string, err: unknown): HttpError {
+  const code = errorCode(err);
+  const message = err instanceof Error ? err.message : "The agent run failed.";
+  if (code === "agent_busy") return new HttpError(409, "agent_busy", message);
+  if (code === "ai_budget") return new HttpError(429, "ai_budget", message);
+  console.error(JSON.stringify({ event: "agent_run_failed", task: taskId, error: message.slice(0, 240) }));
+  return new HttpError(502, "agent_failed", message.slice(0, 240));
 }
 
 async function mintToken(request: Request, env: DemoEnv, visitorId: string, id: string): Promise<Response> {
   assertSameOrigin(request);
   await limit(env.TOKEN_LIMIT, request);
   const task = await requireTask(env, visitorId, id);
-  const minted = await withRepo(env.ARTIFACTS, task.repoName, async (repo) => {
-    await headCommit(repo);
-    return repo.createToken("read", 600);
-  });
+  const minted = await withRepo(env.ARTIFACTS, task.repoName, (repo) => repo.createToken("read", 600));
   const token = tokenPlaintext(minted);
+  const fallback = minted.expiresAt ?? new Date(Date.now() + 600_000).toISOString();
+  const expiry = tokenExpiresAt(token, fallback);
   await insertActivity(env, {
     id: crypto.randomUUID(),
     taskId: id,
@@ -347,26 +410,55 @@ async function mintToken(request: Request, env: DemoEnv, visitorId: string, id: 
   return json({
     remote: task.remote,
     token,
-    expiresAt: minted.expiresAt ?? new Date(Date.now() + 600_000).toISOString(),
-    ttlSeconds: 600,
+    expiresAt: expiry.expiresAt,
+    ttlSeconds: expiry.ttlSeconds || 600,
   });
 }
 
-export async function cleanupExpired(env: DemoEnv): Promise<{ deleted: number }> {
-  const expired = await listExpired(env, Date.now(), 20);
-  let deleted = 0;
-  for (const task of expired) {
-    try {
-      await env.ARTIFACTS.delete(task.repoName);
-    } catch (err) {
-      const text = String(err);
-      if (!/not found|NOT_FOUND/i.test(text)) {
-        console.error(JSON.stringify({ event: "cleanup_failed", task: task.id, error: text.slice(0, 200) }));
-        continue;
-      }
-    }
-    await deleteTaskRows(env, task.id);
-    deleted++;
+type AgentHandle = { purge: () => Promise<void> };
+
+export async function purgeAgent(
+  env: DemoEnv,
+  id: string,
+  agentStarted: boolean,
+  connect: (env: DemoEnv, id: string) => Promise<AgentHandle> = taskAgent,
+): Promise<void> {
+  if (!agentStarted || env.DIRECT_RUN === "1" || !env.TaskAgent) return;
+  try {
+    const agent = await connect(env, id);
+    await agent.purge();
+  } catch (err) {
+    console.error(JSON.stringify({ event: "agent_purge_failed", task: id, error: String(err).slice(0, 200) }));
   }
-  return { deleted };
+}
+
+const CLEANUP_BUDGET_MS = 20_000;
+
+export async function cleanupExpired(env: DemoEnv): Promise<{ deleted: number; failed: number }> {
+  const started = Date.now();
+  let deleted = 0;
+  let failed = 0;
+  while (Date.now() - started < CLEANUP_BUDGET_MS) {
+    const expired = await listExpired(env, Date.now(), 20);
+    if (expired.length === 0) break;
+    for (const task of expired) {
+      if (Date.now() - started >= CLEANUP_BUDGET_MS) break;
+      try {
+        await env.ARTIFACTS.delete(task.repoName);
+      } catch (err) {
+        const text = String(err);
+        if (!/not found|NOT_FOUND/i.test(text)) {
+          console.error(JSON.stringify({ event: "cleanup_failed", task: task.id, error: text.slice(0, 200) }));
+          await bumpCleanup(env, task.id, task.attempts, Date.now());
+          failed++;
+          continue;
+        }
+      }
+      await purgeAgent(env, task.id, task.agentStarted);
+      await deleteTaskRows(env, task.id);
+      deleted++;
+    }
+    if (expired.length < 20) break;
+  }
+  return { deleted, failed };
 }

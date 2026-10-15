@@ -12,6 +12,21 @@ export function tokenPlaintext(token: unknown): string {
   throw new Error("Artifacts did not return a git token");
 }
 
+export function tokenExpiresAt(token: string, fallbackIso: string): { expiresAt: string; ttlSeconds: number } {
+  const match = token.match(/[?&]expires=(\d{10,13})\b/);
+  if (match?.[1]) {
+    const raw = match[1];
+    const ms = raw.length <= 10 ? Number(raw) * 1000 : Number(raw);
+    if (Number.isFinite(ms)) {
+      return { expiresAt: new Date(ms).toISOString(), ttlSeconds: Math.max(0, Math.round((ms - Date.now()) / 1000)) };
+    }
+  }
+  const parsed = Date.parse(fallbackIso);
+  const expiresAt = Number.isFinite(parsed) ? new Date(parsed).toISOString() : fallbackIso;
+  const ttlSeconds = Number.isFinite(parsed) ? Math.max(0, Math.round((parsed - Date.now()) / 1000)) : 600;
+  return { expiresAt, ttlSeconds };
+}
+
 export async function withRepo<T>(artifacts: ArtifactsBinding, name: string, fn: (repo: ArtifactsRepo) => Promise<T>): Promise<T> {
   const repo = await artifacts.get(name);
   try {
@@ -90,31 +105,29 @@ export async function headCommit(repo: ArtifactsRepo): Promise<CommitMeta | null
   return history[0] ?? null;
 }
 
-/** `readFile` resolves a full path against a commit ref. Tree walks only discover the paths. */
-export async function readFilesAt(repo: ArtifactsRepo, ref: string): Promise<Map<string, string>> {
-  const commit = asCommits([await repo.readCommit(ref)])[0];
-  if (!commit) return new Map();
-  const paths = await listPaths(repo, commit.treeHash, "");
-  const files = new Map<string, string>();
-  for (const path of paths) {
-    const blob = await repo.readFile({ ref, path });
-    if (!blob) continue;
-    const text = await blob.text();
-    if (!text.includes("\0")) files.set(path, text);
-  }
-  return files;
+/** Walk the tree and read blobs by object hash. Pass `treeHash` to skip a second `readCommit`. */
+export async function readFilesAt(repo: ArtifactsRepo, ref: string, treeHash?: string): Promise<Map<string, string>> {
+  const tree = treeHash ?? asCommits([await repo.readCommit(ref)])[0]?.treeHash;
+  if (!tree) return new Map();
+  return readTreeFiles(repo, tree, "");
 }
 
-async function listPaths(repo: ArtifactsRepo, treeHash: string, prefix: string): Promise<string[]> {
+async function readTreeFiles(repo: ArtifactsRepo, treeHash: string, prefix: string): Promise<Map<string, string>> {
   const entries = asEntries(await repo.readTree(treeHash));
-  const paths: string[] = [];
+  const files = new Map<string, string>();
   for (const entry of entries) {
     const path = prefix ? `${prefix}/${entry.name}` : entry.name;
-    if (entry.type === "tree") paths.push(...(await listPaths(repo, entry.hash, path)));
-    else if (entry.type === "blob" || entry.type === "exec") paths.push(path);
-    if (paths.length > 30) break;
+    if (entry.type === "tree") {
+      for (const [child, text] of await readTreeFiles(repo, entry.hash, path)) files.set(child, text);
+    } else if (entry.type === "blob" || entry.type === "exec") {
+      const blob = await repo.readBlob(entry.hash);
+      if (!blob) continue;
+      const text = await blob.text();
+      if (!text.includes("\0")) files.set(path, text);
+    }
+    if (files.size > 30) break;
   }
-  return paths;
+  return files;
 }
 
 export async function commitFiles(opts: {

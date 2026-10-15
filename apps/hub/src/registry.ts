@@ -417,7 +417,7 @@ export const demos: DemoEntry[] = [
     capabilities: [
       "Create a task after Turnstile and get a fresh Artifacts repo",
       "Run the agent and, when the model changes a file, see the commit",
-      "Read the commit log and the unified diff",
+      "Read the commit log and the line diff",
       "Mint a ten-minute read-only git clone token",
       "An unchanged model response is reported as an error and commits nothing",
     ],

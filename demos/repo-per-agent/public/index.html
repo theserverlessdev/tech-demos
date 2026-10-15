@@ -70,6 +70,7 @@
         <p class="muted" id="detail-expires"></p>
       </header>
       <p class="remote" id="detail-remote"></p>
+      <p class="muted" id="detail-agent">The agent serializes runs for this repo.</p>
 
       <div class="split">
         <div>
@@ -77,7 +78,7 @@
           <ol class="commits" id="commits"></ol>
         </div>
         <div>
-          <h3>Diff</h3>
+          <h3>Line diff</h3>
           <p class="muted" id="diff-meta">Select a commit.</p>
           <pre class="diff" id="diff"><code id="diff-code"></code></pre>
         </div>
@@ -97,12 +98,15 @@
       </form>
 
       <div class="token" id="token-box" hidden>
-        <p>Read-only for 10 minutes. The token stays masked.</p>
+        <p>Read-only for 10 minutes. The token stays masked. Copy works without revealing it.</p>
         <label class="field">
           <span>git clone</span>
           <input id="token-command" type="password" readonly />
         </label>
-        <button class="btn btn-ghost" id="token-reveal" type="button">Show token</button>
+        <div class="row">
+          <button class="btn btn-ghost" id="token-copy" type="button">Copy clone command</button>
+          <button class="btn btn-ghost" id="token-reveal" type="button">Show token</button>
+        </div>
       </div>
     </section>
 
@@ -111,7 +115,7 @@
       <p>Create a task. The worker opens an Artifacts repository, seeds three files, and pins an Agents SDK Durable Object to that id. When you run the agent, Workers AI rewrites one file and the worker pushes a real commit.</p>
       <ol class="steps">
         <li>Turnstile and a per-address rate limit gate create and run.</li>
-        <li>This browser can hold three live repos. A cron deletes the repo and the D1 rows when they expire.</li>
+        <li>This browser can hold three live repos. A cron deletes the repo, the D1 rows, and the agent Durable Object when they expire.</li>
         <li>The clone token is read-only and lasts ten minutes.</li>
       </ol>
     </section>
@@ -125,7 +129,8 @@
     </p>
   </footer>
 
-  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
+  <script src="./assets/turnstile-onload.js"></script>
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit&onload=onRepoPerAgentTurnstileLoad" async defer></script>
   <script type="module" src="./assets/app.js"></script>
 </body>
 </html>
