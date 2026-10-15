@@ -293,7 +293,7 @@ input[type="checkbox"] { accent-color: var(--ember); }
 .viewer__empty { flex: 1; display: grid; place-content: center; justify-items: center; gap: 10px; color: var(--muted); font-size: 14px; }
 .viewer__glyph { width: 56px; height: 56px; opacity: 0.5; }
 
-.mail { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.mail { display: flex; flex-direction: column; min-height: 0; flex: 1; scroll-margin-top: var(--topbar-h); }
 .mail__head { padding: 18px 22px 12px; display: grid; gap: 10px; border-bottom: 1px solid var(--border); }
 .mail__back { display: none; justify-self: start; margin-left: -8px; }
 .mail__title-row { display: flex; align-items: flex-start; gap: 12px; }

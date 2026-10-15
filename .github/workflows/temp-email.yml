@@ -1,0 +1,23 @@
+name: temp-email
+
+on:
+  pull_request:
+    paths:
+      - "demos/temp-email/**"
+      - ".github/workflows/temp-email.yml"
+
+jobs:
+  verify-selfhost:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.2.21"
+      - run: bun install
+      - run: bun test demos/temp-email
+      - run: bun run --filter @tech-demos/temp-email typecheck
+      - run: bun run --filter @tech-demos/temp-email verify:selfhost

@@ -1,3 +1,4 @@
+import { frameDocument } from "../shared/mail-html";
 import type { AppConfig, CreatedInbox, InboxInfo, MessageFull, MessageList, MessageSummary, MintedKey } from "../shared/types";
 
 // ------------------------------------------------------------------ storage
@@ -211,13 +212,13 @@ async function downloadAttachment(messageId: string, index: number, filename: st
     const data = (await res.json().catch(() => null)) as { error?: { code: string; message: string } } | null;
     throw new ApiFailure(res.status, data?.error?.code ?? "http", data?.error?.message ?? `HTTP ${res.status}`);
   }
-  const blob = await res.blob();
+  const blob = new Blob([await res.arrayBuffer()], { type: "application/octet-stream" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
   a.download = filename || "attachment";
   a.click();
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
 function attachmentItem(message: MessageFull, attachment: MessageFull["attachments"][number], index: number): HTMLLIElement {
@@ -273,7 +274,8 @@ function renderAddress(): void {
     el.address.textContent = "No inbox yet";
   }
   el.copy.disabled = !inbox || expired;
-  el.extend.disabled = !inbox || expired;
+  const webCeilingMs = (state.config?.webMaxTtlMinutes ?? 180) * 60_000;
+  el.extend.disabled = !inbox || expired || inbox.expiresAt >= inbox.createdAt + webCeilingMs;
   el.deleteInbox.disabled = !inbox;
   el.sample.disabled = !inbox || expired;
   el.newRandom.disabled = false;
@@ -287,9 +289,9 @@ function tickExpiry(): void {
   const inbox = state.active;
   if (!inbox) return;
   const left = inbox.expiresAt - Date.now();
-  const window = (state.config?.webTtlMinutes ?? 60) * 60_000;
+  const span = Math.max(1, inbox.expiresAt - inbox.createdAt);
   el.expiryText.textContent = left > 0 && !state.gone ? formatLeft(left) : "expired, 0:00";
-  el.expiryFill.style.width = `${Math.max(0, Math.min(1, left / window)) * 100}%`;
+  el.expiryFill.style.width = `${Math.max(0, Math.min(1, left / span)) * 100}%`;
   el.expiry.dataset.low = String(left < 5 * 60_000);
   if (left <= 0 && !state.gone) {
     state.gone = true;
@@ -319,16 +321,15 @@ function renderInboxList(): void {
 
 function renderSnippet(): void {
   const origin = location.origin;
-  const address = state.active?.address ?? `name@${state.config?.domain ?? "email.lomvic.com"}`;
   el.agentSnippet.textContent = [
     `# KEY is the per-agent key minted in the UI (shown once).`,
-    `curl -s -X POST ${origin}/api/v1/inboxes \\`,
+    `ADDRESS=$(curl -s -X POST ${origin}/api/v1/inboxes \\`,
     `  -H "Authorization: Bearer $KEY" \\`,
     `  -H "content-type: application/json" \\`,
-    `  -d '{"ttlMinutes": 30}'`,
+    `  -d '{"ttlMinutes": 30}' | jq -r .address)`,
     ``,
-    `# Wait up to 25 s for the next message`,
-    `curl -s "${origin}/api/v1/inboxes/${address}/wait?after=0&timeout=25" \\`,
+    `# Wait up to 25 s for the next message on the inbox that key just created`,
+    `curl -s "${origin}/api/v1/inboxes/$ADDRESS/wait?after=0&timeout=25" \\`,
     `  -H "Authorization: Bearer $KEY" | jq '.messages[0].codes'`,
   ].join("\n");
 }
@@ -375,43 +376,14 @@ function renderList(fresh: Set<string> = new Set()): void {
   }
 }
 
-const SAFE_LINK = /^(https?:|mailto:)/i;
-
-/**
- * Cleans untrusted mail HTML before it goes into the frame. DOMParser builds an inert document: no script
- * runs and no image loads. Links keep only http, https, and mailto, because the frame lets a clicked link
- * open a normal tab, and a data: or javascript: URL must never reach that tab.
- */
-function cleanMailHtml(html: string): { head: string; body: string } {
-  // A <base> tag in the mail trips the page base-uri policy during parsing, so it goes before the parse.
-  const doc = new DOMParser().parseFromString(html.replace(/<base\b[^>]*>/gi, ""), "text/html");
-  doc.querySelectorAll("script, noscript, meta, base, link, iframe, frame, frameset, object, embed, form").forEach((n) => n.remove());
-  for (const node of doc.querySelectorAll<HTMLElement>("*")) {
-    for (const attr of [...node.attributes]) {
-      if (/^on/i.test(attr.name)) node.removeAttribute(attr.name);
-    }
-  }
-  for (const link of doc.querySelectorAll<HTMLAnchorElement | HTMLAreaElement>("a, area")) {
-    const href = link.getAttribute("href")?.trim() ?? "";
-    if (href && !SAFE_LINK.test(href)) link.removeAttribute("href");
-    link.setAttribute("target", "_blank");
-    link.setAttribute("rel", "noopener noreferrer");
-  }
-  // Styles in the mail head move into our head. Styles in the body stay where they are.
-  const headStyles = [...doc.head.querySelectorAll("style")].map((n) => n.outerHTML).join("");
-  return { head: headStyles, body: doc.body.innerHTML };
+function isMobileLayout(): boolean {
+  return window.matchMedia("(max-width: 760px)").matches;
 }
 
-/**
- * The HTML part renders in a sandboxed srcdoc frame: no scripts, an opaque origin, and a CSP that blocks
- * remote loads until the visitor allows them. Our head comes first, and the cleaner removes every meta tag
- * from the mail, so the mail cannot loosen the policy.
- */
-function frameDocument(html: string, remote: boolean): string {
-  const img = remote ? "data: cid: https: http:" : "data: cid:";
-  const csp = `default-src 'none'; style-src 'unsafe-inline'; img-src ${img}; font-src data:${remote ? " https:" : ""}`;
-  const mail = cleanMailHtml(html);
-  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><meta name="referrer" content="no-referrer"><style>body{margin:0;padding:16px;font-family:system-ui,sans-serif;color:#17171a;background:#fff;word-wrap:break-word}img{max-width:100%;height:auto}</style>${mail.head}</head><body>${mail.body}</body></html>`;
+function scrollMailIntoView(): void {
+  if (!isMobileLayout()) return;
+  window.scrollTo(0, 0);
+  el.mail.scrollIntoView({ block: "start" });
 }
 
 /** Chrome stays on app tokens; the light canvas lives only inside srcdoc (`frameDocument`). */
@@ -640,6 +612,7 @@ function remember(created: CreatedInbox): StoredInbox {
 }
 
 function applyInfo(inbox: StoredInbox, info: InboxInfo): void {
+  inbox.createdAt = info.createdAt;
   inbox.expiresAt = info.expiresAt;
   saveInboxes();
 }
@@ -738,6 +711,7 @@ async function openMessage(id: string): Promise<void> {
     if (message.html) state.tab = "html";
     el.layout.dataset.view = "message";
     renderViewer();
+    scrollMailIntoView();
     for (const b of el.messages.querySelectorAll<HTMLButtonElement>(".msg")) b.setAttribute("aria-current", "false");
     const index = state.messages.findIndex((m) => m.id === id);
     el.messages.querySelectorAll<HTMLButtonElement>(".msg")[index]?.setAttribute("aria-current", "true");
@@ -816,7 +790,7 @@ el.sample.addEventListener("click", () => {
     const message = await api<MessageFull>(`${inboxPath(inbox)}/sample`, { method: "POST", token: inbox.token });
     await refresh();
     await openMessage(message.id);
-    setHint("The sample went through the parser and into D1.", "ok");
+    setHint("The sample went through the parser. Metadata is in D1; bodies are in R2.", "ok");
   });
 });
 
@@ -849,13 +823,14 @@ el.back.addEventListener("click", () => {
   state.selected = null;
   renderViewer();
   renderList();
+  if (isMobileLayout()) window.scrollTo(0, 0);
 });
 
 el.theme.addEventListener("click", () => {
   const next = document.documentElement.dataset.theme === "light" ? "dark" : "light";
   document.documentElement.dataset.theme = next;
   localStorage.setItem("theme", next);
-  if (state.config?.mint.enabled) void renderTurnstile();
+  if (state.config?.mint.enabled && !state.mintedKey) void renderTurnstile();
 });
 
 el.mintForm.addEventListener("submit", (event) => {

@@ -60,9 +60,11 @@ export type MxStatus = { live: boolean; records: string[]; checkedAt: number };
 export type AppConfig = {
   domain: string;
   webTtlMinutes: number;
+  webMaxTtlMinutes: number;
   maxTtlMinutes: number;
   maxMessagesPerInbox: number;
   maxMessageBytes: number;
+  maxInboxBytes: number;
   mx: MxStatus;
   /** Owner-hosted public demo (email.lomvic.com). Self-host sets this false. */
   hosted: boolean;
