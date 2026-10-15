@@ -72,7 +72,7 @@ bunx wrangler d1 create tech-demos-edge-browser
 # paste the database_id over the placeholder in wrangler.jsonc
 bunx wrangler r2 bucket create tech-demos-edge-browser
 bunx wrangler r2 bucket lifecycle add tech-demos-edge-browser captures-expiry captures/ --expire-days 1
-# create the Turnstile widget, put its site key in TURNSTILE_SITE_KEY, then:
+# TURNSTILE_SITE_KEY is already the live widget key in wrangler.jsonc.
 env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bunx wrangler deploy
 env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bunx wrangler secret put TURNSTILE_SECRET
 env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bunx wrangler secret put IP_HASH_SECRET
@@ -86,7 +86,7 @@ A brand-new Worker with `secrets.required` needs a first deploy before `wrangler
 | --- | --- | --- |
 | D1 database | `tech-demos-edge-browser` | **Create.** `wrangler d1 create tech-demos-edge-browser`, then paste `database_id` over `00000000-0000-4000-8000-000000007441` in `wrangler.jsonc`. |
 | R2 bucket | `tech-demos-edge-browser` | **Create.** `wrangler r2 bucket create tech-demos-edge-browser`, then `wrangler r2 bucket lifecycle add tech-demos-edge-browser captures-expiry captures/ --expire-days 1`. That rule is the backstop. It is not a `wrangler.jsonc` field. |
-| Turnstile widget | `tech-demos-edge-browser` | **Create.** Hostnames: `tech-demos.theserverless.dev`, `edge-browser.tech-demos.theserverless.dev`. Put the site key in `TURNSTILE_SITE_KEY` (it is `REPLACE_ME` until then) and the secret with `wrangler secret put TURNSTILE_SECRET` after the first deploy. |
+| Turnstile widget | `tech-demos-edge-browser` | **Exists.** Hostnames: `tech-demos.theserverless.dev`, `edge-browser.tech-demos.theserverless.dev`. `TURNSTILE_SITE_KEY` is `0x4AAAAAAFX7Ws8qEiyDj57x`. The secret is `wrangler secret put TURNSTILE_SECRET` after the first deploy. Do not commit it. |
 | Browser Rendering | binding `BROWSER` | No separate namespace. The binding is in `wrangler.jsonc`. The account needs Browser Rendering on Workers Paid. |
 | Workflow | `tech-demos-edge-browser-capture` | Created on deploy from the `CAPTURE` binding. |
 | Rate-limit namespaces | `7441` capture, `7442` read, `7443` session | Created when this Worker is deployed. They do not overlap the ids already in the repo. `7443` is checked in the workflow step. There is no Durable Object. |
@@ -95,7 +95,7 @@ A brand-new Worker with `secrets.required` needs a first deploy before `wrangler
 
 Production fails closed when `TURNSTILE_SECRET` is missing, and it rejects the always-pass test secret unless `ENVIRONMENT` is `local`.
 
-After the Worker is deployed, redeploy `apps/hub` so the gallery card is not only the fallback. That fallback redirects `tech-demos.theserverless.dev/demos/edge-browser` to `https://edge-browser.tech-demos.theserverless.dev`. If the request hostname is already that host, it returns 503 instead of redirecting to itself.
+After the Worker is deployed, redeploy `apps/hub` so the gallery card is not only the fallback. That fallback redirects `tech-demos.theserverless.dev/demos/edge-browser` to `https://edge-browser.tech-demos.theserverless.dev`.
 
 ## Layout
 
