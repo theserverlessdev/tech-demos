@@ -7,9 +7,15 @@ test("hello-dynamic is the only loader demo and its source is the Text module", 
   expect(loaders.map((d) => d.slug)).toEqual(["hello-dynamic"]);
   const hello = getDemo("hello-dynamic");
   expect(hello?.source).toContain("function escapeHtml");
-  expect(hello?.source).toContain("raw.slice(0, 64)");
+  expect(hello?.source).toContain("Array.from(raw).slice(0, 64)");
   expect(hello?.source).toContain("← All demos");
   expect(hello?.source).toContain("x-dynamic-worker");
+  expect(hello?.source).toContain('<form method="get">');
+  expect(hello?.source).toContain("Array.from(provided).slice(0, 64)");
+  expect(hello?.source).not.toContain("maxlength=");
+  expect(hello?.demonstrates).toContain("reuses it while it stays warm");
+  expect(hello?.capabilities.join(" ")).toContain("Type a name in the form");
+  expect(hello?.useCases.join(" ")).toContain("KV or R2");
 });
 
 test("standalone fallbacks use redirectSource with a path boundary", () => {
