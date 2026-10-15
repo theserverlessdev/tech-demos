@@ -260,7 +260,7 @@ async function createTask(request: Request, env: DemoEnv, visitorId: string): Pr
     console.log(JSON.stringify({ event: "task_created", task: id }));
     return json({ id, title: title.data, remote, createdAt: now, expiresAt: now + ttl * 1000, seed: hash }, 201);
   } catch (err) {
-    let repoGone = !created;
+    let repoGone = false;
     if (created) {
       try {
         await env.ARTIFACTS.delete(id);
@@ -415,10 +415,17 @@ async function mintToken(request: Request, env: DemoEnv, visitorId: string, id: 
   });
 }
 
-async function purgeAgent(env: DemoEnv, id: string, agentStarted: boolean): Promise<void> {
+type AgentHandle = { purge: () => Promise<void> };
+
+export async function purgeAgent(
+  env: DemoEnv,
+  id: string,
+  agentStarted: boolean,
+  connect: (env: DemoEnv, id: string) => Promise<AgentHandle> = taskAgent,
+): Promise<void> {
   if (!agentStarted || env.DIRECT_RUN === "1" || !env.TaskAgent) return;
   try {
-    const agent = await taskAgent(env, id);
+    const agent = await connect(env, id);
     await agent.purge();
   } catch (err) {
     console.error(JSON.stringify({ event: "agent_purge_failed", task: id, error: String(err).slice(0, 200) }));

@@ -366,6 +366,10 @@ $("token-copy").addEventListener("click", async () => {
       if (document.execCommand("copy")) {
         $("token-copy").textContent = "Copied";
         hint("run-hint", "Clone command copied.");
+        input.type = "password";
+        revealed = false;
+        $("token-reveal").textContent = "Show token";
+        input.blur();
         return;
       }
     } catch {

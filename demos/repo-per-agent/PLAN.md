@@ -37,6 +37,7 @@ Unchanged: Workers Paid, Agents SDK DO, Artifacts `tech-demos`, D1, Turnstile, G
 - Create keeps the D1 row (`expires_at = 0`) when the Artifacts delete fails after a seed error.
 - README: apply D1 migrations before deploy.
 - Nits: drop `@callable` on `purge`, skip purge when the agent never ran, pass tree hashes into `readFilesAt`, cap the in-memory commit cache, `max_completion_tokens`, no hard-coded phase, copy button for the clone command.
+- v2 polish: 0003 backfills `agent_started` on live rows; fallback copy re-masks the token; `capture.ts` clicks `#token-copy`; create failure always `expireTaskNow` when the repo is not known gone; `purgeAgent` is tested with `agentStarted` true/false and `DIRECT_RUN` unset.
 - Still out: a paid GLM call, deploy, Cloudflare API writes.
 
 ## Deferred

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { AgentBusyError, AgentBudgetError } from "../src/worker/run";
-import { cleanupExpired, httpFromRunError, HttpError } from "../src/worker/api";
+import { cleanupExpired, httpFromRunError, HttpError, purgeAgent } from "../src/worker/api";
 import { utcDay } from "../src/worker/db";
 import { verifyTurnstile } from "../src/worker/turnstile";
 import { api, DUMMY, makeHarness, visitorCookie, type Harness } from "./harness";
@@ -187,6 +187,52 @@ describe("caps and cleanup", () => {
     const row = await harness.env.DB.prepare("SELECT id FROM tasks LIMIT 1").first();
     expect(row).toBeNull();
   }, 20000);
+
+  test("a create that throws before the flag still keeps the D1 row", async () => {
+    harness = await makeHarness();
+    harness.env.ARTIFACTS.create = async () => {
+      throw new Error("timeout after the repo existed");
+    };
+    const res = await api(harness.env, "/api/tasks", {
+      method: "POST",
+      cookie: visitorCookie(),
+      origin: harness.origin,
+      body: { title: "timeout", turnstileToken: DUMMY },
+    });
+    expect(res.status).toBe(503);
+    const row = await harness.env.DB.prepare("SELECT id, expires_at FROM tasks LIMIT 1").first<{
+      id: string;
+      expires_at: number;
+    }>();
+    expect(row).toBeTruthy();
+    expect(row?.expires_at).toBe(0);
+  }, 20000);
+
+  test("purgeAgent skips a task that never ran and calls purge when it did", async () => {
+    const env = {
+      DIRECT_RUN: undefined,
+      TaskAgent: {},
+    } as unknown as import("../src/worker/env").DemoEnv;
+    let calls = 0;
+    let purged = 0;
+    const connect = async () => {
+      calls += 1;
+      return {
+        purge: async () => {
+          purged += 1;
+        },
+      };
+    };
+    await purgeAgent(env, "task-aaaaaaaaaaaaaaaa", false, connect);
+    expect(calls).toBe(0);
+    expect(purged).toBe(0);
+    await purgeAgent(env, "task-bbbbbbbbbbbbbbbb", true, connect);
+    expect(calls).toBe(1);
+    expect(purged).toBe(1);
+    await purgeAgent({ ...env, DIRECT_RUN: "1" } as typeof env, "task-cccccccccccccccc", true, connect);
+    expect(calls).toBe(1);
+    expect(purged).toBe(1);
+  });
 
   test("daily AI cap is enforced", async () => {
     harness = await makeHarness({ aiCap: "1" });

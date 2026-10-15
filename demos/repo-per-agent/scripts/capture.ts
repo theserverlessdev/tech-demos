@@ -17,6 +17,7 @@ const browser = await chromium.launch({
 const context = await browser.newContext({
   viewport: { width: 390, height: 844 },
   deviceScaleFactor: 2,
+  permissions: ["clipboard-read", "clipboard-write"],
   recordVideo: { dir: `${out}/video-tmp`, size: { width: 390, height: 844 } },
 });
 const page = await context.newPage();
@@ -112,8 +113,17 @@ await deskPage.screenshot({ path: `${out}/desk.png`, fullPage: false });
 await desk.close();
 
 await page.click("#token-btn").catch(() => undefined);
-await page.waitForSelector("#token-copy", { state: "visible" }).catch(() => undefined);
-await page.waitForTimeout(400);
+await page.waitForSelector("#token-copy", { state: "visible" });
+await page.click("#token-copy");
+await page.waitForFunction(
+  () => {
+    const copy = document.getElementById("token-copy")?.textContent ?? "";
+    const hint = document.getElementById("run-hint")?.textContent ?? "";
+    return copy === "Copied" || /copied|Select the command/i.test(hint);
+  },
+  { timeout: 3000 },
+);
+await page.waitForTimeout(200);
 await page.screenshot({ path: `${out}/mobile-token.png`, fullPage: true });
 await page.evaluate(() => document.querySelector("#diff")?.scrollIntoView({ block: "center" }));
 await page.waitForTimeout(1200);
