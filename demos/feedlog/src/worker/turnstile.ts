@@ -1,5 +1,10 @@
 import { isLoopback } from "./http";
-import { LOOPBACK_ADMIN_TOKEN, LOOPBACK_TURNSTILE_SECRET, LOOPBACK_TURNSTILE_SITE_KEY } from "./limits";
+import {
+  LOOPBACK_ADMIN_TOKEN,
+  LOOPBACK_GATE_SECRET,
+  LOOPBACK_TURNSTILE_SECRET,
+  LOOPBACK_TURNSTILE_SITE_KEY,
+} from "./limits";
 
 const SITEVERIFY = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 
@@ -25,6 +30,15 @@ export function turnstileSiteKey(env: Env, request: Request): string | null {
 
 export function writesOpen(env: Env, request: Request): boolean {
   return Boolean(turnstileSecret(env, request) && turnstileSiteKey(env, request));
+}
+
+/** Dedicated HMAC key. Falls back to a purpose-prefixed Turnstile secret until the owner sets GATE_SECRET. */
+export function gateSecret(env: Env, request: Request): string | null {
+  const set = env.GATE_SECRET?.trim();
+  if (set) return set;
+  if (isLoopback(request) || devFixtureMode(env, request)) return LOOPBACK_GATE_SECRET;
+  const ts = env.TURNSTILE_SECRET?.trim();
+  return ts ? `feedlog-gate-v1:${ts}` : null;
 }
 
 /** wrangler dev advertises the zone route host, so URL loopback is not enough. Both dev values must match. */
@@ -62,7 +76,7 @@ export async function verifyTurnstile(env: Env, request: Request, token: string)
 
   const host = result.hostname ?? "";
   const testHost = host === "example.com" || host === "localhost" || host === "127.0.0.1" || host === "";
-  if (testHost) return true;
+  if (testHost) return devFixtureMode(env, request);
   const requestHost = new URL(request.url).hostname;
   return host === requestHost;
 }

@@ -19,6 +19,8 @@ export type Post = {
   votes: number;
   displayName: string;
   hasImage: boolean;
+  /** Unapproved image. Only the author or an admin sees this. */
+  imagePending: boolean;
   seeded: boolean;
   createdAt: number;
   expiresAt: number | null;

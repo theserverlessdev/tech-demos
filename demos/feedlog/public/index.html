@@ -38,7 +38,7 @@
     </div>
   </header>
 
-  <p class="shows shows--bar"><span class="shows__k">What this shows</span> D1 stores posts and one vote per browser. Workers AI and Vectorize spot similar posts, and word overlap is the fallback.</p>
+  <p class="shows shows--bar"><span class="shows__k">What this shows</span> D1 stores posts and one vote per browser. Workers AI and Vectorize spot similar posts while you type.</p>
 
   <nav class="tabs" aria-label="Sections">
     <a href="#/board" id="tab-board" data-tab="board">Board</a>
@@ -46,18 +46,20 @@
     <a href="#/changelog" id="tab-changelog" data-tab="changelog">Changelog</a>
   </nav>
 
-  <p class="strip" id="strip">One vote per browser. Visitor posts expire after 14 days. Duplicate check runs as you type.</p>
+  <p class="strip" id="strip">One vote per cookie. Three live posts per browser. Images stay hidden until an admin approves them.</p>
 
   <main class="page">
     <section id="view-board" data-view="board">
       <div class="board">
+        <input type="checkbox" id="compose-open" class="compose-open sr-only" />
+        <label class="compose-toggle btn" for="compose-open">New post</label>
         <div class="compose-col">
           <form class="compose" id="compose">
             <p class="eyebrow">New post</p>
             <h2>Ask for something</h2>
             <label class="field">
               <span>Title</span>
-              <input id="title" name="title" data-testid="compose-title" maxlength="120" required placeholder="Dark mode on the public roadmap" />
+              <input id="title" name="title" data-testid="compose-title" minlength="4" maxlength="120" required placeholder="Dark mode on the public roadmap" />
             </label>
             <label class="field">
               <span>Details</span>
@@ -68,7 +70,7 @@
               <input id="display-name" name="displayName" maxlength="40" placeholder="Visitor" />
             </label>
             <label class="field">
-              <span>Image <em>JPEG, PNG, GIF, or WebP, up to 1.5 MB</em></span>
+              <span>Image <em>JPEG, PNG, GIF, or WebP, up to 1.5 MB. Hidden until approved. JPEG EXIF is stripped, including orientation, so phone portraits may render sideways.</em></span>
               <input id="image" name="image" type="file" accept="image/jpeg,image/png,image/gif,image/webp" />
             </label>
             <div id="turnstile" class="turnstile"></div>
@@ -82,7 +84,7 @@
           </form>
           <details class="admin" id="admin">
             <summary>Admin</summary>
-            <p class="hint">Status changes and changelog entries need the admin token. It stays in this tab only.</p>
+            <p class="hint">Status, image review, and delete need the admin token. Use this panel on feedlog.tech-demos.theserverless.dev only. The token stays in this tab.</p>
             <label class="field">
               <span class="sr-only">Admin token</span>
               <input id="admin-token" type="password" autocomplete="off" spellcheck="false" placeholder="Admin token" />
@@ -98,17 +100,17 @@
           <div class="list-head">
             <h2>Board</h2>
             <span class="count" id="count">0</span>
-            <div class="filters" role="tablist" aria-label="Status filter">
-              <button class="filter is-on" type="button" data-filter="all">All</button>
-              <button class="filter" type="button" data-filter="open">Open</button>
-              <button class="filter" type="button" data-filter="planned">Planned</button>
-              <button class="filter" type="button" data-filter="in_progress">In progress</button>
-              <button class="filter" type="button" data-filter="done">Done</button>
-              <button class="filter" type="button" data-filter="closed">Closed</button>
+            <div class="filters" role="group" aria-label="Status filter">
+              <button class="filter is-on" type="button" data-filter="all" aria-pressed="true">All</button>
+              <button class="filter" type="button" data-filter="open" aria-pressed="false">Open</button>
+              <button class="filter" type="button" data-filter="planned" aria-pressed="false">Planned</button>
+              <button class="filter" type="button" data-filter="in_progress" aria-pressed="false">In progress</button>
+              <button class="filter" type="button" data-filter="done" aria-pressed="false">Done</button>
+              <button class="filter" type="button" data-filter="closed" aria-pressed="false">Closed</button>
             </div>
-            <div class="sorts">
-              <button class="filter is-on" type="button" data-sort="top">Top</button>
-              <button class="filter" type="button" data-sort="new">New</button>
+            <div class="sorts" role="group" aria-label="Sort">
+              <button class="filter is-on" type="button" data-sort="top" aria-pressed="true">Top</button>
+              <button class="filter" type="button" data-sort="new" aria-pressed="false">New</button>
             </div>
           </div>
           <div id="posts" data-testid="post-list">
@@ -150,7 +152,7 @@
 
     <section id="view-post" data-view="post" hidden>
       <a class="back" href="#/board">← Board</a>
-      <article id="post-detail"></article>
+      <div id="post-detail"></div>
     </section>
   </main>
 

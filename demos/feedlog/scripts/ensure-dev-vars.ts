@@ -11,6 +11,7 @@ if (await file.exists()) {
       "TURNSTILE_SECRET=1x0000000000000000000000000000000AA",
       "TURNSTILE_SITE_KEY=1x00000000000000000000AA",
       "ADMIN_TOKEN=dev-feedlog-admin",
+      "GATE_SECRET=dev-feedlog-gate",
       "",
     ].join("\n"),
   );

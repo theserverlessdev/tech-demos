@@ -33,7 +33,7 @@ test("registry copy and tags from the audit", () => {
   );
   expect(getDemo("apollo-desk")?.demonstrates).toContain("an MCP-style JSON-RPC tool server");
   expect(getDemo("partyserver")?.capabilities.join(" ")).toContain("8 connections");
-  expect(getDemo("feedlog")?.capabilities.join(" ")).toContain("See the 'matched on words' note when Vectorize is unavailable");
+  expect(getDemo("feedlog")?.capabilities.join(" ")).toContain("Dark mode for the roadmap");
   expect(getDemo("company-brain")?.capabilities.join(" ")).toContain("the ingest token returned at creation");
   expect(getDemo("apollo-desk")?.capabilities.join(" ")).toContain("an MCP-style JSON-RPC tool server");
   expect(getDemo("clef-gate")?.demonstrates).toContain("or ten minutes pass");
