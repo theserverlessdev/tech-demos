@@ -9,6 +9,8 @@ Headlines shows the Hacker News front page and an optional three-line AI digest.
   - `fetchedAt` is the time of the last refresh in milliseconds, or `null`.
   - `summary` is three lines that start with `"- "`, or `null`.
   - `Status` is `{ phase: "idle" | "awaiting-approval" | "fetching" | "summarizing" | "error", message?: string }`.
+    `awaiting-approval` is the wait on the WEB queue. `fetching` is set after the approved
+    response arrives, while the gadget parses and stores the items.
 - `refresh()` returns the new state. It calls `WEB.getJson()` for the front page (20 stories) and waits until a person approves the request.
   It replaces the stored items and deletes the old summary.
   It throws `"Denied: ..."` if a person denies the request. It throws if the WEB gatekeeper is not connected.

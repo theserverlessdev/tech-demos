@@ -1,16 +1,16 @@
 import { DurableObject } from "cloudflare:workers";
+import { AGENT_STEP_RESERVE_USD, COMPLETION_RESERVE_USD, applySettle } from "./cost";
 
-/** Published Workers AI prices for glm-5.3-flash, in USD per token. */
-export const PRICE_IN = 0.15 / 1_000_000;
-export const PRICE_OUT = 0.5 / 1_000_000;
-
-export type Usage = { prompt_tokens?: number; completion_tokens?: number };
-
-export function usageCost(usage: Usage | undefined): { usd: number; tokensIn: number; tokensOut: number } {
-  const tokensIn = usage?.prompt_tokens ?? 0;
-  const tokensOut = usage?.completion_tokens ?? 0;
-  return { usd: tokensIn * PRICE_IN + tokensOut * PRICE_OUT, tokensIn, tokensOut };
-}
+export {
+  AGENT_STEP_RESERVE_USD,
+  COMPLETION_RESERVE_USD,
+  PRICE_IN,
+  PRICE_OUT,
+  applySettle,
+  hasReportedUsage,
+  usageCost,
+  type Usage,
+} from "./cost";
 
 /**
  * One global instance. It holds the daily Workers AI budget for the whole demo, so that a busy day
@@ -63,11 +63,11 @@ export class Meter extends DurableObject<Env> {
     return { ok: true, spent: spent + Math.max(0, usd), budget };
   }
 
-  /** Replace a reservation with the real cost. */
+  /** Replace a reservation with the real cost. Missing usage is settled at the reserved amount. */
   settle(reserved: number, actual: number) {
     const key = this.#key();
     const spent = (this.ctx.storage.kv.get<number>(key) ?? 0) as number;
-    this.ctx.storage.kv.put(key, Math.max(0, spent - Math.max(0, reserved) + Math.max(0, actual)));
+    this.ctx.storage.kv.put(key, applySettle(spent, reserved, actual));
   }
 
   charge(usd: number): { spent: number; budget: number } {
@@ -81,11 +81,6 @@ export class Meter extends DurableObject<Env> {
 export function meter(env: Env): DurableObjectStub<Meter> {
   return (env.METER as unknown as DurableObjectNamespace<Meter>).getByName("global");
 }
-
-/** Worst-case cost of one agent step: 9,000 output tokens and 30,000 input tokens. */
-export const AGENT_STEP_RESERVE_USD = 9000 * PRICE_OUT + 30_000 * PRICE_IN;
-/** Worst-case cost of one gadget completion: 800 output tokens and 3,000 input tokens. */
-export const COMPLETION_RESERVE_USD = 800 * PRICE_OUT + 3000 * PRICE_IN;
 
 export async function reserveBudget(env: Env, usd: number): Promise<void> {
   const r = await meter(env).reserve(usd);
