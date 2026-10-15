@@ -71,13 +71,13 @@ export const SAMPLES: Record<SampleId, SampleMeta> = {
   "safety-fall": {
     file: "safety-fall.mp4",
     label: "Person falling",
-    note: "Self-made four-second clip. A figure loses balance and hits the floor.",
+    note: "Self-made four-second clip. A figure loses balance, hits the floor, and a thud plays.",
     kind: "video",
   },
   "safety-walk": {
     file: "safety-walk.mp4",
     label: "Person walking",
-    note: "Self-made four-second clip. A figure walks across the frame.",
+    note: "Self-made four-second clip. A figure walks across the aisle with footsteps.",
     kind: "video",
   },
 };

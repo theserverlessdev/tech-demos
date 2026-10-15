@@ -15,7 +15,7 @@ Out of scope: accounts, Durable Objects, a classic-chain pass over video frames,
 Replace the weak self-drawn samples (beeps, a geometric still, a torn-box drawing) with paired real-world presets:
 
 - Expense intake: a legible receipt vs a blurry one
-- Product QA: a cracked phone screen vs an intact mug
+- Product QA: a cracked phone screen vs an intact phone screen
 - Delivery: a damaged parcel vs an intact one
 - Support voice: an urgent/angry note vs a routine/calm one
 - Safety clip: a person falling vs walking normally

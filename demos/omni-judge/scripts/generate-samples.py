@@ -99,74 +99,84 @@ def make_receipt(blurry: bool) -> Image.Image:
     return smeared.point(lambda p: min(255, int(p * 1.08 + 8)))
 
 
-def cardboard(size: tuple[int, int], seed: int) -> Image.Image:
+def kraft(size: tuple[int, int], seed: int, shade: tuple[int, int, int]) -> Image.Image:
     rng = random.Random(seed)
-    img = Image.new("RGB", size, (186, 142, 86))
+    img = Image.new("RGB", size, shade)
     px = img.load()
     w, h = size
     for y in range(h):
         for x in range(w):
-            n = rng.randint(-14, 14)
-            stripe = 8 if (x + y) % 17 == 0 else 0
-            r = max(0, min(255, 186 + n - stripe))
-            g = max(0, min(255, 142 + n - stripe))
-            b = max(0, min(255, 86 + n // 2))
+            n = rng.randint(-18, 18)
+            rib = 10 if y % 7 == 0 else 0
+            r = max(0, min(255, shade[0] + n - rib))
+            g = max(0, min(255, shade[1] + n - rib))
+            b = max(0, min(255, shade[2] + n // 2))
             px[x, y] = (r, g, b)
     return img.filter(ImageFilter.SMOOTH)
 
 
-def draw_label(box: Image.Image, xy: tuple[int, int], damaged: bool) -> None:
-    x, y = xy
-    label = Image.new("RGB", (210, 130), (248, 246, 238))
+def shipping_label(damaged: bool) -> Image.Image:
+    label = Image.new("RGB", (248, 156), (250, 247, 236))
     d = ImageDraw.Draw(label)
-    d.rectangle((0, 0, 209, 129), outline=(40, 36, 28), width=2)
-    d.text((10, 8), "SHIP TO", fill=(40, 36, 28), font=font(FONT_SANS, 14))
-    d.text((10, 28), "Northline Desk", fill=(20, 18, 14), font=font(FONT_BOLD, 16))
-    d.text((10, 50), "14 Graphite Way", fill=(40, 36, 28), font=font(FONT_SANS, 14))
-    d.text((10, 70), "ORDER  N-1842", fill=(40, 36, 28), font=font(FONT_MONO, 13))
-    for i in range(18):
-        d.rectangle((10 + i * 10, 94, 16 + i * 10, 118), fill=(20, 18, 14))
+    d.rectangle((0, 0, 247, 155), outline=(36, 32, 26), width=3)
+    d.rectangle((0, 0, 247, 28), fill=(196, 48, 32))
+    d.text((10, 6), "FRAGILE  ·  HANDLE WITH CARE", fill=(255, 246, 238), font=font(FONT_BOLD, 13))
+    d.text((10, 36), "SHIP TO", fill=(90, 82, 70), font=font(FONT_SANS, 12))
+    d.text((10, 54), "Northline Desk", fill=(22, 18, 14), font=font(FONT_BOLD, 18))
+    d.text((10, 78), "14 Graphite Way", fill=(40, 36, 28), font=font(FONT_SANS, 14))
+    d.text((10, 98), "ORDER  N-1842", fill=(40, 36, 28), font=font(FONT_MONO, 13))
+    for i in range(22):
+        d.rectangle((10 + i * 10, 122, 16 + i * 10, 146), fill=(22, 18, 14))
     if damaged:
-        label = label.transform(label.size, Image.Transform.AFFINE, (1, 0.12, 0, 0.08, 1, 0), resample=Image.Resampling.BICUBIC)
-        d = ImageDraw.Draw(label)
-        d.line((0, 20, 210, 110), fill=(40, 36, 28), width=3)
-        d.polygon([(160, 0), (210, 0), (210, 50)], fill=(186, 142, 86))
-    box.paste(label, (x, y))
+        d.line((8, 40, 236, 148), fill=(36, 32, 26), width=4)
+        d.polygon([(190, 0), (247, 0), (247, 70)], fill=(132, 92, 52))
+        label = label.transform(label.size, Image.Transform.AFFINE, (1, 0.08, 0, 0.05, 1, 0), resample=Image.Resampling.BICUBIC)
+    return label
 
 
 def make_parcel(damaged: bool) -> Image.Image:
-    canvas = Image.new("RGB", (1000, 780), (48, 48, 52))
-    floor = Image.new("RGB", (1000, 280), (62, 62, 66))
-    canvas.paste(floor, (0, 500))
-    face = cardboard((560, 360), 3)
-    top = cardboard((560, 120), 4)
-    side = cardboard((90, 360), 5)
-    d_face = ImageDraw.Draw(face)
-    d_face.rectangle((12, 12, 547, 347), outline=(120, 88, 50), width=3)
-    d_face.rectangle((0, 168, 559, 198), fill=(210, 176, 72))
-    ImageDraw.Draw(top).rectangle((0, 50, 559, 78), fill=(210, 176, 72))
-    ImageDraw.Draw(side).rectangle((0, 168, 89, 198), fill=(210, 176, 72))
-    if damaged:
-        crush = ImageDraw.Draw(face)
-        crush.polygon([(360, 40), (559, 20), (559, 220), (400, 260), (340, 140)], fill=(120, 86, 48))
-        crush.line([(380, 50), (540, 90), (500, 200), (390, 230)], fill=(60, 40, 24), width=6)
-        for hole in ((430, 80), (500, 130), (460, 170)):
-            crush.ellipse((hole[0], hole[1], hole[0] + 28, hole[1] + 18), fill=(48, 48, 52))
-        torn = ImageDraw.Draw(top)
-        torn.polygon([(300, 0), (559, 0), (559, 119), (280, 90)], fill=(48, 48, 52))
-        torn.line([(280, 90), (400, 20), (520, 70)], fill=(70, 48, 28), width=5)
-        ImageDraw.Draw(side).polygon([(20, 240), (89, 200), (89, 359), (0, 359)], fill=(40, 40, 44))
-    box = Image.new("RGB", (650, 480), (48, 48, 52))
-    box.paste(top, (90, 0))
-    box.paste(side, (0, 120))
-    box.paste(face, (90, 120))
-    draw_label(box, (150, 200), damaged)
-    if damaged:
-        box = box.transform(box.size, Image.Transform.AFFINE, (1, 0.04, 0, 0.03, 1, 8), resample=Image.Resampling.BICUBIC)
-    canvas.paste(box, (170, 160))
+    w, h = 1100, 820
+    canvas = Image.new("RGB", (w, h), (54, 56, 60))
+    d = ImageDraw.Draw(canvas)
+    for y in range(470, h):
+        tone = 78 + (y - 470) // 8
+        d.line((0, y, w, y), fill=(tone, tone - 2, tone - 6))
+    d.rectangle((0, 0, 70, h), fill=(168, 92, 58))
+    d.rectangle((w - 90, 0, w, h), fill=(46, 48, 52))
+    d.rectangle((70, 120, 86, h), fill=(92, 64, 40))
     shade = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-    ImageDraw.Draw(shade).ellipse((240, 620, 820, 720), fill=(0, 0, 0, 60))
+    ImageDraw.Draw(shade).ellipse((250, 620, 920, 760), fill=(0, 0, 0, 70))
     canvas = Image.alpha_composite(canvas.convert("RGBA"), shade).convert("RGB")
+
+    face = kraft((560, 360), 3, (188, 142, 84))
+    top = kraft((560, 150), 4, (214, 172, 108))
+    side = kraft((150, 360), 5, (150, 108, 62))
+    df, dt, ds = ImageDraw.Draw(face), ImageDraw.Draw(top), ImageDraw.Draw(side)
+    tape = (214, 176, 64)
+    df.rectangle((0, 164, 559, 196), fill=tape)
+    dt.rectangle((0, 62, 559, 94), fill=tape)
+    ds.rectangle((0, 164, 149, 196), fill=tape)
+    df.rectangle((8, 8, 551, 351), outline=(120, 86, 48), width=3)
+    label = shipping_label(damaged)
+    face.paste(label, (42, 118))
+
+    if damaged:
+        df.polygon([(330, 10), (559, 0), (559, 250), (390, 300), (310, 150)], fill=(118, 80, 44))
+        df.line([(350, 30), (540, 90), (510, 220), (370, 250)], fill=(48, 32, 18), width=8)
+        for hole in ((430, 70), (500, 130), (455, 180)):
+            df.ellipse((hole[0], hole[1], hole[0] + 36, hole[1] + 22), fill=(40, 42, 46))
+        dt.polygon([(280, 0), (559, 0), (559, 149), (250, 110)], fill=(54, 56, 60))
+        dt.line([(250, 110), (400, 20), (540, 90)], fill=(70, 48, 24), width=7)
+        ds.polygon([(20, 230), (149, 190), (149, 359), (0, 359)], fill=(40, 42, 46))
+        df.text((360, 40), "CRUSHED", fill=(250, 236, 210), font=font(FONT_BOLD, 28))
+
+    box = Image.new("RGBA", (760, 560), (0, 0, 0, 0))
+    box.paste(top, (150, 0))
+    box.paste(side, (0, 150))
+    box.paste(face, (150, 150))
+    if damaged:
+        box = box.transform(box.size, Image.Transform.AFFINE, (1, 0.05, 0, 0.04, 1, 10), resample=Image.Resampling.BICUBIC)
+    canvas.paste(box.convert("RGB"), (160, 140), box)
     return canvas.filter(ImageFilter.SMOOTH)
 
 
@@ -207,8 +217,8 @@ def tts(text: str, dest: Path, voice: str, speed: int, pitch: int) -> None:
 
 def person(draw: ImageDraw.ImageDraw, origin: tuple[float, float], phase: float, tilt: float, scale: float) -> None:
     ox, oy = origin
-    swing = math.sin(phase) * 0.55
-    arm = math.sin(phase + math.pi) * 0.45
+    swing = math.sin(phase) * 0.7
+    arm = math.sin(phase + math.pi) * 0.55
 
     def rot(px: float, py: float) -> tuple[int, int]:
         ca, sa = math.cos(tilt), math.sin(tilt)
@@ -216,34 +226,70 @@ def person(draw: ImageDraw.ImageDraw, origin: tuple[float, float], phase: float,
         rx, ry = x * ca - y * sa, x * sa + y * ca
         return int(ox + rx), int(oy + ry)
 
-    color = (28, 28, 30)
-    head = rot(0, -78)
-    draw.ellipse((head[0] - 14, head[1] - 16, head[0] + 14, head[1] + 16), fill=color)
-    draw.line([rot(0, -60), rot(0, 8)], fill=color, width=10)
-    draw.line([rot(-6, -44), rot(-34, -12 + arm * 18)], fill=color, width=7)
-    draw.line([rot(6, -44), rot(34, -12 - arm * 18)], fill=color, width=7)
-    draw.line([rot(0, 8), rot(-22 + swing * 8, 78)], fill=color, width=8)
-    draw.line([rot(0, 8), rot(22 - swing * 8, 78)], fill=color, width=8)
-    draw.ellipse((rot(-22 + swing * 8, 82)[0] - 6, rot(-22 + swing * 8, 82)[1] - 4, rot(-22 + swing * 8, 82)[0] + 10, rot(-22 + swing * 8, 82)[1] + 6), fill=color)
-    draw.ellipse((rot(22 - swing * 8, 82)[0] - 6, rot(22 - swing * 8, 82)[1] - 4, rot(22 - swing * 8, 82)[0] + 10, rot(22 - swing * 8, 82)[1] + 6), fill=color)
+    shirt, pants, skin = (196, 72, 28), (36, 38, 44), (214, 176, 140)
+    head = rot(0, -92)
+    draw.ellipse((head[0] - 16, head[1] - 18, head[0] + 16, head[1] + 18), fill=skin)
+    torso = [rot(-18, -70), rot(18, -70), rot(16, 8), rot(-16, 8)]
+    draw.polygon(torso, fill=shirt)
+    draw.line([rot(-12, -58), rot(-38, -8 + arm * 22)], fill=skin, width=11)
+    draw.line([rot(12, -58), rot(38, -8 - arm * 22)], fill=skin, width=11)
+    draw.line([rot(-8, 8), rot(-20 + swing * 10, 86)], fill=pants, width=13)
+    draw.line([rot(8, 8), rot(20 - swing * 10, 86)], fill=pants, width=13)
+    lf, rf = rot(-20 + swing * 10, 90), rot(20 - swing * 10, 90)
+    draw.ellipse((lf[0] - 10, lf[1] - 5, lf[0] + 12, lf[1] + 7), fill=(28, 28, 30))
+    draw.ellipse((rf[0] - 10, rf[1] - 5, rf[0] + 12, rf[1] + 7), fill=(28, 28, 30))
 
 
-def scene(w: int = 480, h: int = 270) -> Image.Image:
-    img = Image.new("RGB", (w, h), (58, 60, 64))
+def scene(w: int = 640, h: int = 360) -> Image.Image:
+    img = Image.new("RGB", (w, h), (72, 78, 86))
     d = ImageDraw.Draw(img)
-    d.rectangle((0, 168, w, h), fill=(92, 92, 96))
-    for x in range(0, w, 28):
-        d.rectangle((x, 168, x + 14, 178), fill=(212, 168, 36) if (x // 28) % 2 == 0 else (20, 20, 22))
-    d.rectangle((0, 0, 18, h), fill=(70, 72, 76))
-    d.rectangle((w - 18, 0, w, h), fill=(70, 72, 76))
+    d.rectangle((0, 210, w, h), fill=(168, 166, 158))
+    for x in range(0, w, 40):
+        d.line((x, 210, x, h), fill=(148, 146, 138), width=1)
+    d.line((0, 210, w, 210), fill=(212, 168, 36), width=6)
+    d.rectangle((0, 40, w, 78), fill=(48, 52, 58))
+    d.text((16, 48), "WAREHOUSE AISLE  B", fill=(232, 228, 220), font=font(FONT_BOLD, 18))
+    d.rectangle((0, 0, 22, h), fill=(90, 94, 100))
+    d.rectangle((w - 22, 0, w, h), fill=(90, 94, 100))
     return img
 
 
-def encode_video(frames: list[Image.Image], dest: Path) -> None:
+def mix(samples: list[float], offset: int, burst: list[float]) -> None:
+    for i, value in enumerate(burst):
+        idx = offset + i
+        if 0 <= idx < len(samples):
+            samples[idx] = max(-1.0, min(1.0, samples[idx] + value))
+
+
+def tone(freq: float, ms: int, rate: int = 16_000, vol: float = 0.35) -> list[float]:
+    n = int(rate * ms / 1000)
+    return [vol * math.sin(2 * math.pi * freq * i / rate) * (1 - i / max(1, n)) for i in range(n)]
+
+
+def walk_audio(seconds: float = 4.0, rate: int = 16_000) -> list[float]:
+    samples = [0.0] * int(seconds * rate)
+    for step in range(int(seconds / 0.42)):
+        mix(samples, int(step * 0.42 * rate), tone(90, 70, rate, 0.55))
+        mix(samples, int(step * 0.42 * rate) + 40, tone(160, 40, rate, 0.25))
+    return samples
+
+
+def fall_audio(seconds: float = 4.0, rate: int = 16_000) -> list[float]:
+    samples = [0.0] * int(seconds * rate)
+    mix(samples, int(0.2 * rate), tone(220, 180, rate, 0.12))
+    mix(samples, int(1.05 * rate), tone(70, 220, rate, 0.85))
+    mix(samples, int(1.08 * rate), tone(40, 280, rate, 0.7))
+    mix(samples, int(1.2 * rate), tone(180, 90, rate, 0.35))
+    return samples
+
+
+def encode_video(frames: list[Image.Image], dest: Path, audio: list[float]) -> None:
     with tempfile.TemporaryDirectory() as tmp:
         folder = Path(tmp)
         for i, frame in enumerate(frames):
             frame.save(folder / f"f{i:03d}.png")
+        wav = folder / "a.wav"
+        write_wav(wav, audio)
         subprocess.check_call(
             [
                 "ffmpeg",
@@ -252,23 +298,25 @@ def encode_video(frames: list[Image.Image], dest: Path) -> None:
                 "12",
                 "-i",
                 str(folder / "f%03d.png"),
-                "-f",
-                "lavfi",
                 "-i",
-                "anullsrc=channel_layout=mono:sample_rate=16000",
+                str(wav),
                 "-shortest",
                 "-c:v",
                 "libx264",
                 "-pix_fmt",
                 "yuv420p",
                 "-crf",
-                "28",
+                "26",
                 "-preset",
                 "slow",
                 "-c:a",
                 "aac",
                 "-b:a",
-                "32k",
+                "48k",
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
                 "-movflags",
                 "+faststart",
                 str(dest),
@@ -284,8 +332,8 @@ def make_walk() -> list[Image.Image]:
     for i in range(48):
         img = scene()
         d = ImageDraw.Draw(img)
-        x = 70 + i * 7.2
-        person(d, (x, 168), i * 0.7, 0.0, 1.15)
+        x = 80 + i * 9.4
+        person(d, (x, 214), i * 0.75, 0.0, 1.35)
         frames.append(img)
     return frames
 
@@ -296,16 +344,12 @@ def make_fall() -> list[Image.Image]:
         img = scene()
         d = ImageDraw.Draw(img)
         if i < 10:
-            person(d, (220, 168), 0.2, math.sin(i / 2) * 0.08, 1.15)
-        elif i < 30:
-            t = (i - 10) / 20
-            tilt = t * (math.pi / 2)
-            y = 168 + t * t * 70
-            x = 220 + t * 70
-            person(d, (x, y), 0.4, tilt, 1.15)
+            person(d, (260, 214), 0.15, math.sin(i / 2) * 0.1, 1.35)
+        elif i < 24:
+            t = (i - 10) / 14
+            person(d, (260 + t * 90, 214 + t * t * 90), 0.3, t * (math.pi / 2), 1.35)
         else:
-            t = min(1, (i - 30) / 6)
-            person(d, (300, 238), 0.1, math.pi / 2 + t * 0.08, 1.15)
+            person(d, (360, 292), 0.05, math.pi / 2 + 0.06, 1.35)
         frames.append(img)
     return frames
 
@@ -314,8 +358,10 @@ def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     save_jpeg(make_receipt(False), "receipt-legible.jpg", max_edge=900, quality=85)
     save_jpeg(make_receipt(True), "receipt-blurry.jpg", max_edge=900, quality=70)
-    save_jpeg(crop_phone(Image.open(SRC / "shattered.jpg")), "phone-cracked.jpg")
-    save_jpeg(Image.open(SRC / "phone_intact.jpg"), "phone-intact.jpg")
+    if (SRC / "shattered.jpg").exists():
+        save_jpeg(crop_phone(Image.open(SRC / "shattered.jpg")), "phone-cracked.jpg")
+    if (SRC / "phone_intact.jpg").exists():
+        save_jpeg(Image.open(SRC / "phone_intact.jpg"), "phone-intact.jpg")
     save_jpeg(make_parcel(True), "parcel-damaged.jpg", max_edge=900, quality=84)
     save_jpeg(make_parcel(False), "parcel-intact.jpg", max_edge=900, quality=84)
 
@@ -330,8 +376,8 @@ def main() -> None:
     tts(urgent, OUT / "voice-urgent.wav", "en-us", 175, 28)
     tts(routine, OUT / "voice-routine.wav", "en-us", 125, 48)
 
-    encode_video(make_fall(), OUT / "safety-fall.mp4")
-    encode_video(make_walk(), OUT / "safety-walk.mp4")
+    encode_video(make_fall(), OUT / "safety-fall.mp4", fall_audio())
+    encode_video(make_walk(), OUT / "safety-walk.mp4", walk_audio())
 
     for stale in ("voicemail.wav", "machine.wav", "gallery.png", "package.png", "clip.webm"):
         path = OUT / stale
