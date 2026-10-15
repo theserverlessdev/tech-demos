@@ -213,12 +213,7 @@ export class BoardRoom extends YServer<Env> {
     doc.transact(() => {
       for (const name of [...doc.share.keys()]) {
         if (name === "strokes") continue;
-        const type = doc.share.get(name);
-        if (type instanceof Y.Text && type.length > 0) type.delete(0, type.length);
-        else if (type instanceof Y.Array && type.length > 0) type.delete(0, type.length);
-        else if (type instanceof Y.Map) {
-          for (const key of [...type.keys()]) type.delete(key);
-        }
+        purgeForeign(doc, name);
       }
       for (const key of [...strokes.keys()]) {
         const parsed = parseStroke(strokes.get(key));
@@ -303,6 +298,25 @@ export class BoardRoom extends YServer<Env> {
     }
     return allowed;
   }
+}
+
+/**
+ * Updates restore unknown roots as AbstractType. `getText` / `getMap` on this
+ * document upgrades them to the constructor that belongs to the same yjs copy
+ * as the Durable Object (instanceof across copies is unreliable).
+ */
+function purgeForeign(doc: Y.Doc, name: string): void {
+  const raw = doc.share.get(name) as { _map?: Map<unknown, unknown>; _start?: unknown; constructor?: { name?: string } } | undefined;
+  if (!raw) return;
+  const ctor = raw.constructor?.name ?? "";
+  const asMap = ctor === "YMap" || (Boolean(raw._map && raw._map.size > 0) && raw._start == null);
+  if (asMap) {
+    const map = doc.getMap(name);
+    for (const key of [...map.keys()]) map.delete(key);
+    return;
+  }
+  const text = doc.getText(name);
+  if (text.length > 0) text.delete(0, text.length);
 }
 
 function positiveInt(value: string | undefined, fallback: number): number {
