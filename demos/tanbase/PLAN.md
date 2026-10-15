@@ -102,21 +102,19 @@ Worker `tech-demos-tanbase`:
 
 ## Audit remediations
 
-Fixes for `/cursor/stores/bot/audits/tanbase-audit.md`:
-
 - **B1.** `handleApi` mints a `tb_vid` cookie without inserting a visitor. `ensureVisitor` runs only from `createBoard`. Sweep deletes visitors that own no board.
 - **S1.** Split uses `reasoning_effort: "low"`, `max_tokens: 2000`, and a JSON schema. `chat_template_kwargs` is gone. README says a live paid call was not made here.
-- **S2.** Board, task, attachment, and split inserts are `INSERT … SELECT … WHERE COUNT(*) < cap`. `meta.changes === 0` is the cap.
+- **S2.** Board, task, attachment, and split inserts are `INSERT … SELECT … WHERE COUNT(*) < cap`. `meta.changes === 0` is the cap. Smoke fires a parallel create burst.
 - **S3.** JSON and uploads reject missing or oversize `Content-Length` before reading. Uploads send `cf-turnstile-response` and verify it before `formData()`.
-- **S4.** `webSocketClose` closes the socket, then broadcasts the remaining peer count. `accept()` checks ownership first and notifies the other sockets.
-- **S5.** Phone drag uses a `touch-action: none` handle, long-press arming, edge auto-scroll, and `pointercancel` clears `.is-over`.
-- **S6–S10.** Create dialog closes and shows its own errors; the drawer keeps Turnstile and the chosen file across snapshots; long text wraps; subtasks require the parent and board; copy is a private board per browser.
-- **N1–N13.** Live sockets require a matching Origin and ignore client mutations; overdue clears in Done; due dates use the client's local end of day; split status is written before `create()`; sweep is bounded; unknown paths 404; cookie `Path` is `/demos/tanbase` on the hub; rate-limit ids are `7540`–`7542` (range `7540`–`7549` only).
+- **S4.** `webSocketClose` closes the socket, then broadcasts the remaining peer count. `accept()` checks ownership first and notifies the other sockets. Smoke asserts the first tab gets `peers: 2` on join and `peers: 1` on leave.
+- **S5.** Phone drag uses a `touch-action: none` Move handle, edge auto-scroll, and `pointercancel` clears `.is-over`. There is no long-press path.
+- **S6–S10.** Create dialog closes and shows its own errors; the drawer keeps Turnstile and the chosen file across snapshots; long text and long board names wrap at 390px; subtasks require the parent and board; copy is a private board per browser.
+- **N1–N13.** Live sockets require a matching Origin and ignore client mutations; overdue clears in Done; due dates use the client's local end of day; save sends `dueAt` only when the date changed; a 5xx from `openBoard` keeps the board in the list; split status is written before `create()`; sweep is bounded; unknown paths 404; cookie `Path` is `/demos/tanbase` on the hub; rate-limit ids are `7540`–`7542` in `wrangler.jsonc` (range `7540`–`7549` only).
 
 ## Testing
 
 - `bun run typecheck`
-- `scripts/smoke.ts`: create board, task CRUD, two WebSocket clients, attachment round-trip, rejected upload, workflow split (Workers AI or fallback), overdue reminder, TTL sweep.
+- `scripts/smoke.ts`: create board, task CRUD, two WebSocket clients (first tab sees 2 then 1 peers), attachment round-trip, rejected upload, workflow split (Workers AI or fallback), concurrent card/board caps, orphan-split delete, overdue reminder, TTL sweep.
 - Browser screenshot and a short video.
 
 ## Deferred

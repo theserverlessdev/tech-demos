@@ -1,6 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "tech-demos-tanbase",
+  // Distinct from production `tech-demos-tanbase` so `wrangler deploy -c wrangler.local.jsonc` cannot overwrite the live worker.
+  "name": "tech-demos-tanbase-local",
   "main": "src/worker/index.ts",
   "compatibility_date": "2026-09-01",
   "compatibility_flags": ["nodejs_compat"],
@@ -39,7 +40,8 @@
     }
   ],
   "ratelimits": [
-    { "name": "WRITE_LIMIT", "namespace_id": "7540", "simple": { "limit": 40, "period": 60 } },
+    // Local only. Smoke's concurrency-cap probe needs room above production's 40/min.
+    { "name": "WRITE_LIMIT", "namespace_id": "7540", "simple": { "limit": 200, "period": 60 } },
     { "name": "UPLOAD_LIMIT", "namespace_id": "7541", "simple": { "limit": 8, "period": 60 } },
     { "name": "AI_LIMIT", "namespace_id": "7542", "simple": { "limit": 4, "period": 60 } }
   ],

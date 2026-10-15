@@ -205,16 +205,19 @@ async function refreshBoards(): Promise<void> {
 async function openBoard(id: string): Promise<void> {
   const res = await api<BoardSnapshot>(`/api/boards/${id}`);
   if (!res.data) {
-    boards = boards.filter((item) => item.id !== id);
-    sessionStorage.removeItem("tanbase-board");
-    const next = boards[0];
-    if (next) {
-      setStrip(res.error);
-      await openBoard(next.id);
-      return;
+    const gone = res.status === 404;
+    if (gone) {
+      boards = boards.filter((item) => item.id !== id);
+      sessionStorage.removeItem("tanbase-board");
+      const next = boards[0];
+      if (next) {
+        setStrip(res.error);
+        await openBoard(next.id);
+        return;
+      }
     }
     setStrip(res.error);
-    renderEmpty();
+    if (!board || gone) renderEmpty(res.error);
     return;
   }
   sessionStorage.setItem("tanbase-board", id);
@@ -385,23 +388,14 @@ function cardNode(task: Task): HTMLElement {
     dragId = null;
     clearColumnOver();
   });
-  let touch: { pointerId: number; x: number; y: number; moved: boolean; armed: boolean } | null = null;
-  let pressTimer = 0;
+  let touch: { pointerId: number; x: number; y: number; moved: boolean } | null = null;
   let swallowClick = false;
-  const arm = (pointerId: number, x: number, y: number) => {
-    touch = { pointerId, x, y, moved: false, armed: true };
-    button.classList.add("is-armed");
-    button.style.touchAction = "none";
-  };
   const finishTouch = (event: PointerEvent, dropped: boolean) => {
-    window.clearTimeout(pressTimer);
     const moved = Boolean(touch?.moved);
-    const armed = Boolean(touch?.armed);
     touch = null;
     button.classList.remove("is-dragging", "is-armed");
-    button.style.touchAction = "";
     clearColumnOver();
-    if (!dropped || !moved || !armed || !board) {
+    if (!dropped || !moved || !board) {
       dragId = null;
       return;
     }
@@ -413,57 +407,26 @@ function cardNode(task: Task): HTMLElement {
     if (event.pointerType === "mouse") return;
     event.stopPropagation();
     event.preventDefault();
-    arm(event.pointerId, event.clientX, event.clientY);
+    touch = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, moved: false };
+    button.classList.add("is-armed");
     handle.setPointerCapture(event.pointerId);
   });
-  button.addEventListener("pointerdown", (event) => {
-    if (event.pointerType === "mouse" || event.target === handle || handle.contains(event.target as Node)) return;
-    touch = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, moved: false, armed: false };
-    pressTimer = window.setTimeout(() => {
-      arm(event.pointerId, event.clientX, event.clientY);
-      try {
-        button.setPointerCapture(event.pointerId);
-      } catch {
-        // Capture is optional; the handle path already has it.
-      }
-    }, 380);
-  });
-  const onMove = (event: PointerEvent) => {
+  handle.addEventListener("pointermove", (event) => {
     if (!touch || touch.pointerId !== event.pointerId) return;
-    if (!touch.armed) {
-      if (Math.hypot(event.clientX - touch.x, event.clientY - touch.y) > 10) {
-        window.clearTimeout(pressTimer);
-        touch = null;
-      }
-      return;
-    }
     if (Math.hypot(event.clientX - touch.x, event.clientY - touch.y) >= 8) touch.moved = true;
     dragId = task.id;
     button.classList.add("is-dragging");
     clearColumnOver();
     document.elementFromPoint(event.clientX, event.clientY)?.closest("[data-column]")?.classList.add("is-over");
     edgeScroll(event.clientY);
-  };
-  handle.addEventListener("pointermove", onMove);
-  button.addEventListener("pointermove", onMove);
-  handle.addEventListener("pointerup", (event) => finishTouch(event, true));
-  button.addEventListener("pointerup", (event) => {
-    if (!touch || touch.pointerId !== event.pointerId) {
-      window.clearTimeout(pressTimer);
-      return;
-    }
-    finishTouch(event, true);
   });
-  const cancel = () => {
-    window.clearTimeout(pressTimer);
+  handle.addEventListener("pointerup", (event) => finishTouch(event, true));
+  handle.addEventListener("pointercancel", () => {
     touch = null;
     dragId = null;
     button.classList.remove("is-dragging", "is-armed");
-    button.style.touchAction = "";
     clearColumnOver();
-  };
-  handle.addEventListener("pointercancel", cancel);
-  button.addEventListener("pointercancel", cancel);
+  });
   const open = () => {
     selectedId = task.id;
     editing = false;
@@ -588,12 +551,13 @@ function renderDrawer(force: boolean): void {
     el("p", { class: "hint", id: "hint" }, ""),
   );
   drawer.querySelector("#save-card")?.addEventListener("click", () => {
-    void saveTask(task, {
+    const patch: { title: string; description: string; dueAt?: number | null; column: ColumnId } = {
       title: title.value,
       description: description.value,
-      dueAt: due.value ? localEndOfDay(due.value) : null,
       column: column.value as ColumnId,
-    });
+    };
+    if (dateInput(task.dueAt) !== due.value) patch.dueAt = due.value ? localEndOfDay(due.value) : null;
+    void saveTask(task, patch);
   });
   drawer.querySelector("#delete-card")?.addEventListener("click", () => {
     if (!board) return;
@@ -834,7 +798,7 @@ function renderWorkspace(rebuildDrawer: boolean): void {
   renderDrawer(rebuildDrawer);
 }
 
-function renderEmpty(): void {
+function renderEmpty(strip = liveLine()): void {
   socket?.close();
   socket = null;
   connected = false;
@@ -860,7 +824,7 @@ function renderEmpty(): void {
     const node = document.querySelector("#empty-turnstile");
     if (node instanceof HTMLElement) createWidget = mountWidget(node, "create-board");
   });
-  setStrip(liveLine());
+  setStrip(strip);
 }
 
 document.querySelector("#theme")?.addEventListener("click", () => {

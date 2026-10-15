@@ -2,7 +2,7 @@
 
 Live at <https://tech-demos.theserverless.dev/demos/tanbase/>.
 
-The D1 database `tech-demos-tanbase` (`67b63062-595d-48dc-a13c-2585dbeb5612`), the R2 bucket `tech-demos-tanbase`, and the Workflow `tech-demos-tanbase-split` are created. `TURNSTILE_SITE_KEY` in `wrangler.jsonc` is the live widget key. `TURNSTILE_SECRET` is a Worker secret (`wrangler secret put`), not a var — a var with that name would collide with the secret and fail Workers Builds. Rate-limit namespaces are `7540` (writes), `7541` (uploads), and `7542` (AI). `7543`–`7549` are reserved and unused. The owner must point those ids in the dashboard; this PR does not call the Cloudflare API.
+The D1 database `tech-demos-tanbase` (`67b63062-595d-48dc-a13c-2585dbeb5612`), the R2 bucket `tech-demos-tanbase`, and the Workflow `tech-demos-tanbase-split` are created. `TURNSTILE_SITE_KEY` in `wrangler.jsonc` is the live widget key. `TURNSTILE_SECRET` is a Worker secret (`wrangler secret put`), not a var — a var with that name would collide with the secret and fail Workers Builds. Rate-limit namespaces are declared in `wrangler.jsonc` as `7540` (writes), `7541` (uploads), and `7542` (AI). `7543`–`7549` stay unused. There is no dashboard step; this PR does not call the Cloudflare API. `wrangler.local.jsonc` uses worker name `tech-demos-tanbase-local` so a mistaken local deploy cannot replace production.
 
 ## Local
 
@@ -33,7 +33,7 @@ Those override the live site key for `wrangler dev` only. They are dummy credent
 
 This PR does not deploy and does not call the Cloudflare API.
 
-1. Confirm rate-limit namespace ids `7540` (writes), `7541` (uploads), and `7542` (AI) in the dashboard. `7543`–`7549` stay unused.
+1. Rate-limit ids `7540` (writes), `7541` (uploads), and `7542` (AI) are already in `wrangler.jsonc`. `7543`–`7549` stay unused. No dashboard change is required.
 2. Deploy `demos/tanbase` when you want the audit fixes live (`bun run deploy` from that folder). Routes are `…/demos/tanbase` and `…/demos/tanbase/*`.
 3. After deploy, complete one live split and check the drawer: it should say “Subtasks came from Workers AI” if `@cf/zai-org/glm-5.3-flash` returned JSON. If it still falls back, keep the honest copy and re-shoot `artifacts/split.png` only after a real AI write.
 4. `TURNSTILE_SECRET` is already a Worker secret. Do not put it in `wrangler.jsonc`.

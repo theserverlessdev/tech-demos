@@ -69,10 +69,10 @@ button { cursor: pointer; }
   border-bottom: 1px solid var(--border);
   background: var(--surface);
 }
-.brand { display: flex; align-items: center; gap: 8px; text-decoration: none; font-weight: 650; color: var(--text-strong); }
+.brand { display: flex; align-items: center; gap: 8px; text-decoration: none; font-weight: 650; color: var(--text-strong); flex: none; }
 .brand__mark { color: var(--ember); }
-.topbar__title { flex: 1; min-width: 0; }
-.topbar__title h1 { font-size: 1.25rem; }
+.topbar__title { flex: 1; min-width: max-content; }
+.topbar__title h1 { font-size: 1.25rem; overflow-wrap: anywhere; }
 .topbar__title p { margin: 2px 0 0; color: var(--muted); font-size: 0.86rem; }
 .topbar__actions { display: flex; gap: 8px; align-items: center; }
 
@@ -111,8 +111,10 @@ button { cursor: pointer; }
 #app { flex: 1; display: flex; min-height: 0; padding: 16px 18px 20px; }
 
 .workspace, .empty { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
-.board-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
-.board-bar label, .field { display: flex; flex-direction: column; gap: 4px; font-size: 0.78rem; color: var(--muted); }
+.board-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; min-width: 0; }
+.board-bar label, .field { display: flex; flex-direction: column; gap: 4px; font-size: 0.78rem; color: var(--muted); min-width: 0; }
+.board-bar label { max-width: 100%; }
+.board-bar select { max-width: 100%; }
 .board-bar input, .board-bar select, .field input, .field textarea, .field select {
   background: var(--surface);
   border: 1px solid var(--border-strong);
@@ -232,7 +234,9 @@ dialog .empty { margin: 0; }
 
 @media (max-width: 900px) {
   .topbar { flex-wrap: wrap; gap: 8px; min-height: 0; }
+  .topbar__title { flex: 1 1 auto; min-width: max-content; }
   .topbar__title p { display: none; }
+  .topbar__actions { flex-basis: 100%; justify-content: flex-start; }
   .layout { display: flex; flex-direction: column; grid-template-columns: 1fr; }
   .columns { grid-template-columns: 1fr; order: 0; }
   .expiry { margin-left: 0; }
@@ -286,7 +290,7 @@ select {
     padding-left: max(12px, env(safe-area-inset-left));
     padding-right: max(12px, env(safe-area-inset-right));
   }
-  .topbar__actions { flex-wrap: wrap; justify-content: flex-end; max-width: 100%; }
+  .topbar__actions { flex-wrap: wrap; max-width: 100%; }
   .composer { padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
   .title-input, .composer input, .join input { min-width: 0; max-width: 100%; }
 }

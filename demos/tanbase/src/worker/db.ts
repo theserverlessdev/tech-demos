@@ -110,13 +110,21 @@ export async function countBoards(env: Env, visitorId: string): Promise<number> 
   return row?.n ?? 0;
 }
 
-export async function countTables(env: Env): Promise<{ visitors: number; boards: number; tasks: number }> {
-  const [visitors, boards, tasks] = await Promise.all([
+export async function countTables(env: Env): Promise<{ visitors: number; boards: number; tasks: number; orphanTasks: number; orphanChildren: number }> {
+  const [visitors, boards, tasks, orphanTasks, orphanChildren] = await Promise.all([
     env.DB.prepare(`SELECT COUNT(*) AS n FROM visitors`).first<{ n: number }>(),
     env.DB.prepare(`SELECT COUNT(*) AS n FROM boards`).first<{ n: number }>(),
     env.DB.prepare(`SELECT COUNT(*) AS n FROM tasks`).first<{ n: number }>(),
+    env.DB.prepare(`SELECT COUNT(*) AS n FROM tasks WHERE board_id NOT IN (SELECT id FROM boards)`).first<{ n: number }>(),
+    env.DB.prepare(`SELECT COUNT(*) AS n FROM tasks WHERE parent_id IS NOT NULL AND parent_id NOT IN (SELECT id FROM tasks)`).first<{ n: number }>(),
   ]);
-  return { visitors: visitors?.n ?? 0, boards: boards?.n ?? 0, tasks: tasks?.n ?? 0 };
+  return {
+    visitors: visitors?.n ?? 0,
+    boards: boards?.n ?? 0,
+    tasks: tasks?.n ?? 0,
+    orphanTasks: orphanTasks?.n ?? 0,
+    orphanChildren: orphanChildren?.n ?? 0,
+  };
 }
 
 export async function listBoards(env: Env, visitorId: string): Promise<BoardMeta[]> {
