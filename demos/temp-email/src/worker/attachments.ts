@@ -1,4 +1,5 @@
 import type { AttachmentMeta } from "../shared/types";
+import { clipChars, MAX_ATTACHMENTS } from "./limits";
 
 function safeFilename(name: string | null | undefined): string {
   const base = (name ?? "attachment").split(/[/\\]/).pop() || "attachment";
@@ -36,12 +37,20 @@ export function messagePrefix(inboxId: string, messageId: string): string {
   return `${inboxId}/${messageId}/`;
 }
 
-type MailPart = {
+export type MailPart = {
   filename?: string | null;
   mimeType?: string;
   disposition?: string | null;
   content?: unknown;
 };
+
+export function clipAttachmentPart(part: MailPart): { filename: string | null; mimeType: string; disposition: string | null } {
+  return {
+    filename: clipChars(part.filename ?? null),
+    mimeType: clipChars(part.mimeType || "application/octet-stream") ?? "application/octet-stream",
+    disposition: clipChars(part.disposition ?? null),
+  };
+}
 
 /** Puts each part with bytes into R2. Meta (including r2Key) goes to D1 — never the blob. */
 export async function storeAttachments(
@@ -51,14 +60,14 @@ export async function storeAttachments(
   parts: MailPart[],
 ): Promise<AttachmentMeta[]> {
   const stored: AttachmentMeta[] = [];
+  const take = parts.slice(0, MAX_ATTACHMENTS);
   try {
-    for (let i = 0; i < parts.length; i++) {
-      const part = parts[i];
-      const filename = part.filename ?? null;
-      const mimeType = part.mimeType || "application/octet-stream";
+    for (let i = 0; i < take.length; i++) {
+      const part = take[i];
+      const { filename, mimeType, disposition } = clipAttachmentPart(part);
       const body = asBytes(part.content);
       if (!body) {
-        stored.push({ filename, mimeType, disposition: part.disposition ?? null, size: 0, r2Key: null });
+        stored.push({ filename, mimeType, disposition, size: 0, r2Key: null });
         continue;
       }
       const r2Key = attachmentObjectKey(inboxId, messageId, i, filename);
@@ -68,7 +77,7 @@ export async function storeAttachments(
           contentDisposition: contentDisposition(filename),
         },
       });
-      stored.push({ filename, mimeType, disposition: part.disposition ?? null, size: body.byteLength, r2Key });
+      stored.push({ filename, mimeType, disposition, size: body.byteLength, r2Key });
     }
   } catch (err) {
     await deletePrefix(bucket, messagePrefix(inboxId, messageId));

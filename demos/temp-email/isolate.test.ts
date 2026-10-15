@@ -26,6 +26,7 @@ test("deploy is the self-host script; hosted uses deploy:hosted", async () => {
   const pkg = await Bun.file(join(import.meta.dir, "package.json")).json();
   expect(String(pkg.scripts.deploy)).not.toContain("wrangler.hosted");
   expect(String(pkg.scripts.deploy)).toContain("wrangler deploy");
+  expect(String(pkg.scripts.deploy)).toContain("d1 migrations apply DB --remote");
   expect(String(pkg.scripts["deploy:hosted"])).toContain("wrangler.hosted.jsonc");
   const example = await Bun.file(join(import.meta.dir, ".dev.vars.example")).text();
   expect(example).not.toContain("MAIL_DOMAIN=");

@@ -119,33 +119,35 @@ Do **not** enable Email Routing on `theserverless.dev` and do **not** change TSD
 
 Owner rules do not apply to your instance. You get the full product: Email Worker, D1, R2 attachments, agent API, optional Turnstile mint.
 
-1. Click **Deploy to Cloudflare** in the README (uses `wrangler.jsonc` and the `deploy` script in this folder), or copy this directory and `bun run deploy`. This needs **Workers Paid** (`cpu_ms` 5000; Free is 10 ms CPU).
-2. Create a D1 database and paste the id into `wrangler.jsonc` (`d1_databases[0].database_id` is zeros in the template):
+This needs **Workers Paid** (`cpu_ms` 5000; Free is 10 ms CPU). `deploy` builds, applies D1 migrations, then deploys. Do not run it before D1 exists.
 
-```bash
-bunx wrangler d1 create temp-email
-# Copy the printed database_id into wrangler.jsonc, then:
-CI=1 bunx wrangler d1 migrations apply DB --remote
-```
-
-3. Create an R2 bucket for HTML/text bodies and attachment bytes (required — blobs are not stored in D1):
+1. Click **Deploy to Cloudflare** in the README (uses `wrangler.jsonc` and the `deploy` script). The button provisions D1 (the template omits `database_id` so wrangler can create it) and an R2 bucket, then `deploy` applies migrations.
+2. If you copied the folder instead of using the button, create R2 (required — blobs are not stored in D1), then deploy. Do **not** `d1 create` a second database if the button already bound one.
 
 ```bash
 bunx wrangler r2 bucket create temp-email
 # If you pick another name, set r2_buckets[0].bucket_name in wrangler.jsonc.
+bun run deploy   # build, remote D1 migrations, wrangler deploy
 ```
 
-4. Set vars: `MAIL_DOMAIN`, `PUBLIC_ORIGIN`, `HOSTED_MODE=false`, `TURNSTILE_SITE_KEY`.
-5. Set secrets (do not echo them):
+If you are not using the button and wrangler has not created D1 yet:
+
+```bash
+bunx wrangler d1 create temp-email
+# Paste the printed database_id into wrangler.jsonc, then bun run deploy.
+```
+
+3. Set vars: `MAIL_DOMAIN`, `PUBLIC_ORIGIN`, `HOSTED_MODE=false`, `TURNSTILE_SITE_KEY`.
+4. Set secrets (do not echo them):
 
 ```bash
 openssl rand -hex 32 | bunx wrangler secret put AGENT_API_KEY
 bunx wrangler secret put TURNSTILE_SECRET_KEY
 ```
 
-6. Create a [Turnstile widget](https://developers.cloudflare.com/turnstile/get-started/) for your UI hostname (or `wrangler turnstile widget create`).
-7. Enable **Email Routing** on **your** zone. Point MX at `route*.mx.cloudflare.net`. Catch-all `*@MAIL_DOMAIN` → this Worker.
-8. Attach a custom domain if you want. Do not use `theserverless.dev` or `email.lomvic.com`.
+5. Create a [Turnstile widget](https://developers.cloudflare.com/turnstile/get-started/) for your UI hostname (or `wrangler turnstile widget create`).
+6. Enable **Email Routing** on **your** zone. Point MX at `route*.mx.cloudflare.net`. Catch-all `*@MAIL_DOMAIN` → this Worker.
+7. Attach a custom domain if you want. Do not use `theserverless.dev` or `email.lomvic.com`.
 
 If Turnstile is unset, key mint stays off and agents use **your** admin secret only.
 

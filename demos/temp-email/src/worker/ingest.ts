@@ -4,7 +4,7 @@ import { storeAttachments, storeBodies, messagePrefix, deletePrefix } from "./at
 import { newId } from "./auth";
 import { countMessages, hydrateBodies, insertMessage, InsertRefused, sumRawSize, type InboxRow } from "./db";
 import { extractCodes, extractLinks, htmlToText, snippetOf } from "./extract";
-import { MAX_HEADER_CHARS, MAX_HTML_CHARS, MAX_INBOX_BYTES, MAX_MESSAGES_PER_INBOX, MAX_RAW_BYTES, MAX_TEXT_CHARS } from "./limits";
+import { clipChars, MAX_HEADER_CHARS, MAX_HTML_CHARS, MAX_INBOX_BYTES, MAX_MESSAGES_PER_INBOX, MAX_RAW_BYTES, MAX_TEXT_CHARS } from "./limits";
 
 export type IngestInput = {
   /** PostalMime reads a stream directly, so email() never buffers a message that fails a check. */
@@ -46,8 +46,7 @@ function cap(value: string | undefined, max: number): { value: string | null; cu
 
 /** Cap a D1 header field. Empty becomes null. */
 export function capHeader(value: string | null | undefined, max = MAX_HEADER_CHARS): string | null {
-  if (value == null || value === "") return null;
-  return value.length > max ? value.slice(0, max) : value;
+  return clipChars(value, max);
 }
 
 /**

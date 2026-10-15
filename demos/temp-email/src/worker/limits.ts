@@ -11,6 +11,12 @@ export const SNIPPET_CHARS = 160;
 /** Collapse at most this many chars for the list snippet so V8 does not copy a huge rope. */
 export const SNIPPET_SOURCE_MAX = 2048;
 export const MAX_HEADER_CHARS = 2048;
+export const MAX_ATTACHMENTS = 20;
+
+export function clipChars(value: string | null | undefined, max = MAX_HEADER_CHARS): string | null {
+  if (value == null || value === "") return null;
+  return value.length > max ? value.slice(0, max) : value;
+}
 export const D1_MAX_BOUND_PARAMS = 100;
 export const MAX_CODES = 5;
 export const MAX_LINKS = 20;

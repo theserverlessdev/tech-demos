@@ -22,7 +22,7 @@
     {
       "binding": "DB",
       "database_name": "temp-email",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      // No database_id: wrangler 4.45+ will not auto-create D1 when the id is all zeros.
       "migrations_dir": "migrations"
     }
   ],

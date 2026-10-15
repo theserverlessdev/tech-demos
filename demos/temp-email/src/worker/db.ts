@@ -257,16 +257,16 @@ export class InsertRefused extends Error {
   }
 }
 
-export async function insertMessage(db: D1Database, m: NewMessage): Promise<MessageRow> {
-  const row = await db
-    .prepare(
-      `INSERT INTO messages (id, inbox_id, via, received_at, envelope_from, from_name, from_address, to_header, subject, snippet,
+export const INSERT_MESSAGE_SQL = `INSERT INTO messages (id, inbox_id, via, received_at, envelope_from, from_name, from_address, to_header, subject, snippet,
         text_body, html_body, truncated, raw_size, message_id, date_header, codes, links, attachments, text_r2_key, html_r2_key)
        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
        WHERE (SELECT COUNT(*) FROM messages WHERE inbox_id = ?) < ?
          AND (SELECT COALESCE(SUM(raw_size), 0) FROM messages WHERE inbox_id = ?) + ? <= ?
-       RETURNING *`,
-    )
+       RETURNING *`;
+
+export async function insertMessage(db: D1Database, m: NewMessage): Promise<MessageRow> {
+  const row = await db
+    .prepare(INSERT_MESSAGE_SQL)
     .bind(
       m.id,
       m.inbox_id,

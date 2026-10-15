@@ -37,7 +37,7 @@ Hosted mode is not a free open agent API with a shared secret.
 ## Hosting model
 
 - **Hosted:** `email.lomvic.com` on throwaway zone `lomvic.com`. Demo / no SLA, web inboxes last up to 3 hours, Turnstile mint, legal notices. Do **not** touch apex MX on `theserverless.dev` (Google Workspace). Owner deploys with `bun run deploy:hosted` (`wrangler.hosted.jsonc`).
-- **Self-host:** Deploy to Cloudflare button runs the `deploy` script against `wrangler.jsonc` (no parent imports). Needs **Workers Paid**. Operator creates D1 + R2, sets `MAIL_DOMAIN`, Turnstile keys, and an admin secret. Full Email Worker + D1 + R2 + agent API on their account.
+- **Self-host:** Deploy to Cloudflare button runs the `deploy` script against `wrangler.jsonc` (build, remote D1 migrations, then `wrangler deploy`; no parent imports). Needs **Workers Paid**. The button provisions D1 + R2; `deploy` applies migrations so the bound database is not empty. Set `MAIL_DOMAIN`, Turnstile keys, and an admin secret. Full Email Worker + D1 + R2 + agent API on their account.
 
 ## 2026-10-15 audit
 

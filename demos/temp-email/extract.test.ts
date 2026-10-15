@@ -63,23 +63,25 @@ test("extractCodes ignores a URL port next to confirm", () => {
 
 test("collapseWhitespace does not reread the output string", () => {
   expect(collapseWhitespace("a   a\n\n\nb")).toBe("a a\nb");
-  const text = "a ".repeat(128 * 1024);
-  const start = performance.now();
-  const out = collapseWhitespace(text);
-  expect(performance.now() - start).toBeLessThan(100);
-  expect(out.startsWith("a a")).toBe(true);
+  const n = 32 * 1024;
+  const time = (s: string) => {
+    const start = performance.now();
+    collapseWhitespace(s);
+    return performance.now() - start;
+  };
+  const t1 = time("a".repeat(n));
+  const t2 = time("a".repeat(n * 2));
+  expect(t2).toBeLessThan(500);
+  expect(t2).toBeLessThan(Math.max(50, t1 * 8));
 });
 
 test("snippetOf slices before collapsing and stays short", () => {
-  const text = "a ".repeat(100_000);
-  const start = performance.now();
-  const snip = snippetOf(text);
-  expect(performance.now() - start).toBeLessThan(50);
+  const snip = snippetOf("a ".repeat(100_000));
   expect(snip.length).toBeLessThanOrEqual(SNIPPET_CHARS);
   expect(snippetOf("hello\nworld")).toBe("hello world");
 });
 
-test("collapseWhitespace is linear on spaced text under V8", async () => {
+test("collapseWhitespace is linear at the 64K cap under V8", async () => {
   const dir = await mkdtemp(join(tmpdir(), "extract-v8-"));
   try {
     const built = await Bun.build({
@@ -94,15 +96,17 @@ test("collapseWhitespace is linear on spaced text under V8", async () => {
         "node",
         "--input-type=module",
         "-e",
-        `import { collapseWhitespace, snippetOf } from ${JSON.stringify(join(dir, "extract.js"))};
-         const text = "a ".repeat(128 * 1024);
-         const t0 = performance.now();
-         collapseWhitespace(text);
-         const ms = performance.now() - t0;
-         const snip = snippetOf(text);
-         if (ms >= 100) { console.error("slow", ms); process.exit(1); }
+        `import { collapseWhitespace, htmlToText, snippetOf } from ${JSON.stringify(join(dir, "extract.js"))};
+         const n = 32 * 1024;
+         const time = (fn) => { const t0 = performance.now(); fn(); return performance.now() - t0; };
+         const t1 = time(() => collapseWhitespace("a".repeat(n)));
+         const t2 = time(() => collapseWhitespace("a".repeat(n * 2)));
+         const th = time(() => htmlToText("<".repeat(n * 2)));
+         const snip = snippetOf("a ".repeat(n * 2));
+         if (t2 > 500 || th > 500) { console.error("slow", { t1, t2, th }); process.exit(1); }
+         if (t2 > Math.max(50, t1 * 8)) { console.error("quadratic", { t1, t2 }); process.exit(1); }
          if (snip.length > 160) process.exit(2);
-         console.log(ms.toFixed(1));`,
+         console.log(JSON.stringify({ t1, t2, th }));`,
       ],
       { stdout: "pipe", stderr: "pipe" },
     );

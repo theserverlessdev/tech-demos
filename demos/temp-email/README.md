@@ -15,7 +15,7 @@ Disposable inboxes. Two ways to run it:
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/theserverlessdev/tech-demos/tree/main/demos/temp-email)
 
-The button clones `demos/temp-email` and runs the `deploy` script (`wrangler deploy` with `wrangler.jsonc`). This folder is self-contained: no lomvic routes, `HOSTED_MODE=false`. Self-hosting needs **Workers Paid** (`limits.cpu_ms` is 5000; Free is 10 ms CPU and a 500 MB D1). Set `MAIL_DOMAIN`, `PUBLIC_ORIGIN`, Turnstile keys, and `AGENT_API_KEY` (admin only). Create a **D1 database** and an **R2 bucket**, then attach Email Routing — details in SETUP. Fallback: copy this folder and run `bun run deploy`.
+The button clones `demos/temp-email` and runs the `deploy` script (`d1 migrations apply --remote` then `wrangler deploy`, using `wrangler.jsonc`). This folder is self-contained: no lomvic routes, `HOSTED_MODE=false`. Self-hosting needs **Workers Paid** (`limits.cpu_ms` is 5000; Free is 10 ms CPU and a 500 MB D1). Set `MAIL_DOMAIN`, `PUBLIC_ORIGIN`, Turnstile keys, and `AGENT_API_KEY` (admin only). The button provisions D1 (no `database_id` in the template) and R2. Then attach Email Routing — details in SETUP. Fallback: copy this folder and run `bun run deploy`.
 
 Owner deploys of email.lomvic.com use `wrangler.hosted.jsonc` (`bun run deploy:hosted`).
 

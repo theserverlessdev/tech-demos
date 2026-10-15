@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { INSERT_MESSAGE_SQL } from "./src/worker/db.ts";
 import { CONSUME_CREATE_QUOTA_SQL } from "./src/worker/keys.ts";
-import { KEY_CREATE_LIMIT, KEY_WINDOW_MS, MAX_INBOX_BYTES } from "./src/worker/limits.ts";
+import { KEY_CREATE_LIMIT, KEY_WINDOW_MS, MAX_INBOX_BYTES, MAX_MESSAGES_PER_INBOX } from "./src/worker/limits.ts";
 
 function consume(db: Database, now: number, id = "k1"): boolean {
   const result = db.run(CONSUME_CREATE_QUOTA_SQL, [now, KEY_WINDOW_MS, id]);
@@ -39,23 +40,77 @@ test("a new 24h window resets the create quota", () => {
   expect(row.s).toBe(now + KEY_WINDOW_MS);
 });
 
-test("5 MB inbox budget is enforced in the insert WHERE clause", () => {
+function openMailDb(): Database {
   const db = new Database(":memory:");
-  db.run("CREATE TABLE messages (id TEXT PRIMARY KEY, inbox_id TEXT, raw_size INTEGER)");
+  db.run(`CREATE TABLE inboxes (
+    id TEXT PRIMARY KEY, local_part TEXT, token_hash TEXT, source TEXT, created_at INTEGER, expires_at INTEGER
+  )`);
+  db.run(`CREATE TABLE messages (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL UNIQUE,
+    inbox_id TEXT NOT NULL,
+    via TEXT NOT NULL,
+    received_at INTEGER NOT NULL,
+    envelope_from TEXT NOT NULL,
+    from_name TEXT,
+    from_address TEXT,
+    to_header TEXT,
+    subject TEXT NOT NULL,
+    snippet TEXT NOT NULL,
+    text_body TEXT,
+    html_body TEXT,
+    truncated INTEGER NOT NULL DEFAULT 0,
+    raw_size INTEGER NOT NULL,
+    message_id TEXT,
+    date_header TEXT,
+    codes TEXT NOT NULL DEFAULT '[]',
+    links TEXT NOT NULL DEFAULT '[]',
+    attachments TEXT NOT NULL DEFAULT '[]',
+    text_r2_key TEXT,
+    html_r2_key TEXT
+  )`);
+  return db;
+}
+
+function insertBinds(id: string, inbox: string, rawSize: number): unknown[] {
+  return [
+    id,
+    inbox,
+    "smtp",
+    1,
+    "from@x",
+    null,
+    "from@x",
+    "to@x",
+    "subj",
+    "snip",
+    null,
+    null,
+    0,
+    rawSize,
+    null,
+    null,
+    "[]",
+    "[]",
+    "[]",
+    null,
+    null,
+    inbox,
+    MAX_MESSAGES_PER_INBOX,
+    inbox,
+    rawSize,
+    MAX_INBOX_BYTES,
+  ];
+}
+
+test("5 MB inbox budget is enforced by INSERT_MESSAGE_SQL", () => {
+  const db = openMailDb();
   const inbox = "box";
-  db.run("INSERT INTO messages VALUES ('a', ?, ?)", [inbox, MAX_INBOX_BYTES - 100]);
-  const allowed = db.run(
-    `INSERT INTO messages (id, inbox_id, raw_size)
-     SELECT ?, ?, ?
-     WHERE (SELECT COALESCE(SUM(raw_size), 0) FROM messages WHERE inbox_id = ?) + ? <= ?`,
-    ["b", inbox, 50, inbox, 50, MAX_INBOX_BYTES],
-  );
-  expect(allowed.changes).toBe(1);
-  const refused = db.run(
-    `INSERT INTO messages (id, inbox_id, raw_size)
-     SELECT ?, ?, ?
-     WHERE (SELECT COALESCE(SUM(raw_size), 0) FROM messages WHERE inbox_id = ?) + ? <= ?`,
-    ["c", inbox, 200, inbox, 200, MAX_INBOX_BYTES],
-  );
-  expect(refused.changes).toBe(0);
+  db.run("INSERT INTO inboxes VALUES (?, 'a', 'h', 'web', 0, 1)", [inbox]);
+  const first = db.query(INSERT_MESSAGE_SQL).get(...insertBinds("m1", inbox, MAX_INBOX_BYTES - 100));
+  expect(first).toBeTruthy();
+  const allowed = db.query(INSERT_MESSAGE_SQL).get(...insertBinds("m2", inbox, 50));
+  expect(allowed).toBeTruthy();
+  const refused = db.query(INSERT_MESSAGE_SQL).get(...insertBinds("m3", inbox, 200));
+  expect(refused).toBeNull();
 });

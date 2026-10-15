@@ -26,6 +26,9 @@ const hosted = String(pkg.scripts?.["deploy:hosted"] ?? "");
 if (!deploy.includes("wrangler deploy") || deploy.includes("wrangler.hosted")) {
   throw new Error("package.json deploy must be the self-host command (no wrangler.hosted.jsonc)");
 }
+if (!deploy.includes("d1 migrations apply DB --remote")) {
+  throw new Error("package.json deploy must apply D1 migrations so the Deploy button is not an empty database");
+}
 if (!hosted.includes("wrangler.hosted.jsonc")) {
   throw new Error("package.json deploy:hosted must use wrangler.hosted.jsonc");
 }
