@@ -37,9 +37,9 @@
     }
   ],
   "ratelimits": [
-    { "name": "WRITE_LIMIT", "namespace_id": "7391", "simple": { "limit": 40, "period": 60 } },
-    { "name": "UPLOAD_LIMIT", "namespace_id": "7392", "simple": { "limit": 8, "period": 60 } },
-    { "name": "AI_LIMIT", "namespace_id": "7393", "simple": { "limit": 4, "period": 60 } }
+    { "name": "WRITE_LIMIT", "namespace_id": "7540", "simple": { "limit": 40, "period": 60 } },
+    { "name": "UPLOAD_LIMIT", "namespace_id": "7541", "simple": { "limit": 8, "period": 60 } },
+    { "name": "AI_LIMIT", "namespace_id": "7542", "simple": { "limit": 4, "period": 60 } }
   ],
   "triggers": { "crons": ["15 * * * *"] },
   "secrets": {
@@ -52,7 +52,8 @@
     "ALLOW_LOCAL_HOOKS": ""
   },
   "routes": [
-    { "pattern": "tech-demos.theserverless.dev/demos/tanbase*", "zone_name": "theserverless.dev" },
+    { "pattern": "tech-demos.theserverless.dev/demos/tanbase", "zone_name": "theserverless.dev" },
+    { "pattern": "tech-demos.theserverless.dev/demos/tanbase/*", "zone_name": "theserverless.dev" },
     { "pattern": "tanbase.tech-demos.theserverless.dev/*", "zone_name": "theserverless.dev" }
   ],
   "workers_dev": true,

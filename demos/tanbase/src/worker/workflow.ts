@@ -4,13 +4,29 @@ import { NonRetryableError } from "cloudflare:workflows";
 import { LIMITS, type SplitStep } from "../shared/types";
 import { updateSplit, writeSubtasks, type SubtaskDraft } from "./db";
 import { notifyBoard } from "./board";
+import { localHooksEnabled } from "./validate";
 
 type Params = { boardId: string; taskId: string; splitId: string };
 
 type ChatOutput = {
-  choices?: { message?: { content?: string | null } }[];
+  choices?: { message?: { content?: string | null; reasoning_content?: string | null } }[];
   response?: string;
 };
+
+const SUBTASK_SCHEMA = {
+  type: "array",
+  minItems: 3,
+  maxItems: 6,
+  items: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      title: { type: "string" },
+      description: { type: "string" },
+    },
+    required: ["title", "description"],
+  },
+} as const;
 
 function stripThinking(text: string): string {
   const end = text.lastIndexOf("</think>");
@@ -85,18 +101,24 @@ export class SplitTaskWorkflow extends WorkflowEntrypoint<Env, Params> {
         let source = "fallback";
         try {
           // `as never`: the Workers AI model union does not list this chat payload.
+          if (!this.env.AI) throw new Error("workers_ai_unbound");
           const out = (await this.env.AI.run(this.env.AI_MODEL, {
             messages: [
               {
                 role: "system",
                 content:
-                  "Split one kanban card into concrete subtasks. Return only a JSON array of 4 objects with keys title and description. Titles under 80 characters. No markdown.",
+                  "Split one kanban card into concrete subtasks. Return only a JSON array of 3 to 6 objects with keys title and description. Titles under 80 characters. No markdown.",
               },
               { role: "user", content: `Title: ${loaded.title}\nDescription: ${loaded.description || "(none)"}` },
             ],
-            max_tokens: 600,
+            max_tokens: 2000,
+            max_completion_tokens: 2000,
             temperature: 0.2,
-            chat_template_kwargs: { enable_thinking: false },
+            reasoning_effort: "low",
+            response_format: {
+              type: "json_schema",
+              json_schema: { name: "subtasks", schema: SUBTASK_SCHEMA },
+            },
           } as never)) as ChatOutput;
           const parsed = parseSubtasks(modelText(out));
           if (parsed) {
@@ -110,6 +132,11 @@ export class SplitTaskWorkflow extends WorkflowEntrypoint<Env, Params> {
         return { subtasks, source, steps };
       },
     );
+
+    // Local smoke only. Holds the write so delete-board / delete-parent can land mid-split.
+    if (localHooksEnabled(this.env.ALLOW_LOCAL_HOOKS)) {
+      await step.sleep("local orphan race", "4 seconds");
+    }
 
     const written = await step.do("write subtasks", async () => {
       const { boardId, taskId, splitId } = event.payload;

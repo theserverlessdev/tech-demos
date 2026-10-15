@@ -69,9 +69,9 @@ button { cursor: pointer; }
   border-bottom: 1px solid var(--border);
   background: var(--surface);
 }
-.brand { display: flex; align-items: center; gap: 8px; text-decoration: none; font-weight: 650; color: var(--text-strong); }
+.brand { display: flex; align-items: center; gap: 8px; text-decoration: none; font-weight: 650; color: var(--text-strong); flex: none; }
 .brand__mark { color: var(--ember); }
-.topbar__title { flex: 1; min-width: 0; }
+.topbar__title { flex: 1; min-width: max-content; }
 .topbar__title h1 { font-size: 1.25rem; }
 .topbar__title p { margin: 2px 0 0; color: var(--muted); font-size: 0.86rem; }
 .topbar__actions { display: flex; gap: 8px; align-items: center; }
@@ -111,8 +111,10 @@ button { cursor: pointer; }
 #app { flex: 1; display: flex; min-height: 0; padding: 16px 18px 20px; }
 
 .workspace, .empty { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
-.board-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
-.board-bar label, .field { display: flex; flex-direction: column; gap: 4px; font-size: 0.78rem; color: var(--muted); }
+.board-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; min-width: 0; }
+.board-bar label, .field { display: flex; flex-direction: column; gap: 4px; font-size: 0.78rem; color: var(--muted); min-width: 0; }
+.board-bar label { max-width: 100%; }
+.board-bar select { max-width: 100%; }
 .board-bar input, .board-bar select, .field input, .field textarea, .field select {
   background: var(--surface);
   border: 1px solid var(--border-strong);
@@ -120,7 +122,7 @@ button { cursor: pointer; }
   padding: 8px 10px;
   min-width: 0;
 }
-.title-input { font-family: var(--font-heading); font-size: 1.15rem; color: var(--text-strong); min-width: 220px; }
+.title-input { font-family: var(--font-heading); font-size: 1.15rem; color: var(--text-strong); min-width: 220px; overflow-wrap: anywhere; }
 .expiry { margin-left: auto; color: var(--muted); font-size: 0.82rem; font-family: var(--font-mono); }
 
 .columns { flex: 1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; align-items: stretch; min-height: 420px; }
@@ -146,6 +148,7 @@ button { cursor: pointer; }
 .card {
   text-align: left;
   width: 100%;
+  min-width: 0;
   cursor: grab;
   background: var(--surface-2);
   border: 1px solid var(--border);
@@ -156,11 +159,25 @@ button { cursor: pointer; }
   gap: 6px;
 }
 .card.is-selected { border-color: var(--ember); }
-.card.is-dragging { opacity: 0.45; }
-.card h3 { font-size: 0.98rem; }
-.card p { margin: 0; color: var(--muted); font-size: 0.86rem; }
-.card__meta { display: flex; flex-wrap: wrap; gap: 6px; }
-.chip { font-size: 0.72rem; border-radius: 999px; padding: 2px 7px; background: rgba(255, 255, 255, 0.04); color: var(--muted); }
+.card.is-dragging, .card.is-armed { opacity: 0.45; touch-action: none; }
+.card__top { display: flex; align-items: start; gap: 8px; min-width: 0; }
+.card__top h3 { flex: 1; min-width: 0; }
+.card__handle {
+  flex: none;
+  display: none;
+  touch-action: none;
+  cursor: grab;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 0.72rem;
+}
+.card h3 { font-size: 0.98rem; overflow-wrap: anywhere; }
+.card p { margin: 0; color: var(--muted); font-size: 0.86rem; overflow-wrap: anywhere; }
+.card__meta { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.chip { font-size: 0.72rem; border-radius: 999px; padding: 2px 7px; background: rgba(255, 255, 255, 0.04); color: var(--muted); overflow-wrap: anywhere; max-width: 100%; }
 .chip-warn { color: var(--warn); background: rgba(209, 154, 42, 0.12); }
 .chip-ember { color: var(--accent-text); background: rgba(194, 65, 12, 0.12); }
 .drop-hint { margin: auto; color: var(--muted); font-size: 0.82rem; padding: 12px; }
@@ -181,7 +198,7 @@ button { cursor: pointer; }
 .row { display: flex; flex-wrap: wrap; gap: 8px; }
 .hint { min-height: 1.2em; margin: 0; color: var(--warn); font-size: 0.86rem; }
 .files { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.files a { font-size: 0.86rem; }
+.files a { font-size: 0.86rem; overflow-wrap: anywhere; }
 .steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .steps li { display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 0.88rem; }
 .steps li::before { content: ""; width: 8px; height: 8px; border-radius: 99px; background: var(--border-strong); flex: none; }
@@ -206,11 +223,31 @@ button { cursor: pointer; }
 .foot { padding: 12px 18px 18px; color: var(--muted); font-size: 0.82rem; }
 .foot a { color: var(--accent-text); }
 
+dialog {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  max-width: calc(100vw - 24px);
+}
+dialog::backdrop { background: rgb(0 0 0 / .6); }
+dialog .empty { margin: 0; }
+
 @media (max-width: 900px) {
-  .topbar { flex-wrap: wrap; }
-  .layout, .columns { grid-template-columns: 1fr; }
+  .topbar { flex-wrap: wrap; gap: 8px; min-height: 0; }
+  .topbar__title { flex: 1 1 auto; min-width: max-content; }
+  .topbar__title p { display: none; }
+  .topbar__actions { flex-basis: 100%; justify-content: flex-start; }
+  .layout { display: flex; flex-direction: column; grid-template-columns: 1fr; }
+  .columns { grid-template-columns: 1fr; order: 0; }
   .expiry { margin-left: 0; }
-  .drawer { order: -1; }
+  .drawer {
+    order: 1;
+    position: sticky;
+    bottom: 0;
+    max-height: 55dvh;
+    overflow: auto;
+  }
+  .card__handle { display: inline-flex; min-height: 44px; align-items: center; }
 }
 
 /* Phone layout. Graphite and Ember stay; controls grow to a finger and fields stay at 16px so iOS does not zoom. */
@@ -253,7 +290,7 @@ select {
     padding-left: max(12px, env(safe-area-inset-left));
     padding-right: max(12px, env(safe-area-inset-right));
   }
-  .topbar__actions { flex-wrap: wrap; justify-content: flex-end; max-width: 100%; }
+  .topbar__actions { flex-wrap: wrap; max-width: 100%; }
   .composer { padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
   .title-input, .composer input, .join input { min-width: 0; max-width: 100%; }
 }
@@ -264,6 +301,7 @@ select {
 }
 
 .card { touch-action: manipulation; }
+.card__handle { touch-action: none; }
 @media (max-width: 900px) {
   .title-input { min-width: 0; width: 100%; }
   #app { padding-left: 12px; padding-right: 12px; }

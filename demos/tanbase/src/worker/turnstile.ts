@@ -1,7 +1,9 @@
 import { HttpError } from "./errors";
 
 const SITEVERIFY = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
+const TEST_SECRET = "1x0000000000000000000000000000000AA";
 const TEST_HOSTS = new Set(["localhost", "127.0.0.1", "example.com"]);
+const LIVE_HOSTS = new Set(["tech-demos.theserverless.dev", "tanbase.tech-demos.theserverless.dev"]);
 
 type Siteverify = {
   success?: boolean;
@@ -47,7 +49,16 @@ export async function verifyTurnstile(env: Env, request: Request, token: unknown
   }
 
   const host = result.hostname ?? "";
-  if (!TEST_HOSTS.has(host) && result.action && result.action !== action) {
+  if (secret === TEST_SECRET) {
+    if (!TEST_HOSTS.has(host) && host !== "") {
+      throw new HttpError(403, "turnstile_failed", "Turnstile rejected that check.");
+    }
+    return;
+  }
+  if (!LIVE_HOSTS.has(host)) {
+    throw new HttpError(403, "turnstile_failed", "Turnstile rejected that check.");
+  }
+  if (result.action !== action) {
     throw new HttpError(403, "turnstile_failed", "Turnstile rejected that check.");
   }
 }

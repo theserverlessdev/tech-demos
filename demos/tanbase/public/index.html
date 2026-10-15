@@ -6,9 +6,9 @@
   <meta name="color-scheme" content="dark light" />
   <meta name="theme-color" content="#0e0e11" />
   <title>Tanbase · Tech Demos · theserverless.dev</title>
-  <meta name="description" content="An anonymous kanban on Cloudflare Workers: D1 cards, a hibernating Board Durable Object, R2 attachments, and a Workflow that splits a task with Workers AI." />
+  <meta name="description" content="A private kanban per browser on Cloudflare Workers: D1 cards, a hibernating Board Durable Object, R2 attachments, and a Workflow that splits a task with Workers AI or a fallback." />
   <meta property="og:title" content="Tanbase slice" />
-  <meta property="og:description" content="Kanban on Workers with D1, a Board Durable Object, R2, and a Workers AI split workflow." />
+  <meta property="og:description" content="Private kanban on Workers with D1, a Board Durable Object, R2, and a Workers AI split workflow." />
   <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -40,7 +40,7 @@
     </div>
   </header>
 
-  <p class="shows shows--bar"><span class="shows__k">What this shows</span> D1 keeps the cards. One hibernating Board Durable Object syncs every open tab. A Workflow splits a card, with fallback subtasks if the model fails.</p>
+  <p class="shows shows--bar"><span class="shows__k">What this shows</span> D1 keeps the cards. One hibernating Board Durable Object syncs this browser's tabs. A Workflow splits a card; the drawer says whether Workers AI or the fallback wrote the subtasks.</p>
 
   <div class="strip" role="status">
     <span class="strip__dot" id="strip-dot"></span>
