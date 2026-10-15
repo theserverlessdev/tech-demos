@@ -32,7 +32,7 @@
     { "pattern": "tech-demos.theserverless.dev/demos/company-brain*", "zone_name": "theserverless.dev" },
     { "pattern": "company-brain.tech-demos.theserverless.dev/*", "zone_name": "theserverless.dev" }
   ],
-  "workers_dev": true,
+  "workers_dev": false,
   "observability": {
     "enabled": true,
     "traces": { "enabled": true }

@@ -4,7 +4,7 @@ import { AgentClient } from "agents/client";
 import type { BrainMessage, Inspection, JsonRpcRequest, TraceEntry } from "../src/shared/protocol";
 
 const args = process.argv.slice(2);
-const base = new URL((args.find((a) => a.startsWith("http")) ?? "http://127.0.0.1:8795").replace(/\/$/, "") + "/");
+const base = new URL((args.find((a) => a.startsWith("http")) ?? "http://127.0.0.1:8787").replace(/\/$/, "") + "/");
 const voiceIdx = args.indexOf("--voice");
 const voicePath = voiceIdx >= 0 ? args[voiceIdx + 1] : undefined;
 const desk = `smoke${Math.random().toString(36).slice(2, 12)}${Date.now().toString(36)}`.slice(0, 24);
@@ -68,7 +68,7 @@ const toolsIn = (frames: BrainMessage[]) =>
 
 console.log(`desk ${desk} at ${base}`);
 let d = await connect();
-d.client.send(JSON.stringify({ type: "hello", deviceId: "smoke", firmwareVersion: "smoke", ts: Date.now() }));
+d.client.send(JSON.stringify({ type: "hello", deviceId: "smoke", firmwareVersion: "smoke", turnstileToken: "XXXX.DUMMY.TOKEN.XXXX", ts: Date.now() }));
 await d.waitFor((m) => m.type === "ui_state");
 
 let frames = await turn(d, "Remember that my favourite tea is jasmine. Also set a 2 minute tea timer.");
@@ -83,7 +83,7 @@ check("set_volume went over the MCP bridge", frames.some((f) => f.type === "mcp"
 d.client.close();
 console.log("      (reconnect)");
 d = await connect();
-d.client.send(JSON.stringify({ type: "hello", deviceId: "smoke", ts: Date.now() }));
+d.client.send(JSON.stringify({ type: "hello", deviceId: "smoke", turnstileToken: "XXXX.DUMMY.TOKEN.XXXX", ts: Date.now() }));
 const timer = await d.waitFor((m) => m.type === "timer", 10_000).catch(() => null);
 check("timer arc came back after reconnect", timer);
 const inspection = (await d.client.call("inspect", [])) as Inspection;

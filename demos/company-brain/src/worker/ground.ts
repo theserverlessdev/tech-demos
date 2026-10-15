@@ -60,7 +60,7 @@ function toCitation(row: MemoryRow): Citation {
 }
 
 type ChatOutput = {
-  choices?: { message?: { content?: string | null } }[];
+  choices?: { finish_reason?: string | null; message?: { content?: string | null } }[];
   response?: string;
 };
 
@@ -77,49 +77,42 @@ export function modelText(out: ChatOutput): string {
 }
 
 export function isDontKnow(text: string): boolean {
-  const normalized = text.trim().toLowerCase().replace(/[.!]+$/g, "").replace(/\s+/g, " ");
-  return normalized === "i don't know" || normalized === "i dont know" || normalized === "i do not know";
+  return /^i (?:don'?t|do not) know\b/i.test(text.trim());
 }
 
 function parseCitations(text: string): Array<{ kind: MemoryKind; id: string }> {
   const found: Array<{ kind: MemoryKind; id: string }> = [];
   for (const match of text.matchAll(/\[(fact|decision):([a-z0-9_]+)\]/gi)) {
     const kind = match[1]?.toLowerCase();
-    const id = match[2];
+    const id = match[2]?.toLowerCase();
     if ((kind === "fact" || kind === "decision") && id) found.push({ kind, id });
   }
   return found;
 }
 
-function sharesWords(answer: string, memory: string): boolean {
-  const answerWords = contentWords(answer);
-  const memoryWords = new Set(contentWords(memory).flatMap(expand));
-  let shared = 0;
-  for (const word of answerWords) {
-    if (word.length < 5) continue;
-    if (expand(word).some((form) => memoryWords.has(form))) shared++;
-  }
-  return shared >= 1;
-}
-
 /**
- * Keep an answer only when it cites a retrieved row, or when its words overlap one.
- * Anything else is outside this org's memory, so the caller says it doesn't know.
+ * Keep an answer only when it contains at least one `[kind:id]` that matches a retrieved row.
+ * Word overlap is not enough — that attached real citations to invented answers.
  */
-export function settleAnswer(raw: string, hits: MemoryRow[]): { answer: string; sources: Citation[] } {
+export function settleAnswer(raw: string, hits: MemoryRow[]): { answer: string; sources: Citation[]; grounded: boolean } {
   const text = stripThinking(raw).trim();
-  if (!text || isDontKnow(text)) return { answer: "I don't know.", sources: [] };
+  if (!text || isDontKnow(text)) return { answer: "I don't know.", sources: [], grounded: false };
 
   const cited = parseCitations(text).filter((cite) => hits.some((hit) => hit.kind === cite.kind && hit.id === cite.id));
-  const used = cited.length > 0 ? hits.filter((hit) => cited.some((cite) => cite.kind === hit.kind && cite.id === hit.id)) : hits.filter((hit) => sharesWords(text, hit.text));
-  if (used.length === 0) return { answer: "I don't know.", sources: [] };
+  if (cited.length === 0) return { answer: "I don't know.", sources: [], grounded: false };
 
+  const used = hits.filter((hit) => cited.some((cite) => cite.kind === hit.kind && cite.id === hit.id));
   const allowed = new Set(hits.map((hit) => `${hit.kind}:${hit.id}`));
-  const cleaned = text.replace(/\[(fact|decision):([a-z0-9_]+)\]/gi, (whole, kind: string, id: string) => {
-    return allowed.has(`${kind.toLowerCase()}:${id}`) ? whole : "";
-  }).replace(/\s{2,}/g, " ").trim();
+  const cleaned = text
+    .replace(/\[(fact|decision):([a-z0-9_]+)\]/gi, (_whole, kind: string, id: string) => {
+      const key = `${kind.toLowerCase()}:${id.toLowerCase()}`;
+      return allowed.has(key) ? `[${key}]` : "";
+    })
+    .replace(/\s{2,}/g, " ")
+    .trim();
 
-  return { answer: cleaned || "I don't know.", sources: used.map(toCitation) };
+  if (!cleaned || isDontKnow(cleaned)) return { answer: "I don't know.", sources: [], grounded: false };
+  return { answer: cleaned, sources: used.map(toCitation), grounded: true };
 }
 
 const SYSTEM = [
@@ -132,17 +125,23 @@ const SYSTEM = [
 
 export async function askModel(env: Env, question: string, hits: MemoryRow[]): Promise<string> {
   const memory = hits.map((hit) => `[${hit.kind}:${hit.id}] (${hit.author}; ${hit.source}) ${hit.text}`).join("\n");
-  // The generated Workers AI union does not list this model id.
+  // GLM-5.3 Flash cannot disable reasoning. Low effort + a 1024 completion budget leaves room for the answer.
   const out = (await env.AI.run(env.AI_MODEL, {
     messages: [
       { role: "system", content: SYSTEM },
       { role: "user", content: `Memory items:\n${memory}\n\nQuestion: ${question}` },
     ],
-    max_tokens: 280,
+    max_completion_tokens: 1024,
     temperature: 0.1,
+    reasoning_effort: "low",
     chat_template_kwargs: { enable_thinking: false },
   } as never)) as ChatOutput;
   const text = modelText(out);
-  if (!text) throw new Error("empty model output");
-  return text;
+  console.log(JSON.stringify({
+    event: "ai_complete",
+    finish_reason: out.choices?.[0]?.finish_reason ?? null,
+    empty: !text,
+  }));
+  // Empty content usually means the model spent the budget on reasoning. Do not invent an answer.
+  return text || "I don't know.";
 }

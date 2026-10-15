@@ -4,12 +4,14 @@
   "type": "module",
   "scripts": {
     "build": "bun build src/client/app.ts --outdir public/assets --target browser --minify",
-    "dev": "bun run build && wrangler d1 migrations apply DB --local && wrangler dev",
-    "deploy": "bun run build && wrangler d1 migrations apply DB --remote && wrangler deploy",
-    "deploy:selfhost": "bun run build && wrangler d1 migrations apply DB --remote -c wrangler.selfhost.jsonc && wrangler deploy -c wrangler.selfhost.jsonc",
+    "dev": "bun run build && CI=1 wrangler d1 migrations apply DB --local && wrangler dev --var PUBLIC_ORIGIN:http://127.0.0.1:8797 --var TURNSTILE_SITE_KEY:1x00000000000000000000AA",
+    "deploy": "bun run build && CI=1 wrangler d1 migrations apply DB --remote && wrangler deploy",
+    "deploy:hosted": "bun run build && CI=1 wrangler d1 migrations apply DB --remote -c wrangler.hosted.jsonc && wrangler deploy -c wrangler.hosted.jsonc",
+    "deploy:selfhost": "bun run deploy",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
     "cf-typegen": "wrangler types",
-    "smoke": "bun run scripts/smoke.ts"
+    "smoke": "bun run scripts/smoke.ts",
+    "verify:selfhost": "bun run scripts/verify-selfhost.ts"
   },
   "cloudflare": {
     "bindings": {
@@ -32,7 +34,7 @@
         "description": "Admin/fleet bootstrap secret. **Not** the public agent path. Generate with `openssl rand -hex 32`."
       },
       "ATTACHMENTS": {
-        "description": "R2 bucket for attachment bytes (same TTL as the inbox). Create with `wrangler r2 bucket create <name>` and set `r2_buckets[0].bucket_name`."
+        "description": "R2 bucket for HTML/text bodies and attachment bytes (same TTL as the inbox). Create with `wrangler r2 bucket create <name>` and set `r2_buckets[0].bucket_name`."
       }
     }
   },
@@ -40,6 +42,7 @@
     "postal-mime": "3.0.0"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250906.0",
     "typescript": "^5.9.2",
     "wrangler": "^4.40.0"
   }

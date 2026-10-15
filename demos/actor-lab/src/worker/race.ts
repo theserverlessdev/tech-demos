@@ -21,7 +21,7 @@ function fail(status: number, code: string, message: string): RpcFail {
 }
 
 type ArmInput = { runId: string; mode: RaceMode; expected: number };
-type StepInput = { runId: string; racer: number };
+type StepInput = { runId: string; racer: number; ip?: string };
 
 function overlaps(events: RaceEvent[]): boolean {
   const open = new Map<number, number>();
@@ -102,12 +102,12 @@ export class RaceActor extends Actor<RaceState> {
   }
 
   protected override clearExtra(): void {
-    this.ctx.storage.sql.exec("DELETE FROM race_event");
     this.seen.clear();
   }
 
   async arm(input: ArmInput): Promise<RpcResult<{ runId: string; mode: RaceMode; expected: number }>> {
     return this.mailbox(async () => {
+      this.ensureStorage();
       this.seen.clear();
       this.state.counter = 0;
       this.state.runId = input.runId;
@@ -131,6 +131,7 @@ export class RaceActor extends Actor<RaceState> {
 
   async result(runId: string): Promise<RpcResult<RaceResult>> {
     if (!runId || runId !== this.state.runId) return fail(404, "unknown_run", "That run is not on this actor.");
+    this.ensureStorage();
     const events = this.#events(runId);
     const actual = this.state.counter;
     const expected = this.state.expected;
@@ -170,6 +171,8 @@ export class RaceActor extends Actor<RaceState> {
     const observed = this.state.counter;
     this.#record(input.runId, input.racer, "read", observed, "");
     this.#record(input.runId, input.racer, "await-start", observed, "");
+    const { success } = await this.env.AI_LIMIT.limit({ key: (input.ip ?? "local").slice(0, 64) });
+    if (!success) return fail(429, "rate_limited", "Too many AI waits. Wait a minute.");
     const source = await awaitModel(this.env);
     if (this.state.runId !== input.runId) return fail(409, "stale_run", "That run is no longer armed.");
     this.#record(input.runId, input.racer, "await-end", observed, source);

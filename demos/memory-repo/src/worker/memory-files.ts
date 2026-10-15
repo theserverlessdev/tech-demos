@@ -60,6 +60,36 @@ function topicFile(path: TopicPath, bullets: string[]): string {
   return `# ${TITLES[path]}\n\n${body}\n`;
 }
 
+/** Keep dream prose and headings; only the ## Recent list is replaced. */
+export function replaceRecentSection(memoryMd: string, recent: string[]): string {
+  const lines = recent.slice(0, 12);
+  const recentBlock = lines.length ? lines.map((line) => `- ${line}`).join("\n") : "- Nothing remembered yet.";
+  const section = `## Recent\n\n${recentBlock}\n`;
+  if (/## Recent\b/.test(memoryMd)) return memoryMd.replace(/## Recent\b[\s\S]*$/, section);
+  const base = memoryMd.endsWith("\n") ? memoryMd : `${memoryMd}\n`;
+  return `${base}\n${section}`;
+}
+
+/** Keep headings and other non-bullet lines; replace only `- ` facts. */
+export function replaceTopicBullets(body: string, path: TopicPath, bullets: string[]): string {
+  const bulletBlock = bullets.length ? bullets.map((bullet) => `- ${bullet}`).join("\n") : "- Nothing here yet.";
+  const prefix: string[] = [];
+  const suffix: string[] = [];
+  let inBullets = false;
+  for (const line of body.split("\n")) {
+    if (/^- /.test(line)) {
+      inBullets = true;
+      continue;
+    }
+    if (!inBullets) prefix.push(line);
+    else suffix.push(line);
+  }
+  let head = prefix.join("\n").replace(/\n+$/g, "");
+  if (!head.trim()) head = `# ${TITLES[path]}`;
+  const tail = suffix.join("\n").replace(/^\n+/, "").replace(/\n+$/, "");
+  return `${head}\n\n${bulletBlock}${tail ? `\n${tail}` : ""}\n`;
+}
+
 export function stripProvenance(text: string): string {
   return text.replace(/\s*\[source:[^\]]*\]\s*$/i, "").trim();
 }
@@ -101,14 +131,18 @@ export type WriteResult = {
   added: MemoryWrite[];
 };
 
-export function commitMessage(writes: MemoryWrite[]): string {
+export function commitMessage(writes: MemoryWrite[], evicted = 0): string {
   const bullets = writes.flatMap((write) => write.add.map(stripProvenance));
+  let message: string;
   if (bullets.length === 1) {
     const text = bullets[0] ?? "a fact";
     const subject = text.length > 54 ? `${text.slice(0, 51)}…` : text;
-    return `Remember: ${subject}`;
+    message = `Remember: ${subject}`;
+  } else {
+    message = `Remember ${bullets.length} facts`;
   }
-  return `Remember ${bullets.length} facts`;
+  if (evicted > 0) message = `${message} (evicted ${evicted})`;
+  return message;
 }
 
 function overlay(current: Record<string, string>): Record<MemoryPath, string> {
@@ -122,7 +156,7 @@ function overlay(current: Record<string, string>): Record<MemoryPath, string> {
   return files;
 }
 
-/** Merge new bullets into the topic files and rebuild MEMORY.md. Unchanged facts do not count as a commit. */
+/** Merge new bullets into the topic files and refresh ## Recent. Unchanged facts do not count as a commit. */
 export function applyMemoryWrites(current: Record<string, string>, writes: MemoryWrite[], date: string): WriteResult {
   const files = overlay(current);
   const grouped = new Map<TopicPath, string[]>();
@@ -135,6 +169,7 @@ export function applyMemoryWrites(current: Record<string, string>, writes: Memor
 
   const added: MemoryWrite[] = [];
   let count = 0;
+  let evicted = 0;
   for (const path of TOPIC_PATHS) {
     const incoming = grouped.get(path) ?? [];
     if (incoming.length === 0) continue;
@@ -153,7 +188,8 @@ export function applyMemoryWrites(current: Record<string, string>, writes: Memor
       count += 1;
     }
     if (fresh.length === 0) continue;
-    files[path] = topicFile(path, existing.slice(-MAX_BULLETS_PER_FILE));
+    if (existing.length > MAX_BULLETS_PER_FILE) evicted += existing.length - MAX_BULLETS_PER_FILE;
+    files[path] = replaceTopicBullets(files[path], path, existing.slice(-MAX_BULLETS_PER_FILE));
     added.push({ path, add: fresh });
   }
 
@@ -161,12 +197,18 @@ export function applyMemoryWrites(current: Record<string, string>, writes: Memor
 
   const recent = [
     ...added.flatMap((write) => write.add.map((bullet) => `${date} ${stripProvenance(bullet)} (${write.path})`)),
-    ...parseRecent(current["MEMORY.md"] ?? ""),
+    ...parseRecent(files["MEMORY.md"]),
   ].slice(0, 12);
-  files["MEMORY.md"] = renderIndex(recent);
+  files["MEMORY.md"] = replaceRecentSection(files["MEMORY.md"], recent);
 
   for (const path of MEMORY_PATHS) {
     if (files[path].length > MAX_FILE_CHARS) return { files: overlay(current), changed: false, message: "", added: [] };
   }
-  return { files, changed: true, message: commitMessage(added), added };
+  return { files, changed: true, message: commitMessage(added, evicted), added };
+}
+
+/** FTS indexes facts, not the MEMORY.md template boilerplate. */
+export function indexableBody(path: string, body: string): string {
+  if (path === "MEMORY.md") return parseRecent(body).join("\n");
+  return parseBullets(body).join("\n");
 }

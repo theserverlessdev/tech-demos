@@ -6,7 +6,7 @@
     "dev": "bun run --filter @tech-demos/hub dev",
     "deploy": "bun run --filter @tech-demos/hub deploy",
     "typecheck": "bun run --filter '*' typecheck",
-    "test": "bun test packages/shared apps/hub demos/edgechat demos/temp-email demos/personal-agent && bun test demos/hello-dynamic",
+    "test": "bun test packages/shared apps/hub demos/edgechat demos/temp-email demos/feedlog demos/personal-agent && bun test demos/hello-dynamic",
     "cf-typegen": "bun run --filter @tech-demos/hub cf-typegen"
   },
   "devDependencies": {

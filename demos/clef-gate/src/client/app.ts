@@ -8,6 +8,8 @@ const PROMPTS: Record<string, string> = {
   sql: "Run DROP TABLE tickets",
 };
 
+const EMPTY_HINT = "Ask for the refund policy, a URL, an email, a delete, or a SQL statement.";
+
 type ApiError = { error?: { code?: string; message?: string } };
 
 const $ = <T extends Element>(id: string) => {
@@ -50,6 +52,21 @@ function api(path: string): string {
 
 function say(message: string) {
   strip.textContent = message;
+}
+
+function stopPoll() {
+  if (poll) {
+    window.clearInterval(poll);
+    poll = null;
+  }
+}
+
+function showEmptyTranscript() {
+  transcript.replaceChildren();
+  const item = document.createElement("li");
+  item.className = "empty";
+  item.textContent = EMPTY_HINT;
+  transcript.append(item);
 }
 
 async function call<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<{ status: number; data: T | null }> {
@@ -151,19 +168,17 @@ function renderCard(card: GateCard | null) {
     return;
   }
   const human = card.humanOutcome ? ` · you ${card.humanOutcome === "approve" ? "approved" : card.humanOutcome}` : "";
+  const planner = card.planner ? ` · planner ${card.planner}` : "";
   gateDecision.textContent = `${card.decision} · ${card.tool}`;
   gateReason.textContent = card.reason;
   for (const key of ["allow", "deny", "ask-human"] as const) setBar(key, card.probabilities[key]);
-  gateMeta.textContent = `${card.source} · ${card.model} · ${card.latencyMs} ms · confidence ${pct(card.confidence)} · ${card.argsSummary}${human}`;
+  gateMeta.textContent = `${card.source} · ${card.model} · ${card.latencyMs} ms · confidence ${pct(card.confidence)}${planner} · ${card.argsSummary}${human}`;
 }
 
 function renderTranscript(view: SessionView) {
   transcript.replaceChildren();
   if (!view.messages.length) {
-    const item = document.createElement("li");
-    item.className = "empty";
-    item.textContent = "Ask for the refund policy, a URL, an email, a delete, or a SQL statement.";
-    transcript.append(item);
+    showEmptyTranscript();
     renderCard(null);
     return;
   }
@@ -171,6 +186,14 @@ function renderTranscript(view: SessionView) {
   for (const message of view.messages) {
     if (message.role === "gate" && message.gate) {
       latest = message.gate;
+      const item = document.createElement("li");
+      item.className = "bubble bubble--gate";
+      const role = document.createElement("span");
+      role.className = "bubble__role";
+      role.textContent = "gate";
+      const line = `${message.gate.decision} · ${pct(message.gate.confidence)} · ${message.gate.source} · ${message.gate.model}`;
+      item.append(role, document.createTextNode(line));
+      transcript.append(item);
       continue;
     }
     const item = document.createElement("li");
@@ -189,14 +212,13 @@ function renderPending(view: SessionView) {
   pending.dataset.id = view.pending?.id ?? "";
   if (!view.pending) {
     pending.hidden = true;
-    if (poll) {
-      window.clearInterval(poll);
-      poll = null;
-    }
+    stopPoll();
     return;
   }
+  const appeared = pending.hidden;
   pending.hidden = false;
   pendingText.textContent = `${view.pending.tool} · ${view.pending.argsSummary}. The call is paused in the agent until you choose.`;
+  if (appeared) pending.scrollIntoView({ block: "nearest", behavior: "smooth" });
   if (!poll) poll = window.setInterval(() => void refresh(), 4000);
 }
 
@@ -209,7 +231,8 @@ function renderAudit(rows: AuditRow[]) {
     const tag = document.createElement("span");
     tag.className = `tag tag--${row.decision}`;
     tag.textContent = row.humanOutcome ? `${row.decision} → ${row.humanOutcome}` : row.decision;
-    item.append(document.createTextNode(`${row.tool} · ${row.argsSummary} · `), tag);
+    const probs = `allow ${pct(row.probabilities.allow)} · deny ${pct(row.probabilities.deny)} · ask ${pct(row.probabilities["ask-human"])}`;
+    item.append(document.createTextNode(`${row.tool} · ${row.argsSummary} · ${row.model} · ${row.source} · ${probs} · `), tag);
     audit.append(item);
   }
 }
@@ -225,7 +248,10 @@ function paintModel() {
 
 async function refresh() {
   const session = await call<SessionView>("/api/session");
-  if (session.status === 401 || session.status === 410) return;
+  if (session.status === 401 || session.status === 410) {
+    stopPoll();
+    return;
+  }
   if (session.data && "messages" in session.data) {
     model = session.data.model;
     paintModel();
@@ -336,8 +362,9 @@ approve.addEventListener("click", () => void resolve("approve"));
 deny.addEventListener("click", () => void resolve("deny"));
 
 $<HTMLButtonElement>("forget").addEventListener("click", async () => {
+  stopPoll();
   await call("/api/session", { method: "DELETE" });
-  transcript.replaceChildren();
+  showEmptyTranscript();
   renderCard(null);
   renderAudit([]);
   pending.hidden = true;
@@ -366,6 +393,7 @@ async function boot() {
     const log = await call<{ decisions: AuditRow[] }>("/api/audit");
     if (log.data?.decisions) renderAudit(log.data.decisions);
   } else {
+    showEmptyTranscript();
     renderCard(null);
   }
 }

@@ -3,6 +3,7 @@ declare global {
   interface Env {
     TURNSTILE_SECRET?: string;
     ADMIN_TOKEN?: string;
+    GATE_SECRET?: string;
   }
 }
 

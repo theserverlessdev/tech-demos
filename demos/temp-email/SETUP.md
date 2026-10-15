@@ -24,18 +24,19 @@ Two products share this folder. Do not mix them.
 - **Mail zone:** `lomvic.com` (`7b0cbb059730070dc5e85f1fd9a46f28`) — throwaway mail zone
 - **Hub zone:** `theserverless.dev` — gallery + redirect routes only; apex MX stays on Google Workspace
 
-### Status on 2026-09-11
+### Status on 2026-10-15
 
 | Item | State | Who did it |
 | --- | --- | --- |
-| D1 database and migration `0001_init.sql` | Done | Agent |
-| Migration `0002_api_keys.sql` | This PR | Agent |
-| R2 bucket `tech-demos-temp-email` + `ATTACHMENTS` binding | This PR | Agent |
-| Worker deploy with a cron job every 15 minutes | Done | Agent |
+| D1 database and migrations `0001_init.sql`, `0002_api_keys.sql` | Done (live) | Agent |
+| Migration `0003_r2_bodies.sql` | This PR — owner applies on next hosted deploy | Agent |
+| R2 bucket `tech-demos-temp-email` + `ATTACHMENTS` binding | Done (live). This PR also stores HTML/text bodies there. | Agent |
+| Worker deploy with a cron job every 15 minutes | Done. Redeploy with `wrangler.hosted.jsonc` after merge. | Agent |
 | Custom domain `email.lomvic.com` | Done | Agent |
-| Hub routes `tech-demos.theserverless.dev/demos/temp-email*` and `temp-email.tech-demos.theserverless.dev/*` | Done. Both send a 302 to `https://email.lomvic.com`. | Agent |
+| Hub routes `/demos/temp-email` and `/demos/temp-email/*` plus `temp-email.tech-demos.theserverless.dev/*` | Done. All send a 302 to `https://email.lomvic.com`. Split route pattern is in this PR. | Agent |
 | Secret `AGENT_API_KEY` | Done. **Admin/fleet only.** Local copy lives in `~/.theserverlessdev/temp-email.env` (do not print it). Git ignores secret files. | Agent |
-| Secrets `TURNSTILE_SITE_KEY` (var) + `TURNSTILE_SECRET_KEY` | Widget create needs `wrangler login` (scope `challenge-widgets.write`). Until set, hosted mint stays off (`503 mint_disabled`). | Owner |
+| `TURNSTILE_SITE_KEY` (var in `wrangler.hosted.jsonc`) + `TURNSTILE_SECRET_KEY` | Site key is in hosted config. Confirm the secret is still set; mint stays off without it (`503 mint_disabled`). | Owner |
+| Rate-limit namespaces `7550` (SMTP), `7551` (gate), `7552` (hosted web create) | This PR. Created on next hosted deploy. Do not change 7321/7322. | Owner (deploy) |
 | Email Routing enabled on `lomvic.com` | Done | Owner |
 | Subdomain / custom hostname mail for `email.lomvic.com` (MX + SPF) | Done | Owner |
 | Catch-all / `*@email.lomvic.com` → Worker `tech-demos-temp-email` | Done | Owner |
@@ -78,10 +79,10 @@ cd demos/temp-email
 bunx wrangler login   # approve challenge-widgets.write
 bunx wrangler turnstile widget create "email-lomvic-temp-email" \
   --domain email.lomvic.com --mode managed --json
-# Put TURNSTILE_SITE_KEY in wrangler.jsonc vars (public).
+# Put TURNSTILE_SITE_KEY in wrangler.hosted.jsonc vars (public).
 # Pipe the widget secret into:
 #   bunx wrangler secret put TURNSTILE_SECRET_KEY
-bun run deploy
+bun run deploy:hosted
 ```
 
 Until those are set, `POST /api/v1/keys` returns `503 mint_disabled`. The admin `AGENT_API_KEY` still works for fleet. Anonymous agent API stays closed.
@@ -118,21 +119,25 @@ Do **not** enable Email Routing on `theserverless.dev` and do **not** change TSD
 
 Owner rules do not apply to your instance. You get the full product: Email Worker, D1, R2 attachments, agent API, optional Turnstile mint.
 
-1. Click **Deploy to Cloudflare** in the README, or copy this directory and `bun run deploy:selfhost` with `wrangler.selfhost.jsonc`.
-2. Create an R2 bucket for attachment bytes (required — blobs are not stored in D1):
+This needs **Workers Paid** (`cpu_ms` 5000; Free is 10 ms CPU). `deploy` builds, applies D1 migrations, then deploys. Do not run it before D1 exists.
+
+1. Click **Deploy to Cloudflare** in the README (uses `wrangler.jsonc` and the `deploy` script). The button provisions D1 (the template omits `database_id` so wrangler can create it) and an R2 bucket, then `deploy` applies migrations.
+2. If you copied the folder instead of using the button, create R2 and D1, then deploy. Do **not** `d1 create` a second database if the button already bound one.
 
 ```bash
 bunx wrangler r2 bucket create temp-email
-# If you pick another name, set r2_buckets[0].bucket_name in wrangler.selfhost.jsonc
-# (or wrangler.jsonc if you used the Deploy to Cloudflare button).
+# If you pick another name, set r2_buckets[0].bucket_name in wrangler.jsonc.
+bunx wrangler d1 create temp-email
+# Lookup is by name; pasting database_id into wrangler.jsonc is optional.
+bun run deploy   # build, remote D1 migrations, wrangler deploy
 ```
 
 3. Set vars: `MAIL_DOMAIN`, `PUBLIC_ORIGIN`, `HOSTED_MODE=false`, `TURNSTILE_SITE_KEY`.
 4. Set secrets (do not echo them):
 
 ```bash
-openssl rand -hex 32 | bunx wrangler secret put AGENT_API_KEY -c wrangler.selfhost.jsonc
-bunx wrangler secret put TURNSTILE_SECRET_KEY -c wrangler.selfhost.jsonc
+openssl rand -hex 32 | bunx wrangler secret put AGENT_API_KEY
+bunx wrangler secret put TURNSTILE_SECRET_KEY
 ```
 
 5. Create a [Turnstile widget](https://developers.cloudflare.com/turnstile/get-started/) for your UI hostname (or `wrangler turnstile widget create`).
@@ -155,7 +160,7 @@ Base: `https://email.lomvic.com/api/v1` (or your origin). Every inbox call sends
 
 Hosted visitors must mint a key. Do not hand out the admin secret.
 
-Rate limits apply to callers without the admin key: 6 creates or samples each minute and 90 API calls each minute (per IP or per minted key). Minted keys also have 10 active inboxes and 40 creates per 24 hours.
+Rate limits apply to callers without the admin key. Create, sample, and mint are **separate** 6/min buckets (per IP or per minted key). Hosted web creates also use a 2/min bucket. Reads are 90/min. SMTP is 30/min per inbox. Minted keys also have 10 active inboxes and 40 creates per 24 hours. Web inboxes last at most 180 minutes from creation.
 
 ### Endpoints
 
@@ -170,7 +175,7 @@ Rate limits apply to callers without the admin key: 6 creates or samples each mi
 | `POST /inboxes` | `{"localPart"?: "my-test", "ttlMinutes"?: 30}` | `201` with the inbox and its `token`. `ttlMinutes` needs an API key. `409` if the name is in use. |
 | `GET /inboxes/{address}` | none | The inbox with `expiresAt` and `messageCount`. |
 | `DELETE /inboxes/{address}` | none | Deletes the inbox, its messages, and R2 attachment objects. |
-| `POST /inboxes/{address}/extend` | `{"minutes"?: 60}` | Moves the expiry later. The limit is now + 1440 minutes. |
+| `POST /inboxes/{address}/extend` | `{"minutes"?: 60}` | Moves the expiry later. Web: `created_at` + 180 minutes. Agent: `created_at` + 1440 minutes. |
 | `GET /inboxes/{address}/messages?after=0&limit=50` | none | Summaries, newest first, and a `cursor`. |
 | `GET /inboxes/{address}/wait?after={cursor}&timeout=25` | none | Long poll. Full messages with `seq` above `after`, oldest first. `timedOut: true` after `timeout` seconds (25 or fewer) with no mail. |
 | `GET /inboxes/{address}/messages/{id}` | none | Full message: `text`, `html`, `codes`, `links`, `attachments` (metadata + `r2Key`). |
@@ -210,7 +215,7 @@ curl -s -X DELETE "$BASE/inboxes/$ADDRESS" -H "Authorization: Bearer $KEY"
 
 Public agents should mint a key in the UI (or `POST /keys` with a Turnstile token) and use that Bearer value instead of `TEMP_EMAIL_API_KEY`.
 
-`codes` holds up to 5 numbers of 4 to 8 digits. Treat `codes` as a hint and check the text when the result matters.
+`codes` holds up to 5 values: 4–8 digit numbers near keywords such as “code”, or a line that is only a code (`482913` or `ABC-123`). Treat `codes` as a hint and check the text when the result matters.
 
 ### Test without MX
 
@@ -237,18 +242,23 @@ Minted keys are not rotated this way — revoke and mint again.
 
 ```bash
 cd demos/temp-email
-cp .dev.vars.example .dev.vars   # dummy Turnstile + a local admin key
-bun run dev                       # builds the client, applies migrations locally, starts wrangler dev
+cp .dev.vars.example .dev.vars   # dummy Turnstile secret + a local admin key only (config is wrangler.jsonc + `dev --var`)
+bun run dev                       # builds the client, applies migrations locally, starts wrangler dev on 8797
 bun run smoke -- --smtp           # checks; --smtp posts to /cdn-cgi/handler/email
+bun run typecheck
+bun test demos/temp-email
+bun run verify:selfhost           # copies this folder alone and wrangler deploy --dry-run
 ```
 
 Wrangler dev can stop with `Network connection lost` when a file changes during a poll request. Start it again.
 
 ## Deploy (hosted)
 
+`bun run deploy:hosted` uses `wrangler.hosted.jsonc` (email.lomvic.com). Do not deploy the self-host `wrangler.jsonc` onto the owner account. The Deploy button and `bun run deploy` are the self-host path.
+
 ```bash
 cd demos/temp-email
-bun run deploy                    # build, remote migrations, wrangler deploy
+bun run deploy:hosted             # build, remote migrations, wrangler deploy -c wrangler.hosted.jsonc
 set -a && source ~/.theserverlessdev/temp-email.env && set +a
 AGENT_API_KEY="$TEMP_EMAIL_API_KEY" bun run smoke -- https://email.lomvic.com
 ```

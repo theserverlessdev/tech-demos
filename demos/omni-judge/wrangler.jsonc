@@ -39,9 +39,8 @@
     "CLEF_MODEL": "@cf/cloudflare/clef",
     "WHISPER_MODEL": "@cf/openai/whisper-large-v3-turbo",
     "VISION_MODEL": "@cf/meta/llama-3.2-11b-vision-instruct",
-    // Empty in production. .dev.vars sets "local" so the Turnstile test secret
-    // works under wrangler dev, which rewrites Host to the first route.
-    // "local" also skips Workers AI and returns the labelled stub.
+    // Empty in production and in the local default. Localhost still accepts the
+    // Turnstile test secret. Set ENVIRONMENT=local only for the labelled stub.
     "ENVIRONMENT": "",
     "TURNSTILE_SITE_KEY": "0x4AAAAAAFXRuxaIlcSffdZ4"
   },

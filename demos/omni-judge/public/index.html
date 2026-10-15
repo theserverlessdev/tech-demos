@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark light" />
   <meta name="theme-color" content="#0e0e11" />
   <title>Omni Judge · Tech Demos · theserverless.dev</title>
-  <meta name="description" content="One Clef-omni call returns a probability for every allowed answer about a photo, a voice note, or a short video." />
+  <meta name="description" content="Clef-omni scores a receipt, a product photo, a parcel, a support voice note, or a safety clip in one call." />
   <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -26,7 +26,7 @@
     </a>
     <div class="topbar__title">
       <h1>Omni Judge</h1>
-      <p>One call, every allowed answer</p>
+      <p>Receipt, defect, parcel, voice, or a fall — one Clef-omni call</p>
     </div>
     <div class="topbar__actions">
       <a class="btn btn-ghost" href="https://theserverless.dev/contact" rel="noopener">Contact</a>
@@ -36,17 +36,25 @@
     </div>
   </header>
 
-  <p class="shows"><span class="shows__k">What this shows</span> Clef-omni reads a photo, a voice note, or a short video in one request and returns a probability for each allowed answer. There is no transcribe-then-classify chain unless you ask for the comparison.</p>
+  <p class="shows"><span class="shows__k">What this proves</span> Clef-omni reads the media and scores every allowed answer in one request. The bundled presets are real intake tasks with a labelled expected answer — no transcribe-then-classify chain unless you ask for the comparison.</p>
 
   <section class="can" aria-labelledby="can-title">
-    <h2 id="can-title">What you can do</h2>
+    <h2 id="can-title">What to try</h2>
     <ul>
-      <li>Snap a photo, record a voice note, or film up to 10 seconds.</li>
-      <li>Or start from a small self-made sample.</li>
-      <li>Pick a preset checklist, or write up to five questions with two to six options each.</li>
-      <li>Read the top answer, the bar for every option, and the latency.</li>
-      <li>Compare that with Whisper or a vision model, then Clef, on the same image or audio.</li>
-      <li>Look back at recent judgments from this browser.</li>
+      <li>Run a preset: expense receipt, product QA, delivery parcel, support voice, or a safety clip.</li>
+      <li>Read the top answer, the bar for every option, and whether it matched the expected label.</li>
+      <li>Snap a photo, record a voice note, or film up to 10 seconds and write your own checklist.</li>
+      <li>Compare an image or a voice note with Whisper or a vision model, then Clef.</li>
+    </ul>
+  </section>
+  <section class="can" aria-labelledby="build-title">
+    <h2 id="build-title">What you could build</h2>
+    <ul>
+      <li>Expense intake that rejects a blurry receipt.</li>
+      <li>Product QA that flags a cracked mug or phone screen.</li>
+      <li>A delivery photo check for a damaged parcel.</li>
+      <li>Support voice-note triage, urgent versus routine.</li>
+      <li>A short safety clip that spots a fall.</li>
     </ul>
   </section>
 
@@ -71,20 +79,16 @@
       <p class="hint" id="roll-hint">On an iPhone, the camera roll can return HEVC or a file over the size limit. Photos are resized here. Video must be MP4 or WebM, within 10 seconds and 6 MB.</p>
       <p class="hint" id="perm" hidden></p>
       <input id="snap-cam" type="file" accept="image/*" capture="environment" hidden />
-      <div class="samples" role="group" aria-label="Samples">
-        <button class="chip" type="button" data-sample="voicemail">Voicemail tone</button>
-        <button class="chip" type="button" data-sample="machine">Machine tone</button>
-        <button class="chip" type="button" data-sample="gallery">Gallery still</button>
-        <button class="chip" type="button" data-sample="package">Package still</button>
-        <button class="chip" type="button" data-sample="clip">Short clip</button>
-      </div>
+      <div id="samples" hidden></div>
       <p class="hint" id="media-note">Nothing selected yet.</p>
       <div class="preview" id="preview" hidden></div>
     </section>
 
     <section class="panel" aria-label="Questions">
       <p class="eyebrow">Checklist</p>
-      <div class="samples" id="presets" role="group" aria-label="Presets"></div>
+      <div id="presets"></div>
+      <p class="hint" id="preset-hint"></p>
+      <p class="expected" id="expected" hidden></p>
       <div id="questions"></div>
       <div class="q-actions">
         <button class="btn btn-ghost" id="add-question" type="button">Add a question</button>
@@ -129,9 +133,10 @@
     <p>
       Clef-omni on Workers AI.
       <a href="https://developers.cloudflare.com/workers-ai/models/clef-omni/" rel="noopener">Model page</a>.
+      <a href="./LICENSES/CREDITS">Sample credits</a>.
       <a href="https://theserverless.dev/contact" rel="noopener">Contact</a>.
     </p>
-    <p class="hint" id="test-note" hidden>This page is using the local stub and Cloudflare’s always-pass Turnstile test widget. Production calls Clef-omni.</p>
+    <p class="hint" id="test-note" hidden>This page is using Cloudflare’s always-pass Turnstile test widget. Judgments call Clef-omni.</p>
   </footer>
 
   <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" defer></script>

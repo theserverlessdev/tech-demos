@@ -92,6 +92,40 @@ Worker `tech-demos-clef-gate`:
 - `scripts/smoke.ts`: parser fixtures, Turnstile secret policy, local planner mapping, then the live API (heuristic header, localhost only) for allow, ask-human approve, ask-human deny, and a denied `DROP TABLE`.
 - Browser pass on the running desk, plus a screenshot and a short video.
 
+## Audit fixes (2026-10-14)
+
+Opus audit blockers and nits. Same demo, no new bindings the owner did not already have except:
+
+- `SESSION_KEY` Worker secret (HMAC for the session cookie).
+- `READ_LIMIT` namespace `7467` (60 reads / 60s). `7372` / `7373` stay. Do not reuse 7451–7466.
+
+**In**
+
+- Sign cookies as `id.exp.hmac`. Forged or expired cookies never call `idFromName`.
+- D1 live-row check before waking a Durable Object.
+- `READ_LIMIT` on GET/DELETE `/api/session` and GET `/api/audit`.
+- `this.destroy()` after `purgeSession` on forget and TTL (frees SQLite).
+- `this.schedule()` for pending and session expiry; reject an expired pending call even if the alarm is late; re-arm when `#busy`.
+- Keyword planner: no invented delete ids, SQL, or fetch URLs. Email intent before delete.
+- glm-5.3-flash: `reasoning_effort: "low"`, 1024 output tokens, log `planner_empty`, show `planner` on the gate card.
+- Sticky Approve/Deny under 860px, wrap long args, compact gate rows in the transcript, audit shows model / source / probabilities.
+- `LOCAL_DEV=1` gates heuristic, test Turnstile, and localhost origins. Test site key in `.dev.vars.example`.
+- Weak deny stays deny. `too_long` for 501+ chars. Cookie `Max-Age` from `SESSION_TTL_SECONDS`. Drop `id` from `SessionView`.
+- Deploy via `bun run deploy` (builds `app.js`). `workers_dev: false`. Routes `/demos/clef-gate` and `/demos/clef-gate/*`.
+
+**Out**
+
+- Deploy, new GitHub repo, Cloudflare dashboard changes (owner puts `SESSION_KEY` and deploys).
+
+## Follow-ups (2026-10-14)
+
+Opus re-review of PR #28. F1–F4 only. No deploy. No class rotation.
+
+- **F1.** Rebase onto `main` after hub audit #25. Keep `standalone()` and `kind: "standalone"`. Keep main's “or ten minutes pass”. Take this PR’s audit-list line.
+- **F2.** On first touch, `GateAgent.reclaim()` destroys a Durable Object whose D1 session is missing. Old 32-hex cookies are reclaim-only. HMAC-verified cookies with no D1 row also reclaim. Forged HMAC cookies still never call `idFromName`.
+- **F3.** Keyword planner needs explicit intent. SQL only when an identifier follows `from` / `into` / `table` (then `where`, `;`, `=`, `*`, or end). `send_email` only when an email verb leads, or an address is present and no delete/remove verb is.
+- **F4.** `READ_LIMIT` / `CHAT_LIMIT` run before cookie lookup and D1 reads on every path except POST `/api/sessions` and POST `/api/chat` (those keep their own limits, still before the cookie). 401/404 fall-throughs are read-limited.
+
 ## Deferred
 
 - Extract `toolGate()` into `@tech-demos/guardrails` once issue #95 has a package.

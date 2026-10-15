@@ -1,5 +1,6 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { COMPLETION_RESERVE_USD, meter, reserveBudget, usageCost, type Usage } from "./meter";
+import { WEB_FETCH_TIMEOUT_MS } from "./timeouts";
 import type { Workspace } from "./workspace";
 
 export type GatekeeperProps = { workspace: string; gadget: string };
@@ -36,7 +37,7 @@ export class WebGatekeeper extends WorkerEntrypoint<Env, GatekeeperProps> {
     const started = Date.now();
     const res = await fetch(url, {
       headers: { accept: "application/json", "user-agent": "tech-demos-cloudflare-os (+https://tech-demos.theserverless.dev)" },
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(WEB_FETCH_TIMEOUT_MS),
     });
     const text = await res.text();
     await ws.recordGatekeeperCall(gadget, `WEB GET ${url.hostname} → ${res.status}`, Date.now() - started, res.ok);
@@ -83,7 +84,7 @@ export class AiGatekeeper extends WorkerEntrypoint<Env, GatekeeperProps> {
       throw err;
     }
 
-    const cost = usageCost(out.usage);
+    const cost = usageCost(out.usage, COMPLETION_RESERVE_USD);
     await meter(this.env).settle(COMPLETION_RESERVE_USD, cost.usd);
     await ws.addCost(cost);
     await ws.recordGatekeeperCall(gadget, `AI ${this.env.AI_MODEL} · ${cost.tokensOut} tokens`, Date.now() - started, true);

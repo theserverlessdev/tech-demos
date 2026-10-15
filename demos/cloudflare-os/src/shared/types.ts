@@ -92,7 +92,8 @@ export type WorkspaceEvent =
   | { type: "gadget-removed"; gadget: string }
   | { type: "focus"; gadget: string }
   | { type: "rpc"; event: RpcEvent }
-  | { type: "log"; gadget: string; level: "info" | "error"; message: string };
+  | { type: "log"; gadget: string; level: "info" | "error"; message: string }
+  | { type: "session-idle"; reason: "idle"; idleMs: number };
 
 export type StorageReport = {
   tables: { name: string; rows: number; columns: string[]; sample: Record<string, unknown>[] }[];
@@ -123,6 +124,7 @@ export interface WorkspaceClientApi {
   setAutoApprove(gadgetId: string, binding: BindingName, enabled: boolean): Promise<void>;
   chat(text: string): Promise<void>;
   reportLog(gadgetId: string, level: "info" | "error", message: string): Promise<void>;
+  noteActivity(): Promise<void>;
 }
 
 export interface PublicApi {

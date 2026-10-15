@@ -244,13 +244,21 @@ async function open(id: string) {
   }
 }
 
+function turnstileApi(): TurnstileApi | null {
+  const api = window.turnstile;
+  if (!api || typeof api.render !== "function") return null;
+  if ("nodeType" in api) return null;
+  return api;
+}
+
 async function waitForTurnstile(): Promise<TurnstileApi | null> {
   const started = Date.now();
   while (Date.now() - started < 8_000) {
-    if (window.turnstile) return window.turnstile;
+    const api = turnstileApi();
+    if (api && typeof api.render === "function") return api;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  return null;
+  return turnstileApi();
 }
 
 function turnstileOptions(): Record<string, unknown> {

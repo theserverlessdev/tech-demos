@@ -256,6 +256,8 @@ input:focus { outline: none; border-color: var(--ember); }
   transition: border-color var(--fast), color var(--fast);
 }
 .chip:hover { border-color: rgba(var(--ember-rgb), 0.6); color: var(--text-strong); }
+.turnstile { max-width: 100%; overflow: auto; display: grid; justify-items: center; }
+.copy-link__icon { display: none; }
 
 /* ------------------------------------------------------------ console */
 .console { display: flex; flex-direction: column; min-width: 0; height: calc(100vh - 59px); position: sticky; top: 59px; }
@@ -341,7 +343,12 @@ input:focus { outline: none; border-color: var(--ember); }
 }
 @media (max-width: 560px) {
   .topbar { padding: 10px 12px; gap: 8px; }
-  .brand span, #copy-link, .topbar__actions a, .conn span:last-child { display: none; }
+  .brand span, .topbar__actions a, .conn span:last-child { display: none; }
+  #copy-link { display: inline-flex; min-width: 44px; padding: 0; }
+  #copy-link #desk-id { display: none; }
+  #copy-link .copy-link__icon { display: block; }
+  input, .probe input { font-size: 16px; }
+  .btn, .chip, .pill { min-height: 44px; }
   .topbar__title h1 { font-size: 17px; }
   .stage { padding: 24px 14px; }
   .device__body { border-radius: 32px; padding: 16px 16px 12px; width: calc(var(--screen) + 32px); }

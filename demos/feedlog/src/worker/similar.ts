@@ -53,10 +53,16 @@ export async function embed(env: Env, text: string): Promise<number[] | null> {
   }
 }
 
-export async function indexPost(env: Env, post: { id: string; title: string; body: string }): Promise<void> {
+export async function indexPost(env: Env, post: { id: string; title: string; body: string }): Promise<boolean> {
   const values = await embed(env, `${post.title}\n${post.body}`);
-  if (!values) return;
-  await env.VECTORS.upsert([{ id: post.id, values }]);
+  if (!values) return false;
+  try {
+    await env.VECTORS.upsert([{ id: post.id, values }]);
+    return true;
+  } catch (err) {
+    console.warn(JSON.stringify({ event: "vector_upsert_failed", postId: post.id, error: String(err) }));
+    return false;
+  }
 }
 
 export function indexPostLater(ctx: ExecutionContext, env: Env, post: { id: string; title: string; body: string }): void {
@@ -81,7 +87,11 @@ export async function indexSeedPostsQuiet(env: Env): Promise<void> {
   try {
     const posts = await listSeedPosts(env);
     if (posts.length === 0) return;
-    for (const post of posts) await indexPost(env, post);
+    let all = true;
+    for (const post of posts) {
+      if (!(await indexPost(env, post))) all = false;
+    }
+    if (!all) return;
     await env.DB.prepare("INSERT INTO meta (key, value) VALUES ('vectors_seeded', '1') ON CONFLICT(key) DO UPDATE SET value = '1'").run();
   } catch (err) {
     console.warn(JSON.stringify({ event: "seed_index_failed", error: String(err) }));

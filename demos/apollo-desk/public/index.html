@@ -13,16 +13,9 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Hanken+Grotesk:wght@400..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <script>
-    (function () {
-      try {
-        var stored = localStorage.getItem("theme");
-        var theme = stored || (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
-        document.documentElement.setAttribute("data-theme", theme);
-      } catch (e) {}
-    })();
-  </script>
+  <script src="./assets/theme.js"></script>
   <link rel="stylesheet" href="./assets/desk.css" />
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -40,7 +33,8 @@
     </div>
     <div class="topbar__actions">
       <span class="conn" id="conn" data-state="connecting"><span class="conn__dot"></span><span id="conn-label">Connecting</span></span>
-      <button class="btn btn-ghost" id="copy-link" type="button" title="Copy the link to this desk">
+      <button class="btn btn-ghost" id="copy-link" type="button" title="Copy the link to this desk" aria-label="Copy desk link">
+        <svg class="icon copy-link__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.07 0l1.41-1.41a5 5 0 0 0-7.07-7.07L10 5.93"/><path d="M14 11a5 5 0 0 0-7.07 0L5.52 12.41a5 5 0 0 0 7.07 7.07L14 18.07"/></svg>
         <span class="mono" id="desk-id">desk</span>
       </button>
       <button class="btn" id="new-desk" type="button">New desk</button>
@@ -51,7 +45,7 @@
     </div>
   </header>
 
-  <p class="shows shows--bar"><span class="shows__k">What this shows</span> One Agents SDK Durable Object runs the voice turn, SQLite memory, and tools. The desk is the MCP server it calls.</p>
+  <p class="shows shows--bar"><span class="shows__k">What this shows</span> One Agents SDK Durable Object runs the voice turn, SQLite memory, and tools. The desk runs an MCP-style JSON-RPC tool server (<code>tools/call</code>) that the brain calls on the same WebSocket.</p>
 
   <main class="layout">
     <section class="stage" aria-label="Simulated desk">
@@ -84,7 +78,8 @@
           <span id="talk-label">Hold to talk</span>
           <canvas id="level" width="120" height="24" aria-hidden="true"></canvas>
         </button>
-        <p class="hint" id="talk-hint">Hold the button or the space bar while you speak. Release to send.</p>
+        <p class="hint" id="talk-hint">Complete the Turnstile check, then hold to talk or type.</p>
+        <div id="turnstile" class="turnstile"></div>
 
         <form class="say" id="say">
           <label class="sr-only" for="say-input">Type to Apollo</label>

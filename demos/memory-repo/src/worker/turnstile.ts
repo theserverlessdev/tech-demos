@@ -63,7 +63,7 @@ export async function verifyTurnstile(env: DemoEnv, request: Request, token: str
   }
   const host = result.hostname ?? "";
   const dummyHost = TEST_SECRETS.has(secret) && (localHost(host) || host === "example.com");
-  const hostOk = dummyHost || ALLOWED_HOSTS.has(host) || host.endsWith(".workers.dev");
+  const hostOk = dummyHost || ALLOWED_HOSTS.has(host);
   if (!hostOk) return false;
   if (!TEST_SECRETS.has(secret) && result.action && result.action !== ACTION) return false;
   return true;

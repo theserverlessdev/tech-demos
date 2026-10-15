@@ -2,27 +2,29 @@
 
 Live at [omni-judge.tech-demos.theserverless.dev](https://omni-judge.tech-demos.theserverless.dev/) after deploy. `tech-demos.theserverless.dev/demos/omni-judge` redirects there. The API answers only on the demo host.
 
-One Workers AI call decides a photo, a voice note, or a short video. Clef-omni returns a probability for every allowed answer. The page can also time the older chain on the same image or audio.
+Clef-omni scores a receipt, a product photo, a parcel, a support voice note, or a safety clip in one call. Each bundled preset has a labelled expected answer.
 
 ## What this demonstrates
 
 **Pattern.** `@cf/cloudflare/clef-omni` takes the media as a base64 data URL (`images`, `audio`, or `videos`) and a map of choice questions. The response has one answer per question: the chosen option, a probability for each option, and a confidence. There is no transcribe step and no vision step in that call.
 
+**What this proves.** The presets are intake tasks, not abstract stills: a readable receipt versus a blurry one, a cracked phone screen versus an intact one, a damaged parcel versus a closed box, an angry support note versus a calm one, and a fall versus a walk.
+
 **What you can do**
 
+- Run a preset. The page shows the expected label and whether Clef-omni landed on it.
 - Snap a photo, record a voice note, or film up to 10 seconds. A voice note is converted to 16 kHz WAV in the browser before upload. The model docs describe audio as WAV or MP3.
-- Start from a bundled self-made sample.
-- Pick a preset checklist, or write up to five questions with two to six options.
-- Read the top answer, a bar for every option, and the latency.
+- Write up to five questions with two to six options.
 - Compare an image or a voice note with Whisper or Llama 3.2 11B Vision, then Clef.
 - Review recent judgments from this browser.
 
 **What you could build**
 
-- Voicemail triage.
-- Upload moderation.
-- Field-inspection checklists.
-- Support-call routing.
+- Expense intake that rejects a blurry receipt.
+- Product QA that flags a cracked mug or phone screen.
+- A delivery photo check for a damaged parcel.
+- Support voice-note triage, urgent versus routine.
+- A short safety clip that spots a fall.
 
 **Limits**
 
@@ -55,16 +57,18 @@ bun install
 bun run dev
 ```
 
-`bun run dev` uses `wrangler.local.jsonc`, which has no Workers AI binding, and `.dev.vars` sets `ENVIRONMENT=local`. Results are labelled **Local stub. Workers AI was not called.** The Turnstile widget uses Cloudflare’s [always-pass test keys](https://developers.cloudflare.com/turnstile/troubleshooting/testing/). The dummy token is `XXXX.DUMMY.TOKEN.XXXX`.
+`bun run dev` and `bun run dev:stub` use `wrangler.local.jsonc` (no zone routes, labelled stub). Do not put `ENVIRONMENT` in `.dev.vars`; that file would override the stub. The Turnstile widget uses Cloudflare’s [always-pass test keys](https://developers.cloudflare.com/turnstile/troubleshooting/testing/) from `.dev.vars`. The dummy token is `XXXX.DUMMY.TOKEN.XXXX`. `bun run dev:live` uses `wrangler.live.jsonc` (AI binding, no routes) and calls Clef-omni. Wrangler must be logged in.
 
-`wrangler dev` with the production config needs a logged-in Wrangler session before Workers AI will answer. This PR does not deploy, and it does not call Clef-omni live.
+This PR does not deploy. `bun run score` only checks the bundled files and does not write `test/preset-scores.json`. `bun run score --live` calls Clef-omni over the Workers AI REST API (`CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`), records probabilities and a per-file `sha256`, and fails if a preset misses the expected answer or the margin is thin. Live scores from the owner’s last run stay committed until someone passes `--live`.
 
-`bun run typecheck` runs `wrangler types` before `tsc`. `bun test` covers sniffing, the budget insert, owner-only reads, and the Clef-omni request and response fixture.
+`bun run typecheck` runs `wrangler types` before `tsc`. `bun test` covers sniffing, the budget insert, owner-only reads, the Clef-omni request and response fixture, and the preset files.
+
+Sample credits are in `LICENSES/CREDITS`. Media is CC0, public domain, or generated here.
 
 ### Smoke checklist
 
 - `bun test` and `bun run typecheck`.
-- `bun run dev`, then `bun run smoke` against the local stub. Results must say the local stub was used.
+- `bun run dev` (labelled stub) or `bun run dev:live` (Clef-omni), then `bun run smoke`. Smoke does not call Clef-omni over REST and does not write `test/preset-scores.json`. A 502 from the judge endpoint fails smoke unless you pass `--allow-ai-miss`.
 - A judge POST with no `Content-Length` returns 411, and the judge rate limit runs before the body is parsed or Turnstile is checked.
 - Uploads are base64-encoded once with `Buffer.from(bytes.buffer, bytes.byteOffset, bytes.length)`, and that string is reused if comparison also needs it. A 6 MB video should not encode the bytes twice.
 - The Llama 3.2 11B Vision `image` field in the model schema is an integer array or a binary string. Both forms are deprecated in favor of `messages`. This demo still sends the integer array. Comparison images are also capped at 512 KB and 2 megapixels, which is tighter than the omni image cap.
@@ -117,6 +121,7 @@ src/worker/   HTTP, Turnstile, D1 budget, R2, Clef-omni, comparison
 src/client/   capture, checklists, bar charts, history
 src/shared/   sniffing, question checks, request build and response parse
 public/       Graphite & Ember page and samples
+LICENSES/     CC0 and self-made credits
 migrations/   media and judgments
 test/         caps, budget, owner reads, Clef-omni fixture
 ```

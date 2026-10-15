@@ -8,14 +8,14 @@ export interface DeskHost {
   patchState(patch: Partial<DeskState>): void;
   rememberFact(fact: string): Promise<{ id: number; dims: number; duplicate: boolean }>;
   recall(query: string, limit: number, minScore?: number): Promise<RecallHit[]>;
-  forgetEverything(): { facts: number; items: number; messages: number };
+  forgetEverything(): Promise<{ facts: number; items: number; messages: number }>;
   addListItem(list: string, item: string): { list: string; count: number };
   readList(list: string): string[];
   removeListItem(list: string, item: string): boolean;
   scheduleReminder(kind: "timer" | "reminder", label: string, delaySeconds: number): Promise<{ id: string; firesAt: string }>;
   listReminders(): Promise<{ id: string; kind: string; label: string; inSeconds: number }[]>;
   cancelReminder(id: string): Promise<boolean>;
-  /** JSON-RPC `tools/call` to the MCP server that runs on the desk. */
+  /** JSON-RPC `tools/call` to the MCP-style tool server that runs on the desk. */
   deviceTool(name: string, args: Record<string, unknown>): Promise<unknown>;
   setWeather(report: WeatherReport): void;
 }
@@ -184,7 +184,7 @@ export const TOOLS: ToolDefinition[] = [
     name: "set_volume",
     safety: "safe",
     caption: "Setting the volume…",
-    description: "Set the desk speaker volume. This calls the MCP server on the desk.",
+    description: "Set the desk speaker volume. This calls tools/call on the desk's MCP-style JSON-RPC server.",
     schema: z.object({ level }),
     async handler({ level }, host) {
       return host.deviceTool("self.audio_speaker.set_volume", { volume: level });
@@ -194,7 +194,7 @@ export const TOOLS: ToolDefinition[] = [
     name: "set_brightness",
     safety: "safe",
     caption: "Setting the brightness…",
-    description: "Set the desk screen brightness. This calls the MCP server on the desk.",
+    description: "Set the desk screen brightness. This calls tools/call on the desk's MCP-style JSON-RPC server.",
     schema: z.object({ level }),
     async handler({ level }, host) {
       return host.deviceTool("self.screen.set_brightness", { brightness: level });
@@ -204,7 +204,7 @@ export const TOOLS: ToolDefinition[] = [
     name: "device_status",
     safety: "safe",
     caption: "Checking the desk…",
-    description: "Read volume, brightness, firmware, and uptime from the desk MCP server.",
+    description: "Read volume, brightness, firmware, and uptime from the desk over tools/call.",
     schema: z.object({}),
     async handler(_args, host) {
       return host.deviceTool("self.get_device_status", {});
@@ -214,9 +214,9 @@ export const TOOLS: ToolDefinition[] = [
     name: "forget_everything",
     safety: "unsafe",
     caption: "Waiting for your OK…",
-    description: "Delete all stored facts, lists, and conversation history for this desk. The user must press Yes on the desk.",
+    description: "Delete all stored facts, lists, conversation, location, timers, and reminders for this desk. The user must press Yes on the desk.",
     schema: z.object({}),
-    confirmSummary: () => "Forget all facts, lists, and history?",
+    confirmSummary: () => "Forget all facts, lists, conversation, location, timers, and reminders?",
     async handler(_args, host) {
       return host.forgetEverything();
     },

@@ -225,7 +225,6 @@ select {
   .filter,
   button.chip,
   .size,
-  .swatch,
   .n,
   .toggle__btn,
   .room-btn,
@@ -234,14 +233,12 @@ select {
     min-height: 44px;
   }
   .btn-icon,
-  .swatch,
   .filter,
   .n,
   .size {
     min-width: 44px;
   }
-  .btn-icon,
-  .swatch {
+  .btn-icon {
     width: 44px;
     height: 44px;
   }

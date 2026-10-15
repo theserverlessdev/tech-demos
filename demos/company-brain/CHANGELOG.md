@@ -37,6 +37,17 @@ Announcement: https://x.com/DhravyaShah/status/2103668051468300701
 
 Hub Graphite & Ember. Background `#0e0e11`, ember `#c2410c`, Bricolage Grotesque and Hanken Grotesk. Contact links to https://theserverless.dev/contact.
 
+## 2026-10-14
+
+Audit fixes:
+
+- Org ids are HMAC-tagged. Unauthenticated or unsigned requests 404/401 in the Worker before a Durable Object is created. IPv6 rate limits key the /64.
+- Grounding keeps an answer only when the model cites a retrieved `[kind:id]`. Word-overlap fallback is gone. Prefix "I don't know" is a refusal.
+- Create seeds a cited shipping turn so the workspace shows the contract without a paid model call.
+- GLM-5.3 Flash uses `reasoning_effort: "low"` and `max_completion_tokens: 1024`. Empty model content falls back to "I don't know."
+- Expiry calls `this.destroy()` so billed storage is deleted.
+- 390 px column uses `minmax(0,1fr)`; `#workspace[hidden]` is `display: none`. Transient 429/5xx keep the org in the tab.
+
 ## 2026-10-09
 
 Phone layout: 16px fields, 44px chips and buttons, and safe-area padding. The workspace stacks to one column.

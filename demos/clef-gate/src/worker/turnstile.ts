@@ -19,10 +19,15 @@ export function isLocalHost(hostname: string): boolean {
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]" || hostname === "::1";
 }
 
+const ROUTE_HOSTS = new Set(["tech-demos.theserverless.dev", "clef-gate.tech-demos.theserverless.dev"]);
+
 /**
  * `wrangler dev` rewrites the request URL to the first route host, so the
  * URL is not localhost. Cloudflare sets CF-Connecting-IP and does not let a
  * client spoof it; 127.0.0.1 only shows up under local dev.
+ *
+ * Production policy uses `LOCAL_DEV=1` only. The IP heuristic stays for
+ * tests and for leftover local processes that forgot the flag.
  */
 export function isLocalRequest(request: Request): boolean {
   const url = new URL(request.url);
@@ -30,12 +35,15 @@ export function isLocalRequest(request: Request): boolean {
   return isLocalHost(url.hostname) || isLocalHost(ip);
 }
 
+export function isLocalMode(env: { LOCAL_DEV?: string }): boolean {
+  return env.LOCAL_DEV === "1";
+}
+
 /**
  * Production must have a real TURNSTILE_SECRET. An empty secret, or the
- * published test secret on a public host, fails closed.
+ * published test secret off local mode, fails closed.
  */
-export function resolveTurnstileSecret(hostname: string, configured: string | undefined): SecretResolution {
-  const local = isLocalHost(hostname);
+export function resolveTurnstileSecret(local: boolean, configured: string | undefined): SecretResolution {
   const secret = configured?.trim() ?? "";
   if (!secret) {
     if (local) return { ok: true, secret: TURNSTILE_TEST_SECRET, test: true };
@@ -72,5 +80,5 @@ export async function verifyTurnstile(secret: string, token: string, ip: string,
   if (secret === TURNSTILE_TEST_SECRET) {
     return host === "example.com" || host === "localhost" || host === "127.0.0.1";
   }
-  return host === requestHost || host.endsWith(".theserverless.dev");
+  return host === requestHost || ROUTE_HOSTS.has(host);
 }

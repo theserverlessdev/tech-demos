@@ -23,10 +23,12 @@
     "bindings": [{ "name": "GATE", "class_name": "GateAgent" }]
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["GateAgent"] }],
+  "build": { "command": "bun run build" },
   "ratelimits": [
-    // 7371 is goodvibes CREATE_LIMIT (PR #8). 7341–7344 are feedlog and others.
+    // 7371 is goodvibes CREATE_LIMIT. 7451–7466 are taken by other branches.
     { "name": "CHAT_LIMIT", "namespace_id": "7372", "simple": { "limit": 12, "period": 60 } },
-    { "name": "SESSION_LIMIT", "namespace_id": "7373", "simple": { "limit": 6, "period": 60 } }
+    { "name": "SESSION_LIMIT", "namespace_id": "7373", "simple": { "limit": 6, "period": 60 } },
+    { "name": "READ_LIMIT", "namespace_id": "7467", "simple": { "limit": 60, "period": 60 } }
   ],
   "triggers": { "crons": ["17 * * * *"] },
   "vars": {
@@ -36,15 +38,17 @@
     "CONFIDENCE_FLOOR": "0.62",
     "SESSION_TTL_SECONDS": "21600",
     "PENDING_TTL_SECONDS": "600",
-    "TURNSTILE_SITE_KEY": "0x4AAAAAAFRgqlaAuJ8-Lnuc"
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFRgqlaAuJ8-Lnuc",
+    "LOCAL_DEV": "0"
   },
   "secrets": {
-    "required": ["TURNSTILE_SECRET"]
+    "required": ["TURNSTILE_SECRET", "SESSION_KEY"]
   },
   "routes": [
-    { "pattern": "tech-demos.theserverless.dev/demos/clef-gate*", "zone_name": "theserverless.dev" },
+    { "pattern": "tech-demos.theserverless.dev/demos/clef-gate", "zone_name": "theserverless.dev" },
+    { "pattern": "tech-demos.theserverless.dev/demos/clef-gate/*", "zone_name": "theserverless.dev" },
     { "pattern": "clef-gate.tech-demos.theserverless.dev/*", "zone_name": "theserverless.dev" }
   ],
-  "workers_dev": true,
+  "workers_dev": false,
   "observability": { "enabled": true }
 }

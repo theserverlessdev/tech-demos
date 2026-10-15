@@ -1,4 +1,4 @@
-declare module "*hello-dynamic/worker.js" {
+declare module "*/worker.js" {
   const source: string;
   export default source;
 }

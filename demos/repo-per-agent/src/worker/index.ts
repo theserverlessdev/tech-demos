@@ -35,7 +35,7 @@ async function serveAsset(request: Request, env: DemoEnv, path: string): Promise
   const assetUrl = new URL(request.url);
   assetUrl.pathname = path === "/" ? "/index.html" : path;
   let res = await env.ASSETS.fetch(new Request(assetUrl, { method: request.method, headers: request.headers }));
-  if (res.status === 404 && !path.startsWith("/assets/")) {
+  if (res.status === 404 && (path === "/" || path === "/index.html")) {
     assetUrl.pathname = "/index.html";
     res = await env.ASSETS.fetch(new Request(assetUrl, { method: request.method, headers: request.headers }));
   }

@@ -125,3 +125,8 @@ export async function purgeSession(db: D1Database, sessionId: string): Promise<v
   await db.prepare("DELETE FROM decisions WHERE session_id = ?").bind(sessionId).run();
   await db.prepare("DELETE FROM sessions WHERE id = ?").bind(sessionId).run();
 }
+
+export async function sessionIsLive(db: D1Database, sessionId: string, now = Date.now()): Promise<boolean> {
+  const row = await db.prepare("SELECT 1 AS ok FROM sessions WHERE id = ? AND expires_at > ?").bind(sessionId, now).first<{ ok: number }>();
+  return Boolean(row);
+}

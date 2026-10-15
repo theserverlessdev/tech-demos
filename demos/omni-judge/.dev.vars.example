@@ -1,8 +1,8 @@
 # Cloudflare's published always-pass Turnstile test secret. Localhost only.
 # Production secrets are set with `wrangler secret put`, not this file.
-# wrangler dev rewrites Host to the first route, so ENVIRONMENT=local is what
-# allows the test secret and the labelled Workers AI stub.
+# Do not set ENVIRONMENT here. `bun run dev` and `bun run dev:stub` take
+# ENVIRONMENT=local from wrangler.local.jsonc. `bun run dev:live` takes the
+# empty value from wrangler.live.jsonc so Clef-omni runs.
 TURNSTILE_SECRET=1x0000000000000000000000000000000AA
 TURNSTILE_SITE_KEY=1x00000000000000000000AA
 IP_HASH_SECRET=dev-omni-judge-ip-hash
-ENVIRONMENT=local

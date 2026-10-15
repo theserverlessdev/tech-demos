@@ -74,6 +74,32 @@ describe("request guards", () => {
     const blocked = await worker.fetch(new Request("https://example.com/api/health"), env());
     expect(blocked.status).toBe(503);
   });
+
+  test("sample MP4s answer Range with 206", async () => {
+    const bytes = Uint8Array.from({ length: 200 }, (_, i) => i);
+    const binding = env();
+    binding.ASSETS = {
+      fetch: async (input: RequestInfo | URL) => {
+        const url = new URL(typeof input === "string" ? input : input instanceof Request ? input.url : String(input));
+        if (!url.pathname.endsWith(".mp4")) return new Response("no", { status: 404 });
+        expect(new Request(input).headers.has("range")).toBe(false);
+        return new Response(bytes, { status: 200, headers: { "content-type": "video/mp4", "content-length": String(bytes.length) } });
+      },
+    } as Env["ASSETS"];
+    const ranged = await worker.fetch(new Request("http://127.0.0.1/samples/safety-fall.mp4", { headers: { range: "bytes=0-99" } }), binding);
+    expect(ranged.status).toBe(206);
+    expect(ranged.headers.get("accept-ranges")).toBe("bytes");
+    expect(ranged.headers.get("content-range")).toBe("bytes 0-99/200");
+    expect(ranged.headers.get("content-length")).toBe("100");
+    expect(new Uint8Array(await ranged.arrayBuffer())).toEqual(bytes.subarray(0, 100));
+    const full = await worker.fetch(new Request("http://127.0.0.1/samples/safety-fall.mp4"), binding);
+    expect(full.status).toBe(200);
+    expect(full.headers.get("accept-ranges")).toBe("bytes");
+    expect((await full.arrayBuffer()).byteLength).toBe(200);
+    const bad = await worker.fetch(new Request("http://127.0.0.1/samples/safety-fall.mp4", { headers: { range: "bytes=nope" } }), binding);
+    expect(bad.status).toBe(416);
+    expect(bad.headers.get("content-range")).toBe("bytes */200");
+  });
 });
 
 describe("turnstile hostname", () => {

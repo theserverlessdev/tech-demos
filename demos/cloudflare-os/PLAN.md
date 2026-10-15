@@ -57,7 +57,8 @@ sandboxed iframe (client.js) ◀───── Workspace DO (SQLite: gadgets, f
 ```
 
 - **Isolation.** Each gadget has `globalOutbound: null` and a CPU limit. The iframe has
-  `sandbox="allow-scripts"`, which gives it an opaque origin, and a CSP with `connect-src 'none'`.
+  `sandbox="allow-scripts"` only (no `allow-popups`), which gives it an opaque origin, and a CSP
+  with `connect-src 'none'`. External http(s) links postMessage to the parent shell.
 - **Loader IDs.** A gadget without bindings uses a content-hash ID. Visitors who run the same blueprint
   share one Dynamic Worker, which keeps the unique Dynamic Worker count low. A gadget with bindings uses
   an ID from the workspace, gadget, and version, because the binding props hold its identity.
@@ -79,14 +80,19 @@ sandboxed iframe (client.js) ◀───── Workspace DO (SQLite: gadgets, f
 - **Workers, Static Assets, Durable Objects (SQLite).** These are the upstream primitives, and the Paid plan includes them.
 - **Dynamic Worker Loader and Durable Object Facets.** They are the core of Cloudflare OS. Both are in open beta on Paid.
 - **`capnweb` 0.12.0.** It is the same RPC library and version as upstream. It has no dependencies.
-- **Workers AI `glm-5.3-flash`.** It supports tool calls and costs little ($0.15 per M input tokens, $0.50 per M output tokens).
+- **Workers AI `glm-5.3-flash`.** It supports tool calls and costs little ($0.15 per M input tokens, $0.50 per M output tokens; confirmed on the Workers AI model page, not the full GLM-5.3 $1.40/$4.40 rates).
 - **Workers Rate Limiting binding.** It sets a per-IP limit on agent turns at no extra cost.
 - **Vanilla TypeScript for the shell.** The surface is small, so the demo does not need React.
 
 ## Cost guards
 
 - The `Meter` DO holds a global daily AI budget (`AI_DAILY_BUDGET_USD`, default `0.15`). The worst case is
-  less than $5 each month.
+  less than $5 each month. When a model response omits `usage`, the meter keeps the reserved worst-case
+  amount instead of treating the call as free.
+- A Workspace DO idle-reaps after 20 minutes with no user RPC (keepalive pings do not count). Any later
+  user RPC starts a fresh idle window, so reconnect works. Gadget RPCs count as activity only after a
+  recent pointer or key gesture. The shell counts each failed connect once, then shows Paused · tap to
+  reconnect instead of giving up silently.
 - The rate limit is 6 agent turns per minute per IP. Each workspace can have 8 gadgets or fewer.
 - Blueprint gadgets share Dynamic Workers by content hash.
 - Visitors can save gadget code, and each new code version is a new Dynamic Worker ID. The `Meter` DO
@@ -107,6 +113,7 @@ The hub registry entry keeps a fallback Dynamic Worker source. That source redir
 ## Testing
 
 - `bun run typecheck` for the Worker and the client.
+- `bun test test` for budget fail-closed, gadget-call vs approval timeouts, iframe sandbox, idle wake-after-reap, user-vs-timer gadget activity, reconnect-once + tap-to-reconnect, origin allowlist, chat column minmax, and mobile CSS.
 - A smoke script that connects over Cap'n Web, creates each blueprint, and calls one method on each.
 - A manual pass with Playwright for the screenshot and the video.
 

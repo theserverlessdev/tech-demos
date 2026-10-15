@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { buildClefRequest, buildOmniRequest, omniCost, parseOmniResponse, questionMap, toBase64 } from "../src/shared/clef";
+import { buildClefRequest, buildOmniRequest, omniCost, parseOmniResponse, questionMap, stubAnswers, toBase64 } from "../src/shared/clef";
+import { PRESETS, validateQuestions } from "../src/shared/questions";
 import { buildVisionRequest, buildWhisperRequest } from "../src/worker/compare";
 import type { ChoiceQuestion } from "../src/shared/types";
 
@@ -103,5 +104,16 @@ describe("clef-omni request and response", () => {
     expect(omni.audio?.[0]).toBe(`data:audio/wav;base64,${encoded}`);
     const image = Uint8Array.of(1, 2, 3, 4);
     expect(buildVisionRequest(image).image).toEqual([1, 2, 3, 4]);
+  });
+
+  test("the local stub lands on each preset's expected answer", () => {
+    for (const preset of PRESETS) {
+      const validated = validateQuestions(preset.questions);
+      expect(validated.ok).toBe(true);
+      if (!validated.ok) continue;
+      const answers = stubAnswers(validated.questions, `seed:${preset.id}`, preset.sample);
+      expect(answers[0]?.topLabel).toBe(preset.expected);
+      expect(answers[0]?.confidence).toBeGreaterThan(0.7);
+    }
   });
 });

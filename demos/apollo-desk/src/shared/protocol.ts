@@ -40,7 +40,7 @@ export const STATE_EMOTION: Record<UiStateName, FaceEmotion> = {
 
 /** Desk → brain JSON frames. PCM audio (16 kHz, mono, s16le) goes up in binary frames between hold_start and hold_end. */
 export type DeskMessage =
-  | { type: "hello"; deviceId: string; firmwareVersion?: string; ts: number }
+  | { type: "hello"; deviceId: string; firmwareVersion?: string; turnstileToken?: string; ts: number }
   | { type: "hold_start"; ts: number }
   | { type: "hold_end"; ts: number }
   | { type: "listen_cancel"; ts: number }
@@ -107,6 +107,8 @@ export type DeskState = {
   thread: number;
   turns: number;
   lastTurnAt: number;
+  dayKey?: string;
+  dayTurns?: number;
   device: { volume: number; brightness: number; firmwareVersion: string };
 };
 

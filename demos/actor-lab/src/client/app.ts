@@ -1,12 +1,15 @@
+import { isTurnstileApi, nextScratchWait, reconnectStoppedMessage, shouldReconnect, TURNSTILE_RACE, TURNSTILE_UNLOCK } from "../shared/guards";
 import type { LabConfig, RaceMode, RaceResult, RoomResponse, RoomView, ServerEvent } from "../shared/types";
 
 const API_BASE = location.pathname.startsWith("/demos/actor-lab") ? "/demos/actor-lab" : "";
+const PING_MS = 25_000;
 
 type TurnstileApi = {
   render: (
     el: HTMLElement,
     opts: {
       sitekey: string;
+      action: string;
       callback: (token: string) => void;
       "expired-callback": () => void;
       "error-callback": () => void;
@@ -28,13 +31,23 @@ const timeline = must<HTMLElement>("timeline");
 const tableBody = must<HTMLElement>("table").querySelector("tbody");
 const score = must<HTMLElement>("score");
 let n = 4;
-let widgetId = "";
+let raceWidgetId = "";
+let unlockWidgetId = "";
+let siteKey = "";
 let aiReady = false;
-let tokenReady = false;
+let raceReady = false;
+let unlockReady = false;
 let roomCode = "";
 let socket: WebSocket | null = null;
 let scratchTimer = 0;
 let scratchFromUs = false;
+let lastScratchSent = "";
+let lastScratchAt = 0;
+let pendingSay = "";
+let reconnectTimer = 0;
+let reconnectAttempt = 0;
+let pingTimer = 0;
+let wantSocket = false;
 
 function must<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);
@@ -77,21 +90,39 @@ function mode(): RaceMode {
   return picked?.value === "serialized" ? "serialized" : "interleaved";
 }
 
-function token(): string {
-  if (!widgetId || !window.turnstile) return "";
-  return window.turnstile.getResponse(widgetId) || "";
+function tokenOf(widgetId: string): string {
+  const api = turnstileApi();
+  if (!widgetId || !api) return "";
+  return api.getResponse(widgetId) || "";
+}
+
+function resetWidget(widgetId: string, ready: (value: boolean) => void): void {
+  const api = turnstileApi();
+  if (widgetId && api) {
+    try {
+      api.reset(widgetId);
+    } catch {
+      // Widget already gone.
+    }
+  }
+  ready(false);
+}
+
+function turnstileApi(): TurnstileApi | null {
+  const api = window.turnstile;
+  return isTurnstileApi(api) ? api : null;
 }
 
 function syncFire(): void {
-  const locked = !aiReady || !tokenReady;
-  fireBtn.disabled = locked;
+  fireBtn.disabled = !aiReady || !raceReady;
   const unlock = document.getElementById("unlock");
-  if (unlock instanceof HTMLButtonElement) unlock.disabled = locked;
+  if (unlock instanceof HTMLButtonElement) unlock.disabled = !aiReady || !unlockReady || !roomCode;
 }
 
 async function waitTurnstile(): Promise<TurnstileApi | null> {
   for (let i = 0; i < 50; i++) {
-    if (window.turnstile) return window.turnstile;
+    const api = turnstileApi();
+    if (api && typeof api.render === "function") return api;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   return null;
@@ -187,10 +218,8 @@ async function fire(): Promise<void> {
   try {
     const armed = await call<{ runId: string }>("/api/race/arm", {
       method: "POST",
-      body: { n, mode: mode(), token: token() },
+      body: { n, mode: mode(), token: tokenOf(raceWidgetId) },
     });
-    window.turnstile?.reset(widgetId);
-    tokenReady = false;
     await Promise.all(
       Array.from({ length: n }, (_, racer) => call("/api/race/step", { method: "POST", body: { runId: armed.runId, racer } })),
     );
@@ -199,6 +228,9 @@ async function fire(): Promise<void> {
   } catch (err) {
     setStatus(err instanceof Error ? err.message : "The race failed.");
   } finally {
+    resetWidget(raceWidgetId, (value) => {
+      raceReady = value;
+    });
     syncFire();
   }
 }
@@ -216,8 +248,8 @@ function renderRoom(room: RoomView, code = roomCode): void {
   must<HTMLElement>("peers").textContent = room.peers === 1 ? "1 socket" : `${room.peers} sockets`;
   const expires = new Date(room.expiresAt);
   const unlock = room.aiUntil > Date.now() ? `AI replies unlocked until ${new Date(room.aiUntil).toLocaleTimeString()}.` : "AI replies are locked until you unlock them.";
-  must<HTMLElement>("room-hint").textContent = `Transcript is SQLite. Scratch is memory only. Room expires ${expires.toLocaleTimeString()} if it stays quiet. ${unlock}`;
-  must<HTMLElement>("unlock-note").textContent = unlock;
+  must<HTMLElement>("room-hint").textContent =
+    `Transcript is SQLite. Scratch is isolate memory. It also disappears by itself when the room hibernates after about 10 seconds with no messages. Simulate evict does the same on demand. Room expires ${expires.toLocaleTimeString()} if it stays quiet. ${unlock}`;
   const list = must<HTMLOListElement>("transcript");
   list.replaceChildren();
   if (!room.messages.length) {
@@ -239,12 +271,20 @@ function renderRoom(room: RoomView, code = roomCode): void {
   }
   list.scrollTop = list.scrollHeight;
   const scratch = must<HTMLTextAreaElement>("scratch");
-  if (document.activeElement !== scratch && scratch.value !== room.scratch) scratch.value = room.scratch;
+  if (document.activeElement !== scratch && scratch.value !== room.scratch) {
+    scratch.value = room.scratch;
+    lastScratchSent = room.scratch;
+  }
+  void mountUnlockWidget();
 }
 
 function applyEvent(event: ServerEvent): void {
   if (event.type === "error") {
     setStatus(event.message);
+    if (pendingSay) {
+      must<HTMLInputElement>("message").value = pendingSay;
+      pendingSay = "";
+    }
     return;
   }
   if (event.type === "peers") {
@@ -257,19 +297,49 @@ function applyEvent(event: ServerEvent): void {
     if (document.activeElement !== scratch) scratch.value = event.text;
     return;
   }
-  if (event.type === "hello" || event.type === "evicted" || event.type === "said") renderRoom(event.room);
+  if (event.type === "said") {
+    const nick = must<HTMLInputElement>("nick").value.trim() || "Guest";
+    if (pendingSay && event.human.name === nick && event.human.text === pendingSay) {
+      must<HTMLInputElement>("message").value = "";
+      pendingSay = "";
+    }
+    renderRoom(event.room);
+    return;
+  }
+  if (event.type === "hello" || event.type === "evicted") renderRoom(event.room);
+}
+
+function stopPing(): void {
+  if (pingTimer) window.clearInterval(pingTimer);
+  pingTimer = 0;
+}
+
+function startPing(ws: WebSocket): void {
+  stopPing();
+  pingTimer = window.setInterval(() => {
+    if (ws.readyState === WebSocket.OPEN) ws.send("ping");
+  }, PING_MS);
 }
 
 function connect(code: string): void {
+  window.clearTimeout(reconnectTimer);
+  reconnectTimer = 0;
   socket?.close();
+  wantSocket = true;
   const nick = must<HTMLInputElement>("nick").value.trim() || "Guest";
   const url = new URL(`${API_BASE}/api/rooms/${code}/socket`, location.href);
   url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
   url.searchParams.set("name", nick);
   const next = new WebSocket(url);
   socket = next;
+  next.addEventListener("open", () => {
+    reconnectAttempt = 0;
+    startPing(next);
+    if (statusEl.textContent.startsWith("Socket closed")) setStatus("");
+  });
   next.addEventListener("message", (ev) => {
     if (typeof ev.data !== "string") return;
+    if (ev.data === "pong") return;
     try {
       const parsed = JSON.parse(ev.data) as ServerEvent;
       if (parsed && typeof parsed === "object" && "type" in parsed) applyEvent(parsed);
@@ -277,12 +347,25 @@ function connect(code: string): void {
       setStatus("The room sent a message this page could not read.");
     }
   });
-  next.addEventListener("close", () => {
-    if (socket === next) setStatus("The socket closed. Join again if the room is still there.");
+  next.addEventListener("close", (ev) => {
+    stopPing();
+    if (socket !== next) return;
+    if (!wantSocket || !roomCode || !shouldReconnect(ev.code, reconnectAttempt, ev.reason)) {
+      wantSocket = false;
+      setStatus(reconnectStoppedMessage(ev.code, reconnectAttempt, ev.reason));
+      return;
+    }
+    const delay = Math.min(15_000, 500 * 2 ** reconnectAttempt);
+    reconnectAttempt += 1;
+    const reason = ev.code === 1008 ? "The socket closed after too many frames." : "The socket closed.";
+    setStatus(`${reason} Reconnecting in ${Math.max(1, Math.round(delay / 1000))}s…`);
+    window.clearTimeout(reconnectTimer);
+    reconnectTimer = window.setTimeout(() => connect(code), delay);
   });
 }
 
 async function openRoom(code: string): Promise<void> {
+  reconnectAttempt = 0;
   const view = await call<RoomResponse>(`/api/rooms/${code}`);
   roomCode = view.code;
   const url = new URL(location.href);
@@ -294,6 +377,7 @@ async function openRoom(code: string): Promise<void> {
 
 async function createRoom(): Promise<void> {
   setStatus("");
+  reconnectAttempt = 0;
   try {
     const view = await call<RoomResponse>("/api/rooms", { method: "POST", body: {} });
     roomCode = view.code;
@@ -313,8 +397,8 @@ async function sendMessage(event: Event): Promise<void> {
   const text = input.value.trim();
   if (!text || !roomCode) return;
   const ask = must<HTMLInputElement>("ask").checked;
-  input.value = "";
   if (socket && socket.readyState === WebSocket.OPEN) {
+    pendingSay = text;
     socket.send(JSON.stringify({ type: "say", text, ask }));
     return;
   }
@@ -323,6 +407,8 @@ async function sendMessage(event: Event): Promise<void> {
       method: "POST",
       body: { name: must<HTMLInputElement>("nick").value, text, ask },
     });
+    input.value = "";
+    pendingSay = "";
     renderRoom(said.room);
   } catch (err) {
     setStatus(err instanceof Error ? err.message : "Could not send.");
@@ -333,13 +419,15 @@ async function unlock(): Promise<void> {
   if (!roomCode) return;
   setStatus("");
   try {
-    const view = await call<RoomResponse>(`/api/rooms/${roomCode}/unlock`, { method: "POST", body: { token: token() } });
-    window.turnstile?.reset(widgetId);
-    tokenReady = false;
-    syncFire();
+    const view = await call<RoomResponse>(`/api/rooms/${roomCode}/unlock`, { method: "POST", body: { token: tokenOf(unlockWidgetId) } });
     renderRoom(view, view.code);
   } catch (err) {
     setStatus(err instanceof Error ? err.message : "Could not unlock AI.");
+  } finally {
+    resetWidget(unlockWidgetId, (value) => {
+      unlockReady = value;
+    });
+    syncFire();
   }
 }
 
@@ -355,23 +443,30 @@ async function evict(): Promise<void> {
   }
 }
 
+function flushScratch(): void {
+  if (!roomCode) return;
+  const text = must<HTMLTextAreaElement>("scratch").value;
+  if (text === lastScratchSent) return;
+  lastScratchSent = text;
+  lastScratchAt = Date.now();
+  scratchFromUs = true;
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ type: "scratch", text }));
+    window.setTimeout(() => {
+      scratchFromUs = false;
+    }, 400);
+    return;
+  }
+  void call(`/api/rooms/${roomCode}/scratch`, { method: "POST", body: { text } }).catch((err: unknown) => {
+    setStatus(err instanceof Error ? err.message : "Could not save the scratch note.");
+  });
+}
+
 function scheduleScratch(): void {
+  const text = must<HTMLTextAreaElement>("scratch").value;
+  if (text === lastScratchSent) return;
   window.clearTimeout(scratchTimer);
-  scratchTimer = window.setTimeout(() => {
-    if (!roomCode) return;
-    const text = must<HTMLTextAreaElement>("scratch").value;
-    scratchFromUs = true;
-    if (socket && socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ type: "scratch", text }));
-      window.setTimeout(() => {
-        scratchFromUs = false;
-      }, 400);
-      return;
-    }
-    void call(`/api/rooms/${roomCode}/scratch`, { method: "POST", body: { text } }).catch((err: unknown) => {
-      setStatus(err instanceof Error ? err.message : "Could not save the scratch note.");
-    });
-  }, 180);
+  scratchTimer = window.setTimeout(flushScratch, nextScratchWait(lastScratchAt, Date.now()));
 }
 
 function bind(): void {
@@ -379,7 +474,7 @@ function bind(): void {
     button.addEventListener("click", () => {
       n = Number(button.dataset.n);
       for (const peer of document.querySelectorAll(".n")) peer.classList.toggle("is-on", peer === button);
-      must<HTMLElement>("n-label").textContent = `${n} updates`;
+      must<HTMLElement>("n-label").textContent = n === 4 ? "A few updates" : `${n} updates`;
     });
   }
   fireBtn.addEventListener("click", () => void fire());
@@ -405,40 +500,59 @@ function bind(): void {
   must<HTMLTextAreaElement>("scratch").addEventListener("input", scheduleScratch);
 }
 
+function turnstileCallbacks(kind: "race" | "unlock"): {
+  callback: (token: string) => void;
+  "expired-callback": () => void;
+  "error-callback": () => void;
+} {
+  const setReady = (value: boolean) => {
+    if (kind === "race") raceReady = value;
+    else unlockReady = value;
+    syncFire();
+  };
+  return {
+    callback: () => setReady(true),
+    "expired-callback": () => setReady(false),
+    "error-callback": () => {
+      setReady(false);
+      setStatus("Turnstile failed to load.");
+    },
+  };
+}
+
+async function mountWidget(hostId: string, action: string, kind: "race" | "unlock"): Promise<string> {
+  const api = await waitTurnstile();
+  const host = document.getElementById(hostId);
+  const note = must<HTMLElement>("ai-note");
+  if (!api || !host || !siteKey) {
+    note.textContent = "The Turnstile script did not load, so AI runs stay disabled.";
+    return "";
+  }
+  try {
+    return api.render(host, {
+      sitekey: siteKey,
+      action,
+      ...turnstileCallbacks(kind),
+    });
+  } catch (err) {
+    note.textContent = "The Turnstile script did not load, so AI runs stay disabled.";
+    console.warn(JSON.stringify({ event: "turnstile_render_failed", error: String(err) }));
+    return "";
+  }
+}
+
+async function mountUnlockWidget(): Promise<void> {
+  if (unlockWidgetId || !aiReady || !siteKey) return;
+  unlockWidgetId = await mountWidget("unlock-widget", TURNSTILE_UNLOCK, "unlock");
+}
+
 async function main(): Promise<void> {
   bind();
   if (!tableBody) return;
   const cfg = await call<LabConfig>("/api/config");
   const note = must<HTMLElement>("ai-note");
+  siteKey = cfg.siteKey ?? "";
   aiReady = cfg.ai === "ready" && Boolean(cfg.siteKey);
-  if (!aiReady) {
-    note.textContent = "AI runs are off until the owner sets a real Turnstile site key and TURNSTILE_SECRET. Chat between people still works.";
-    syncFire();
-  } else {
-    note.textContent = `Turnstile gates each race and each AI unlock. Model ${cfg.model}. Bars include a short pad when the model returns in under 300 ms.`;
-    const api = await waitTurnstile();
-    const host = document.getElementById("turnstile");
-    if (!api || !host || !cfg.siteKey) {
-      note.textContent = "The Turnstile script did not load, so AI runs stay disabled.";
-    } else {
-      widgetId = api.render(host, {
-        sitekey: cfg.siteKey,
-        callback: () => {
-          tokenReady = true;
-          syncFire();
-        },
-        "expired-callback": () => {
-          tokenReady = false;
-          syncFire();
-        },
-        "error-callback": () => {
-          tokenReady = false;
-          syncFire();
-          setStatus("Turnstile failed to load.");
-        },
-      });
-    }
-  }
   const existing = new URL(location.href).searchParams.get("room");
   if (existing) {
     must<HTMLInputElement>("code").value = existing;
@@ -448,6 +562,14 @@ async function main(): Promise<void> {
       setStatus(err instanceof Error ? err.message : "That room is gone.");
     }
   }
+  if (!aiReady) {
+    note.textContent = "AI runs are off until the owner sets a real Turnstile site key and TURNSTILE_SECRET. Chat between people still works.";
+    syncFire();
+    return;
+  }
+  note.textContent = `Turnstile gates each race and each AI unlock. Model ${cfg.model}. Bars include a short pad when the model returns in under 300 ms.`;
+  raceWidgetId = await mountWidget("turnstile-widget", TURNSTILE_RACE, "race");
+  if (roomCode) await mountUnlockWidget();
 }
 
 void main().catch((err: unknown) => setStatus(err instanceof Error ? err.message : "The page failed to start."));

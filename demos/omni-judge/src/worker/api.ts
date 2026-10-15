@@ -22,6 +22,7 @@ import {
 import { mediaBase64 } from "../shared/clef";
 import { runOmni } from "./judge";
 import { budgetDecision, hashIpKey, networkKey } from "./policy";
+import { parseByteRange } from "../shared/range";
 import { environmentName, isLocalRequest, isTestSiteKey, resolveTurnstileSecret, verifyTurnstile } from "./turnstile";
 
 export class HttpError extends Error {
@@ -236,33 +237,6 @@ function fileHeaders(contentType: string, expiresAt: number, now: number): Heade
 
 function isStoredBody(object: R2Object | R2ObjectBody): object is R2ObjectBody {
   return "body" in object && object.body != null;
-}
-
-type ParsedRange =
-  | { kind: "none" }
-  | { kind: "bad" }
-  | { kind: "span"; offset: number; length: number }
-  | { kind: "suffix"; suffix: number };
-
-function parseByteRange(header: string | null, size: number): ParsedRange {
-  if (header === null || header === "") return { kind: "none" };
-  const match = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
-  if (!match || size < 0) return { kind: "bad" };
-  const startRaw = match[1] ?? "";
-  const endRaw = match[2] ?? "";
-  if (startRaw === "" && endRaw === "") return { kind: "bad" };
-  if (startRaw === "") {
-    const suffix = Number(endRaw);
-    if (!Number.isSafeInteger(suffix) || suffix <= 0 || size === 0) return { kind: "bad" };
-    return { kind: "suffix", suffix };
-  }
-  const start = Number(startRaw);
-  if (!Number.isSafeInteger(start) || start < 0 || start >= size) return { kind: "bad" };
-  if (endRaw === "") return { kind: "span", offset: start, length: size - start };
-  const end = Number(endRaw);
-  if (!Number.isSafeInteger(end) || end < start) return { kind: "bad" };
-  const last = Math.min(end, size - 1);
-  return { kind: "span", offset: start, length: last - start + 1 };
 }
 
 function etagMatches(httpEtag: string, header: string): boolean {
@@ -482,7 +456,7 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
 
     const media = { kind: sniffed.kind, contentType: sniffed.contentType, bytes, durationMs: sniffed.durationMs };
     mediaBase64(media);
-    const omni = await runOmni(env, media, validated.questions, omniId);
+    const omni = await runOmni(env, media, validated.questions, omniId, sampleId);
     if (!omni.ok) {
       await failJudgment(env, omniId, omni.message);
     } else {

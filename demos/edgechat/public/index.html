@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark light" />
   <meta name="theme-color" content="#0e0e11" />
   <title>EdgeChat · Tech Demos · theserverless.dev</title>
-  <meta name="description" content="Mini team chat on Cloudflare Workers: Durable Object rooms, D1 history, KV display names, and R2 uploads." />
+  <meta name="description" content="Mini team chat on Cloudflare Workers: Durable Object rooms that sleep between messages, D1 history, KV display names, and R2 uploads." />
   <meta property="og:title" content="EdgeChat slice" />
   <meta property="og:description" content="Realtime rooms on Durable Objects, with D1 history, KV sessions, and R2 files — a small original demo inspired by Edgechat." />
   <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
@@ -14,6 +14,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Hanken+Grotesk:wght@400..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <script src="./assets/theme.js"></script>
+  <script src="./assets/turnstile-onload.js"></script>
   <link rel="stylesheet" href="./assets/chat.css" />
 </head>
 <body>
@@ -43,7 +44,7 @@
     </div>
   </header>
 
-  <p class="shows shows--bar"><span class="shows__k">What this shows</span> One hibernating ChatRoom Durable Object fans out the room. D1 keeps the transcript, KV the name, R2 the file.</p>
+  <p class="shows shows--bar"><span class="shows__k">What this shows</span> One ChatRoom Durable Object sleeps between messages while visitors stay connected. D1 keeps the transcript, KV the name, R2 the file.</p>
 
   <div class="strip" id="strip" role="status">
     <span class="strip__dot"></span>
@@ -81,12 +82,13 @@
           <input id="file" type="file" />
           <span class="btn" id="attach-label">Attach</span>
         </label>
-        <span class="filechip" id="filechip" hidden></span>
+        <button class="filechip" id="filechip" type="button" hidden></button>
         <label class="sr-only" for="draft">Message</label>
         <input id="draft" type="text" maxlength="2000" placeholder="Message this room…" autocomplete="off" />
         <button class="btn btn-primary" type="submit" id="send">Send</button>
+        <div id="turnstile" class="turnstile" hidden></div>
+        <p class="hint" id="hint" role="status"></p>
       </form>
-      <p class="hint" id="hint" role="status"></p>
     </section>
   </main>
 
@@ -98,6 +100,7 @@
     </p>
   </footer>
 
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit&onload=onEdgechatTurnstileLoad" defer></script>
   <script type="module" src="./assets/app.js"></script>
 </body>
 </html>

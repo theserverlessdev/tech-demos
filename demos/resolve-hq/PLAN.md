@@ -1,91 +1,65 @@
-# Plan — resolve-hq
+# Plan — resolve-hq (audit remediations)
 
 ## Goal
 
-A visitor opens a shared support inbox on Workers and can list tickets, read a thread, attach a file, simulate inbound customer mail through a Queue, and draft a reply with Workers AI.
+Close every finding in the resolve-hq audit: the Workers AI draft is same-origin, Turnstile-gated, session-bound, rate-limited, and budgeted; uploads are not anonymous permanent hosting on the hub origin; the draft path is a real model call with an honest label; and each visitor’s inbox writes stay in their own sandbox.
 
-This is a **fresh small slice**, not a vendor of [mirza-rizvi/ResolveHQ](https://github.com/mirza-rizvi/ResolveHQ) (`dev`).
+This is still a **small hosted slice**, not a vendor of [mirza-rizvi/ResolveHQ](https://github.com/mirza-rizvi/ResolveHQ).
 
-## Research (upstream `dev`)
+## Out of scope
 
-Upstream is already **one Worker** (Hono + React SPA). It is not a multi-Worker or Workers-for-Platforms app.
+- New GitHub repo, deploy, or Cloudflare API changes (no new D1 / R2 / Queue / Turnstile widget from this agent).
+- Workers for Platforms, live Email Routing, Resend, OpenAI.
+- Rate-limit namespace ids outside **7530–7539** (existing `WRITE_LIMIT` 7331 stays).
 
-| Upstream | This slice |
-| --- | --- |
-| D1 (Drizzle: orgs, users, tickets, customers, mail jobs, FTS…) | D1 `tickets` + `messages` + `attachments` |
-| R2 `ATTACHMENTS` | Same binding name, one seeded file + upload |
-| Queues: inbound, outbound, maintenance + DLQs | **One** inbound producer/consumer (`tech-demos-resolve-hq-inbound`) |
-| Email Routing `email()` | Cut on day one |
-| `DEV_MAIL_MODE=capture` (mail without live routing) | `DEV_MAIL_MODE=queue` — HTTP **Simulate inbound** → `Queue.send` → consumer writes D1 |
-| Cron `*/5` (outbox, sessions, cleanup) | Cut |
-| RateLimit (auth + writes) | `WRITE_LIMIT` on inbound, draft, upload, patch |
-| `SESSION_PEPPER` secret | None — public demo inbox |
-| Optional `RESEND_*` outbound | Cut |
-| Optional `OPENAI_*` for drafts | **Workers AI** binding instead. No OpenAI secret for MVP. Fail soft if the model is down or the output is unusable. |
+## Blockers
 
-**Cut (do not port):** multi-org, invites, knowledge base, reports, automations, GDPR export/erasure, full Radix/Lato polish, WFP / dispatch namespaces.
+### B1 — Draft cost sink
 
-**Resource names** (sticky-monorepo collision avoidance): prefix `tech-demos-resolve-hq-*` (Worker, D1, R2, Queue). Bindings stay short (`DB`, `ATTACHMENTS`, `INBOUND`, `AI`).
+- `POST /api/session` (Turnstile `session`) mints an HMAC-signed `rhq_session` cookie.
+- `POST …/draft` requires same-origin (`Sec-Fetch-Site` or matching `Origin`), the session, a fresh Turnstile token (`draft`), `AI_LIMIT` (7531, 5/min), and a D1 daily budget (global + per-network).
+- Prompt bounds: subject ≤ 200 chars, last 4 messages × 1,500 chars.
+- `cf-connecting-ip` only (no `x-forwarded-for`).
+- Inbound and uploads also require same-origin + session + Turnstile (`write`).
 
-## Single-user MVP
+### B2 — File hosting
 
-- In:
-  - One Worker + static Graphite & Ember UI (LogoMark, Bricolage / Hanken).
-  - D1 tickets + messages (status, priority, assignee stub, timestamps). Seed 5 tickets.
-  - R2 attachment round-trip; seed one file on `#1042`.
-  - Queue inbound sim (`DEV_MAIL_MODE=queue`), not live Email Routing / Resend.
-  - Workers AI **Draft reply**; no OpenAI key. Fail soft to a stub draft in the composer.
-  - Three-pane UI: list | thread | composer. Mobile stacks.
-  - Hub registry + `/demos/resolve-hq`. `PLAN.md` / `README.md` / `CHANGELOG.md`.
-- Out: everything in the research “Cut” row, plus RFC 5322 threading, DLQs, outbound outbox.
+- Allowlist `text/plain`, `image/png`, `image/jpeg`, `application/pdf` (sniffed).
+- Serve as `application/octet-stream` unless allowlisted; always `attachment`, `nosniff`, `CSP default-src 'none'; sandbox`, `CORP: same-origin`.
+- 1 MB cap, early `Content-Length` reject.
+- Visitor-scoped keys; hourly cron deletes non-seed objects and rows older than 24 h.
 
-## Tasks
+### B3 — Real draft, labelled path
 
-1. D1 schema + seed; R2 seed object on first boot.
-2. HTTP API: tickets, replies, attachments, inbound enqueue, AI draft.
-3. Queue consumer creates or appends (`ticketId` / `[#number]`).
-4. Workers AI draft; catch and fall back.
-5. Vanilla TS UI, Bun bundle.
-6. Standalone Worker routes + hub fallback redirect.
-7. Smoke, deploy, screenshot, video, PR.
+- Keep `@cf/zai-org/glm-5.3-flash` with `reasoning_effort: "low"` and `max_completion_tokens` 2,000 (no deprecated `max_tokens`; `finish_reason=length` is unusable).
+- UI shows **Path: Workers AI · &lt;model&gt;** or **Path: stub fallback**.
+- Smoke prints a loud `WARN` when `source=fallback`. Local `wrangler.local.jsonc` has no AI binding so `bun run dev` does not need `wrangler login`. Live Workers AI screenshot is an owner step.
+
+## Should-fix
+
+- **S1** Per-visitor sandbox: inbound ids are minted on enqueue; consumer `INSERT OR IGNORE`; client waits on its own `messageId`; visitor tickets and visitor messages are invisible to other sessions.
+- **S2** Phone opens on the inbox; `data-view="thread"` is set only by user handlers.
+- **S3** Server caps + `overflow-wrap: anywhere` / `min-width: 0`.
+- **S4** Hourly cron (`23 * * * *`): drop stale visitor rows/objects, delete leftover `visitor_id IS NULL` non-seeds, prune `visitors`, restore seed fields including `updated_at`, sweep R2.
+- **S5** Validate inbound before `Queue.send`; consumer `ack()`s permanent junk.
+- **S6** Memoize `ensureSeed`; pause polling while the tab is hidden.
+- **S7** Honest copy: public original seed threads, private visitor writes (including on seeds), locked seed status/order, Turnstile, daily budget, local-dev stub.
+- **R1** `messages.visitor_id` (migration 0004); seed status/priority/assignee/`updated_at` locked.
+- **R2** `TURNSTILE_SITE_KEY` stays `REPLACE_ME` until the owner sets a widget. Seeds load without a session (read-only).
+- **R3** `#turnstile` and `#hint` sit under the status strip; errors and Turnstile scroll that bar into view, and the composer mirrors the hint.
+- **R4** A `session*` 401 remints once and retries.
+- **N1** Sweep deletes via subqueries (tickets last) and R2 batches of 1,000.
+- **N3** Queue wait timeout clears the waiting state so polling resumes.
+- **N4/N5** Seeds load before session mint; stale cookies fall back to public seeds.
+
+## Nits
+
+Malformed ids → 404; deep-link assets remap + 302; atomic/idempotent consumer; `Content-Length` first; greeting-tolerant draft validator; 44 px tap targets; poll busy/error guard; 390 px stills.
 
 ## Stack
 
-- **Workers + Static Assets**, `run_worker_first` for `/api`.
-- **D1 / R2 / Queues / Workers AI / RateLimit** — Paid-plan bindings already used in this repo.
-- **No Hono, no React, no Drizzle, no OpenAI, no Resend.**
+Workers + Static Assets, D1, R2, Queue, Workers AI, RateLimit (7331 + 7530–7533), Turnstile. Graphite & Ember. Bun.
 
-## Architecture
+## Owner steps (after merge)
 
-```
-browser ──HTTPS──> Worker
-                    ├─ /api/tickets* ──────────► D1
-                    ├─ attachments ────────────► D1 meta + R2
-                    ├─ POST /api/inbound ──────► Queue.send   (DEV_MAIL_MODE=queue)
-                    └─ POST …/draft ───────────► Workers AI (fail soft → stub)
-
-Queue consumer ──► create ticket or append message in D1
-```
-
-Worker `tech-demos-resolve-hq`:
-
-- `tech-demos.theserverless.dev/demos/resolve-hq*`
-- `resolve-hq.tech-demos.theserverless.dev/*`
-
-## Cost
-
-- D1/R2/Queue demo traffic is far below Paid included amounts.
-- Drafts cap `max_tokens` at 400; writes are rate-limited per IP.
-- No Containers, Browser Rendering, Vectorize, WFP.
-
-## Testing
-
-- `bun run typecheck`
-- `scripts/smoke.ts`: seed list, R2 round-trip, queue-created ticket, draft text (`source` workers-ai or fallback).
-- Browser screenshot + short video on the PR.
-
-## Deferred
-
-- `email()` on a throwaway zone (never touch apex MX on `theserverless.dev`).
-- Resend outbound, DLQs, `*/5` recovery cron.
-- Saved replies, FTS, ticket version conflicts, real auth.
+Listed in the PR: replace `REPLACE_ME` in `TURNSTILE_SITE_KEY`, `wrangler secret put` for `TURNSTILE_SECRET` and `SESSION_SECRET`, apply D1 migrations through `0004`, deploy. No new Cloudflare resources are created here.

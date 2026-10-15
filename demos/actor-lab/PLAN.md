@@ -75,7 +75,7 @@ flowchart TD
 
 Worker `tech-demos-actor-lab`:
 
-- `tech-demos.theserverless.dev/demos/actor-lab*`
+- `tech-demos.theserverless.dev/demos/actor-lab` and `tech-demos.theserverless.dev/demos/actor-lab/*`
 - `actor-lab.tech-demos.theserverless.dev/*`
 
 Per-visitor race actors are named by an `HttpOnly` cookie. Chat actors are named by a 6-character room code. Alarms delete actor rows after 6 hours idle.
@@ -83,15 +83,17 @@ Per-visitor race actors are named by an `HttpOnly` cookie. Chat actors are named
 ## Cost
 
 - Two Durable Objects per active visitor/room, SQLite writes of a counter and a short transcript.
-- Race N ≤ 6, `max_tokens` 8 on the race model call, chat replies capped, 30 race ops and 30 chat ops per minute per IP.
-- Turnstile in front of every race arm and every AI unlock.
+- Race N ≤ 6, `max_tokens` 8 on the race model call, chat replies capped.
+- `RACE_LIMIT` / `CHAT_LIMIT` / `AI_LIMIT` at 30/min per IP. GET `/api/race/result` and GET `/api/rooms/:code` are limited. WebSocket say uses `CHAT_LIMIT`. Scratch uses a per-socket cap (12/10s) and is not charged to `CHAT_LIMIT`. Model calls consume `AI_LIMIT`. More than 60 frames in 10s — scratch, junk, or say — closes the socket (1008).
+- Turnstile in front of every race arm (`race-arm`) and every AI unlock (`chat-unlock`).
 - No Containers, Browser Rendering, Vectorize, or Workers for Platforms.
 
 ## Testing
 
 - `bun run typecheck`
+- `bun test test/guards.test.ts`
 - `bun run dev` uses `wrangler.dev.jsonc` (no Workers AI binding) so it boots without a Cloudflare login. `bun run dev:ai` uses the real binding after `wrangler login`. Deploy uses `wrangler.jsonc`.
-- `scripts/smoke.ts` against `wrangler dev`: health, Turnstile rejection, interleaved loss, serialized counter, room say, websocket fan-out, scratch cleared on evict, messages kept.
+- `scripts/smoke.ts` against `wrangler dev`: health, Turnstile rejection, interleaved loss, serialized counter, room say, reserved name, websocket fan-out, 60-frame flood, junk/scratch floods close 1008, 45 rapid scratch without 1008, scratch cleared on evict, actor name still Actor after evict, minted-cookie 404, deep-path 404.
 - Browser pass of both modes, then chat, scratch, simulate evict. Screenshot and short video.
 
 ## Deferred
@@ -99,4 +101,4 @@ Per-visitor race actors are named by an `HttpOnly` cookie. Chat actors are named
 - Method-end transactions and rollback (upstream commits `@Persisted` when the call succeeds; once any method uses `@Interleave`, upstream also stops rolling back).
 - Generated typed clients and the Python SDK.
 - A platform eviction button. Simulate evict drops isolate fields and re-reads SQLite, which is what a real wake does.
-- Accounts, room admin, and durable rate-limit windows inside the actor (the in-memory chat window resets if the isolate dies; the binding still limits by IP).
+- Accounts and room admin. Per-room say windows persist in SQLite; IP limits still sit on the Worker bindings.
