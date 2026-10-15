@@ -135,17 +135,17 @@ export const demos: DemoEntry[] = [
     title: "EdgeChat",
     description: "A mini team chat. A message in one tab shows up in the other tabs in that room.",
     demonstrates:
-      "One ChatRoom Durable Object per room name fans out hibernating WebSockets. D1 keeps the transcript across refresh, KV stores the display name, and R2 holds an attachment the message can link to.",
+      "One ChatRoom Durable Object per room name fans out hibernating WebSockets. The object sleeps between messages while visitors stay connected. D1 keeps the last 80 messages across refresh, KV stores the display name, and R2 holds an attachment the message can link to.",
     capabilities: [
       "Join the same room in two tabs and watch a message arrive in both",
       "Refresh and still see the last 80 messages stored in D1",
       "Set a display name that is kept in KV",
-      "Attach a file; the message links to the R2 object, and images preview",
+      "Attach a file; the message links to the R2 object, and PNG/JPEG/GIF/WebP images preview",
     ],
     useCases: [
       "An incident channel where the transcript survives a refresh",
       "In-product comments with file drops",
-      "A support room that hibernates when nobody is connected",
+      "A support room that sleeps between messages while visitors stay connected",
     ],
     tags: ["durable-objects", "d1", "kv", "r2", "websockets"],
     kind: "standalone",

@@ -1,10 +1,8 @@
-const INLINE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+import { isInlineImageType } from "../shared/types";
+
+export { isInlineImageType };
 
 const FILE_CSP = "default-src 'none'; sandbox";
-
-export function isInlineImageType(contentType: string): boolean {
-  return INLINE_TYPES.has(contentType);
-}
 
 export function fileResponseHeaders(row: {
   content_type: string;
@@ -15,7 +13,7 @@ export function fileResponseHeaders(row: {
   const inline = isInlineImageType(row.content_type);
   headers.set("content-type", inline ? row.content_type : "application/octet-stream");
   headers.set("content-length", String(row.size));
-  headers.set("cache-control", "private, max-age=3600");
+  headers.set("cache-control", "public, max-age=31536000, immutable");
   const filename = row.filename.replaceAll('"', "");
   headers.set("content-disposition", `${inline ? "inline" : "attachment"}; filename="${filename}"`);
   headers.set("x-content-type-options", "nosniff");
