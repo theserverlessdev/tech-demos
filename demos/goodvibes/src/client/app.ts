@@ -463,17 +463,21 @@ async function waitForTurnstileToken(ms: number): Promise<boolean> {
   return Boolean(state.widget?.getResponse());
 }
 
+function deepJoinStopped(): boolean {
+  return !$("stage").hidden || state.deepJoin === "done";
+}
+
 async function tryDeepJoin(room: string): Promise<void> {
   if (state.deepJoin !== "idle" || !$("stage").hidden) return;
   state.deepJoin = "pending";
   try {
     for (let attempt = 0; attempt < DEEP_JOIN_MAX; attempt++) {
-      if (!$("stage").hidden || state.deepJoin === "done") return;
+      if (deepJoinStopped()) return;
       if (attempt > 0) {
         const delay = deepBackoffMs(attempt);
         setStatus(`Could not join that room. Retrying (${attempt + 1}/${DEEP_JOIN_MAX})…`, "warn");
         await sleep(delay);
-        if (!$("stage").hidden || state.deepJoin === "done") return;
+        if (deepJoinStopped()) return;
         const tokenReady = await waitForTurnstileToken(8_000);
         if (!tokenReady) continue;
       }
