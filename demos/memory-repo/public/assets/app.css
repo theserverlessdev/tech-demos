@@ -373,18 +373,20 @@ textarea, select { font-size: 16px; }
 
 @media (max-width: 900px) and (max-height: 500px) {
   .foot { display: none; }
-  body.is-open .strip { padding-block: 0.2rem; font-size: 0.78rem; }
+  body.is-open .strip { padding-block: 0.15rem; font-size: 0.78rem; }
   .pane.is-active,
   body.is-open .pane.is-active {
-    height: calc(100dvh - 5.6rem);
-    max-height: calc(100dvh - 5.6rem);
+    height: calc(100dvh - 5.2rem);
+    max-height: calc(100dvh - 5.2rem);
     min-height: 0;
+    padding-top: 0.45rem;
+    padding-bottom: 0.3rem;
   }
-  #pane-chat .pane__head { order: 0; flex: none; }
+  #pane-chat .pane__head { order: 0; flex: none; margin-bottom: 0.25rem; }
   #pane-chat .messages {
     order: 1;
-    flex: 1 1 auto;
-    min-height: 5.5rem;
+    flex: 1 1 0;
+    min-height: 8rem;
     overflow: auto;
   }
   #pane-chat .chips {
@@ -392,16 +394,21 @@ textarea, select { font-size: 16px; }
     flex: none;
     flex-wrap: nowrap;
     overflow-x: auto;
-    margin: 0.3rem 0;
+    margin: 0.2rem 0;
   }
-  #pane-chat .chips .chip { flex: none; white-space: nowrap; }
+  #pane-chat .chips .chip {
+    flex: none;
+    white-space: nowrap;
+    min-height: 2.2rem;
+    padding: 0.2rem 0.65rem;
+  }
   #pane-chat .composer {
     order: 3;
     position: static;
     top: auto;
     bottom: auto;
     z-index: auto;
-    padding-top: 0.15rem;
+    padding-top: 0.1rem;
     background: var(--bg);
   }
   #pane-chat .hint {
@@ -414,7 +421,7 @@ textarea, select { font-size: 16px; }
   }
   #pane-chat .hint:empty { display: none; }
   #pane-chat textarea { min-height: var(--tap); height: var(--tap); resize: none; }
-  .hint-action { width: auto; margin-top: 0; min-height: var(--tap); }
+  .hint-action { width: auto; margin-top: 0; min-height: 2.2rem; padding: 0.2rem 0.65rem; }
   .intro { padding-top: 0.45rem; padding-bottom: 0; }
   .intro ul { margin-top: 0.2rem; }
 }
