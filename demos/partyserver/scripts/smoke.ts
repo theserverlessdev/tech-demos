@@ -370,6 +370,7 @@ async function probeJunkPath(
 ): Promise<void> {
   const pk = label.replace(/[^a-z0-9]/g, "").slice(0, 10) || "junk";
   const strokeId = `ok${pk}xx`.slice(0, 8);
+  const aheadOnly = label === "skip-ahead";
   if (frame) {
     check(`${label} frame is under the frame cap`, frame.byteLength <= MAX_FRAME_BYTES, frame.byteLength);
   }
@@ -384,37 +385,54 @@ async function probeJunkPath(
   } else if (frame) {
     ws.send(frame);
   }
-  const code = await Promise.race([closed, sleep(4000).then(() => 0)]);
-  check(`${label} closes the socket`, code === CLOSE_FRAME, code);
+  const code = await Promise.race([closed, sleep(aheadOnly ? 800 : 4000).then(() => -1)]);
+  if (aheadOnly) {
+    check(`${label} does not fatal-close`, code !== CLOSE_FRAME, code);
+  } else {
+    check(`${label} closes the socket`, code === CLOSE_FRAME, code);
+  }
   try {
     ws.close();
   } catch {
     /* already closed */
   }
   await sleep(400);
+  const afterAttack = await call(`/api/rooms/${roomId}`);
+  const afterAttackMeta = afterAttack.data as RoomStatus | null;
+  check(`${label}: board is not full`, afterAttackMeta?.full === false, afterAttackMeta);
   check(
     `${label}: existing ink kept`,
     keptInk.length > 0 && keptInk.every((key) => observer.getMap("strokes").has(key)),
   );
   check(
     `${label}: junk keys did not land`,
-    ![...observer.getMap("strokes").keys()].some((key) => key.length > 16),
+    ![...observer.getMap("strokes").keys()].some((key) => key.length > 16 || key.startsWith("sk")),
   );
-  observer.getMap("strokes").set(
+
+  const writerDoc = new Y.Doc();
+  const writer = new YProvider(host, roomId, writerDoc, { party: PARTY, disableBc: true });
+  await waitFor(() => writer.wsconnected, 8000);
+  writerDoc.getMap("strokes").set(
     strokeId,
     JSON.stringify({ id: strokeId, color: "#c2410c", size: 6, points: [50, 50, 90, 90], client: "smokecli" }),
   );
   const landed = await waitFor(() => observer.getMap("strokes").has(strokeId), 8000);
   check(`${label}: new stroke still syncs`, landed);
+  writer.disconnect();
   await sleep(800);
+
+  const reloadDoc = new Y.Doc();
+  const reload = new YProvider(host, roomId, reloadDoc, { party: PARTY, disableBc: true });
+  const reloaded = await waitFor(() => reloadDoc.getMap("strokes").has(strokeId), 8000);
+  check(`${label}: stroke survived a real reload`, reloaded);
   const status = await call(`/api/rooms/${roomId}`);
   const meta = status.data as RoomStatus | null;
-  check(`${label}: board is not full`, meta?.full === false, meta);
   check(
     `${label}: stored size stays small after reload`,
     (meta?.docBytes ?? MAX_DOC_BYTES) < beforeBytes + 24_000 && (meta?.docBytes ?? MAX_DOC_BYTES) < MAX_DOC_BYTES,
     { beforeBytes, docBytes: meta?.docBytes },
   );
+  reload.disconnect();
 }
 
 function openSocket(url: string): Promise<WebSocket> {

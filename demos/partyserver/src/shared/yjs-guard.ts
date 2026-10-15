@@ -57,6 +57,27 @@ export function extractSyncUpdate(message: string | ArrayBuffer | ArrayBufferVie
   }
 }
 
+function writeVarUint(n: number): Uint8Array {
+  const bytes: number[] = [];
+  let value = n;
+  while (value > 127) {
+    bytes.push((value & 127) | 128);
+    value = Math.floor(value / 128);
+  }
+  bytes.push(value);
+  return Uint8Array.from(bytes);
+}
+
+function concatBytes(...parts: Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(parts.reduce((n, part) => n + part.byteLength, 0));
+  let offset = 0;
+  for (const part of parts) {
+    out.set(part, offset);
+    offset += part.byteLength;
+  }
+  return out;
+}
+
 function decodeStructs(update: Uint8Array): YStruct[] {
   const decoded = Y.decodeUpdate(update) as { structs: YStruct[] };
   return decoded.structs;
@@ -115,22 +136,27 @@ export function dropPendingUpdates(doc: Y.Doc): void {
   store.pendingDs = null;
 }
 
-/**
- * True for a sync step-2 or update frame that would poison the room.
- * Awareness and sync step 1 are left alone.
- */
-export function frameShouldReject(doc: Y.Doc, message: string | ArrayBuffer | ArrayBufferView): boolean {
-  const update = extractSyncUpdate(message);
-  if (!update) return false;
-  try {
-    if (updateSkipsAhead(doc, update)) return true;
-    return updateCarriesJunk(update);
-  } catch {
-    return true;
-  }
+/** y-protocols sync step 1: ask the peer to send everything this document is missing. */
+export function encodeSyncStep1(doc: Y.Doc): Uint8Array {
+  const sv = Y.encodeStateVector(doc);
+  return concatBytes(writeVarUint(MESSAGE_SYNC), writeVarUint(0), writeVarUint(sv.byteLength), sv);
 }
 
-/** @deprecated alias used by older tests; inspects against an empty document. */
-export function frameCarriesJunk(message: string | ArrayBuffer | ArrayBufferView): boolean {
-  return frameShouldReject(new Y.Doc(), message);
+export type FrameVerdict = "ok" | "junk" | "ahead";
+
+/**
+ * Classify a sync step-2 or update frame. Awareness and sync step 1 are `ok`.
+ * Junk (bad keys, list items, foreign roots) is distinct from clock gaps so a
+ * reconnecting client is not locked out with a fatal close.
+ */
+export function inspectSyncFrame(doc: Y.Doc, message: string | ArrayBuffer | ArrayBufferView): FrameVerdict {
+  const update = extractSyncUpdate(message);
+  if (!update) return "ok";
+  try {
+    if (updateCarriesJunk(update)) return "junk";
+    if (updateSkipsAhead(doc, update)) return "ahead";
+    return "ok";
+  } catch {
+    return "junk";
+  }
 }

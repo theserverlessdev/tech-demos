@@ -18,7 +18,7 @@ import {
   parseStroke,
   type RoomStatus,
 } from "../shared/protocol";
-import { dropPendingUpdates, frameShouldReject } from "../shared/yjs-guard";
+import { dropPendingUpdates, encodeSyncStep1, inspectSyncFrame } from "../shared/yjs-guard";
 
 type RoomMeta = {
   id: string;
@@ -103,12 +103,22 @@ export class BoardRoom extends YServer<Env> {
       connection.close(CLOSE_RATE, "slow down");
       return;
     }
-    if (frameShouldReject(this.document, message)) {
+    const verdict = inspectSyncFrame(this.document, message);
+    if (verdict === "junk") {
       connection.close(CLOSE_FRAME, "bad update");
+      return;
+    }
+    if (verdict === "ahead") {
+      try {
+        connection.send(encodeSyncStep1(this.document));
+      } catch {
+        /* attachment may already be closing */
+      }
       return;
     }
     await super.onMessage(connection, message);
     dropPendingUpdates(this.document);
+    this.#syncCap(Y.encodeStateAsUpdate(this.document).byteLength);
   }
 
   override async onClose(connection: Connection, code: number, reason: string, wasClean: boolean): Promise<void> {

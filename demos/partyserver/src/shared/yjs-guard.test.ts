@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import * as Y from "yjs";
 import {
   extractSyncUpdate,
-  frameShouldReject,
+  inspectSyncFrame,
   updateCarriesJunk,
   updateSkipsAhead,
 } from "./yjs-guard";
@@ -69,20 +69,20 @@ test("extractSyncUpdate reads sync step 2", () => {
   const extracted = extractSyncUpdate(wrapSync(update, 1));
   expect(extracted).not.toBeNull();
   expect(updateCarriesJunk(extracted!)).toBe(true);
-  expect(frameShouldReject(new Y.Doc(), wrapSync(update, 1))).toBe(true);
+  expect(inspectSyncFrame(new Y.Doc(), wrapSync(update, 1))).toBe("junk");
 });
 
 test("extractSyncUpdate ignores awareness and sync step 1", () => {
   expect(extractSyncUpdate(concatBytes(varUint(1), varUint(0)))).toBeNull();
   expect(extractSyncUpdate(concatBytes(varUint(0), varUint(0), varUint(0)))).toBeNull();
-  expect(frameShouldReject(new Y.Doc(), "not-binary")).toBe(false);
+  expect(inspectSyncFrame(new Y.Doc(), "not-binary")).toBe("ok");
 });
 
 test("updateCarriesJunk rejects 1400-character keys", () => {
   const update = junkKeyUpdate();
   expect(update.byteLength).toBeGreaterThan(120_000);
   expect(updateCarriesJunk(update)).toBe(true);
-  expect(frameShouldReject(new Y.Doc(), wrapSync(update))).toBe(true);
+  expect(inspectSyncFrame(new Y.Doc(), wrapSync(update))).toBe("junk");
 });
 
 test("follow-on junk keys are visible without applying", () => {
@@ -102,7 +102,7 @@ test("follow-on junk keys are visible without applying", () => {
   Y.applyUpdate(room, first);
   expect(updateSkipsAhead(room, follow)).toBe(false);
   expect(updateCarriesJunk(follow)).toBe(true);
-  expect(frameShouldReject(room, wrapSync(follow))).toBe(true);
+  expect(inspectSyncFrame(room, wrapSync(follow))).toBe("junk");
   room.destroy();
 });
 
@@ -123,10 +123,10 @@ test("updateCarriesJunk rejects a foreign root", () => {
 });
 
 test("a valid stroke frame is not junk", () => {
-  expect(frameShouldReject(new Y.Doc(), wrapSync(validStrokeUpdate()))).toBe(false);
+  expect(inspectSyncFrame(new Y.Doc(), wrapSync(validStrokeUpdate()))).toBe("ok");
 });
 
-test("an update that skips ahead is rejected", () => {
+test("an update that skips ahead is ahead, not junk", () => {
   const doc = new Y.Doc();
   doc.clientID = 7;
   doc.getMap("strokes").set("skipaa", validStroke("skipaa"));
@@ -137,6 +137,7 @@ test("an update that skips ahead is rejected", () => {
 
   const room = new Y.Doc();
   expect(updateSkipsAhead(room, skip)).toBe(true);
-  expect(frameShouldReject(room, wrapSync(skip))).toBe(true);
+  expect(updateCarriesJunk(skip)).toBe(false);
+  expect(inspectSyncFrame(room, wrapSync(skip))).toBe("ahead");
   room.destroy();
 });
