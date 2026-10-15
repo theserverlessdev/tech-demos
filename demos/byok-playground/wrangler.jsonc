@@ -15,7 +15,7 @@
     {
       "binding": "DB",
       "database_name": "tech-demos-byok-playground",
-      "database_id": "00000000-0000-4000-8000-000000007461",
+      "database_id": "0593592b-fe69-419e-8fff-82a3725a9ee6",
       "migrations_dir": "migrations"
     }
   ],
@@ -35,7 +35,7 @@
     // and allow http://localhost to the mock OpenAI server.
     "ENVIRONMENT": "",
     // Replace after creating the widget. Until then the proxy fails closed off localhost.
-    "TURNSTILE_SITE_KEY": "REPLACE_ME"
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFXRvJJNv6vLYFJL"
   },
   "secrets": { "required": ["TURNSTILE_SECRET", "IP_HASH_SECRET", "SESSION_SECRET"] },
   "routes": [

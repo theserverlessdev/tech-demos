@@ -84,14 +84,7 @@ const goodvibesFallbackSource = standalone("goodvibes");
 
 // byok-playground is a standalone Worker (D1 budget, Workers AI, Turnstile). Same pattern as resolve-hq:
 // the zone route wins, and this source only redirects if that route is missing.
-const byokPlaygroundFallbackSource = `export default {
-  fetch(request) {
-    const url = new URL(request.url);
-    const rest = url.pathname.replace(/^\\/demos\\/byok-playground/, "") || "/";
-    return Response.redirect("https://byok-playground.tech-demos.theserverless.dev" + rest + url.search, 308);
-  },
-};
-`;
+const byokPlaygroundFallbackSource = standalone("byok-playground");
 
 export const demos: DemoEntry[] = [
   {
@@ -112,6 +105,7 @@ export const demos: DemoEntry[] = [
       "An eval harness that records which capabilities an endpoint actually implements",
     ],
     tags: ["ssrf", "turnstile", "d1", "workers-ai", "byok"],
+    kind: "standalone",
     source: byokPlaygroundFallbackSource,
   },
   {
