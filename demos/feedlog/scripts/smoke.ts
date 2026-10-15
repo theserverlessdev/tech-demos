@@ -187,6 +187,22 @@ const second = await call<{ post: Post }>("/api/posts", {
 });
 check("create still accepts a fresh Turnstile token", second.status === 201 && Boolean(second.data?.post.id), second.status);
 
+const textForm = new FormData();
+textForm.set("title", "Smoke text file");
+textForm.set("body", "A text file must be rejected.");
+textForm.set("turnstileToken", dummy);
+textForm.set("image", new File([new TextEncoder().encode("hello")], "note.txt", { type: "text/plain" }));
+const text = await call("/api/posts", { method: "POST", form: textForm });
+check("non-image upload is rejected", text.status === 415, text.status);
+
+const fake = new FormData();
+fake.set("title", "Smoke fake png");
+fake.set("body", "Declared PNG, text bytes.");
+fake.set("turnstileToken", dummy);
+fake.set("image", new File([new TextEncoder().encode("not a png")], "fake.png", { type: "image/png" }));
+const fakeRes = await call("/api/posts", { method: "POST", form: fake });
+check("mismatched image bytes are rejected", fakeRes.status === 415, fakeRes.status);
+
 const form = new FormData();
 form.set("title", "Smoke image post");
 form.set("body", "A one pixel PNG should land in R2 and stay hidden.");
@@ -214,22 +230,6 @@ const fourth = await call("/api/posts", {
   body: { title: "Fourth live post", body: "This browser already has three.", turnstileToken: dummy },
 });
 check("a fourth live post from the same visitor is rejected", fourth.status === 409, fourth.status);
-
-const textForm = new FormData();
-textForm.set("title", "Smoke text file");
-textForm.set("body", "A text file must be rejected.");
-textForm.set("turnstileToken", dummy);
-textForm.set("image", new File([new TextEncoder().encode("hello")], "note.txt", { type: "text/plain" }));
-const text = await call("/api/posts", { method: "POST", form: textForm });
-check("non-image upload is rejected", text.status === 415, text.status);
-
-const fake = new FormData();
-fake.set("title", "Smoke fake png");
-fake.set("body", "Declared PNG, text bytes.");
-fake.set("turnstileToken", dummy);
-fake.set("image", new File([new TextEncoder().encode("not a png")], "fake.png", { type: "image/png" }));
-const fakeRes = await call("/api/posts", { method: "POST", form: fake });
-check("mismatched image bytes are rejected", fakeRes.status === 415, fakeRes.status);
 
 const moved = await call<{ post: Post }>("/api/posts/post_csv_export", { method: "PATCH", admin: true, body: { status: "planned" } });
 check("admin token can set a status", moved.status === 200 && moved.data?.post.status === "planned", moved.data?.post.status);
