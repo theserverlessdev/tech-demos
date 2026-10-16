@@ -14,14 +14,14 @@
     {
       "binding": "DB",
       "database_name": "tech-demos-melody-auth",
-      "database_id": "00000000-0000-4000-8000-000000007471",
+      "database_id": "e522863a-1932-4955-99d7-18a13014c631",
       "migrations_dir": "migrations"
     }
   ],
   "kv_namespaces": [
     {
       "binding": "KEYS",
-      "id": "00000000000000000000000000007471"
+      "id": "24dc62b3e8d94d139a8c5d63fdca1a1b"
     }
   ],
   // 7481 authorize POST, 7482 token, 7483 admin, 7484 userinfo/logout, 7485 authorize GET.
@@ -39,7 +39,7 @@
     "ENVIRONMENT": "",
     // PLACEHOLDER — owner must mint a dedicated Turnstile widget for
     // melody-auth.tech-demos.theserverless.dev. Do not reuse another demo's live key.
-    "TURNSTILE_SITE_KEY": "REPLACE_ME_MINT_A_DEDICATED_WIDGET"
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFYQUTxFgredOxQl"
   },
   "secrets": { "required": ["TURNSTILE_SECRET", "AUTH_PRIVATE_JWK"] },
   "triggers": { "crons": ["*/15 * * * *"] },
