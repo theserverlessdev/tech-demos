@@ -1,12 +1,12 @@
 import { HttpError } from "./errors";
-import { importSigningKey, parsePrivateJwk, publicJwkFromPrivate, type EcPrivateJwk } from "./jwt";
+import { importSigningKey, parsePrivateJwk, publicJwkFromPrivate, type EcPrivateJwk, type PublicJwk } from "./jwt";
 
 const KV_KEY = "jwks:current";
 
 export type SigningContext = {
   kid: string;
   privateJwk: EcPrivateJwk;
-  publicJwk: JsonWebKey;
+  publicJwk: PublicJwk;
   key: CryptoKey;
 };
 
@@ -20,7 +20,7 @@ export async function signingContext(env: Env): Promise<SigningContext> {
     throw new HttpError(503, "misconfigured", "The server failed. Try again.");
   }
   const publicJwk = publicJwkFromPrivate(privateJwk);
-  const kid = typeof publicJwk.kid === "string" ? publicJwk.kid : "melody-1";
+  const kid = publicJwk.kid;
   const cached = await env.KEYS.get(KV_KEY, "json");
   if (!cached || JSON.stringify(cached) !== JSON.stringify(publicJwk)) {
     await env.KEYS.put(KV_KEY, JSON.stringify(publicJwk));
@@ -28,7 +28,7 @@ export async function signingContext(env: Env): Promise<SigningContext> {
   return { kid, privateJwk, publicJwk, key: await importSigningKey(privateJwk) };
 }
 
-export async function jwksDocument(env: Env): Promise<{ keys: JsonWebKey[] }> {
+export async function jwksDocument(env: Env): Promise<{ keys: PublicJwk[] }> {
   const ctx = await signingContext(env);
   return { keys: [ctx.publicJwk] };
 }

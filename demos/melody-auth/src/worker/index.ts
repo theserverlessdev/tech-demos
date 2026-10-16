@@ -52,7 +52,7 @@ async function serveAsset(request: Request, env: Env, path: string): Promise<Res
   const res = await env.ASSETS.fetch(new Request(assetUrl, { method: request.method, headers: request.headers }));
   const headers = new Headers(res.headers);
   headers.set("x-content-type-options", "nosniff");
-  headers.set("referrer-policy", "no-referrer");
+  headers.set("referrer-policy", "same-origin");
   if ((headers.get("content-type") ?? "").startsWith("text/html")) headers.set("content-security-policy", PAGE_CSP);
   return new Response(res.body, { status: res.status, headers });
 }

@@ -4,7 +4,8 @@ function localHost(hostname: string): boolean {
 
 export function originAllowed(request: Request): boolean {
   const origin = request.headers.get("origin");
-  if (!origin) return true;
+  // Missing Origin, or Chrome's "null" on a no-referrer navigational POST.
+  if (!origin || origin === "null") return true;
   let host = "";
   try {
     host = new URL(origin).hostname;

@@ -16,7 +16,7 @@ export function json(data: unknown, status = 200, extra?: Headers): Response {
   headers.set("content-type", "application/json; charset=utf-8");
   headers.set("cache-control", "no-store");
   headers.set("x-content-type-options", "nosniff");
-  headers.set("referrer-policy", "no-referrer");
+  headers.set("referrer-policy", "same-origin");
   return new Response(JSON.stringify(data), { status, headers });
 }
 
@@ -25,7 +25,7 @@ export function html(body: string, extra?: Headers): Response {
   headers.set("content-type", "text/html; charset=utf-8");
   headers.set("cache-control", "no-store");
   headers.set("x-content-type-options", "nosniff");
-  headers.set("referrer-policy", "no-referrer");
+  headers.set("referrer-policy", "same-origin");
   headers.set("content-security-policy", PAGE_CSP);
   return new Response(body, { status: 200, headers });
 }

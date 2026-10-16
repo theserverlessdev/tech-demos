@@ -8,6 +8,8 @@ const DEMO: Parameters<typeof importSigningKey>[0] = {
   x: "7n9MQV0h4T-Efij9pjzvLnn-oJO9ML24pQucNjbzIm8",
   y: "2MvQMOmOe1_-fieWGS6QYIjtvzCAZWme26W1BNJ7qUM",
   kid: "melody-demo-1",
+  alg: "ES256",
+  use: "sig",
 };
 
 test("ES256 JWT signs and verifies", async () => {

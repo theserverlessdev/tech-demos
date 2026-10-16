@@ -34,7 +34,7 @@ export async function verifyTurnstile(env: Env, request: Request, token: string)
 
   const headerHost = (request.headers.get("host") ?? "").split(":")[0]?.toLowerCase() ?? "";
   const urlHost = new URL(request.url).hostname;
-  const localDev = env.ENVIRONMENT === "local";
+  const localDev = String(env.ENVIRONMENT) === "local";
   const requestHost = localHost(headerHost) ? headerHost : urlHost;
   if (TEST_SECRETS.has(secret) && !localHost(requestHost) && !localDev) return false;
   if (TEST_SECRETS.has(secret) && token === DUMMY_TOKEN && (localHost(requestHost) || localDev)) return true;

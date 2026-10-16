@@ -15,23 +15,42 @@ export type JwtClaims = {
   scope?: string;
 };
 
-export type EcPrivateJwk = JsonWebKey & { kid?: string; d: string; x: string; y: string; crv: string };
+export type PublicJwk = {
+  kty: "EC";
+  crv: "P-256";
+  x: string;
+  y: string;
+  kid: string;
+  alg: "ES256";
+  use: "sig";
+};
+
+export type EcPrivateJwk = PublicJwk & { d: string };
 
 export function parsePrivateJwk(raw: string): EcPrivateJwk {
-  const parsed = JSON.parse(raw) as EcPrivateJwk;
+  const parsed = JSON.parse(raw) as Partial<EcPrivateJwk>;
   if (parsed.kty !== "EC" || parsed.crv !== "P-256" || !parsed.d || !parsed.x || !parsed.y) {
     throw new Error("jwk");
   }
-  return parsed;
+  return {
+    kty: "EC",
+    crv: "P-256",
+    d: parsed.d,
+    x: parsed.x,
+    y: parsed.y,
+    kid: parsed.kid || "melody-1",
+    alg: "ES256",
+    use: "sig",
+  };
 }
 
-export function publicJwkFromPrivate(jwk: EcPrivateJwk): JsonWebKey {
+export function publicJwkFromPrivate(jwk: EcPrivateJwk): PublicJwk {
   return {
     kty: "EC",
     crv: "P-256",
     x: jwk.x,
     y: jwk.y,
-    kid: jwk.kid ?? "melody-1",
+    kid: jwk.kid || "melody-1",
     alg: "ES256",
     use: "sig",
   };
@@ -49,7 +68,7 @@ export async function importSigningKey(jwk: EcPrivateJwk): Promise<CryptoKey> {
   return crypto.subtle.importKey("jwk", material, { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"]);
 }
 
-export async function importVerifyKey(jwk: JsonWebKey): Promise<CryptoKey> {
+export async function importVerifyKey(jwk: PublicJwk): Promise<CryptoKey> {
   return crypto.subtle.importKey(
     "jwk",
     { kty: "EC", crv: jwk.crv, x: jwk.x, y: jwk.y, ext: true },
