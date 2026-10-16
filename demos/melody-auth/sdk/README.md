@@ -1,6 +1,6 @@
 # melody-auth client
 
-Zero-dependency OIDC client for Workers, browsers, and Node. Discovery (issuer must match), PKCE, authorization-code exchange, refresh, ID-token checks (`nonce`, `azp`), and JWKS verify. Access-token verify requires `typ=at+jwt`, `token_use=access`, and an audience. An unknown `kid` triggers one rate-limited JWKS refetch. `bearerAuth` is Hono-shaped.
+Zero-dependency OIDC client for Workers, browsers, and Node. Discovery (issuer must match), PKCE, authorization-code exchange, refresh, ID-token checks (`nonce`, `azp`, non-empty audience), and JWKS verify. Access-token verify accepts `at+jwt` and `application/at+jwt` (any case), requires `token_use=access`, and requires an audience. An unknown `kid` refetches JWKS once per URI per 30s; the limit is set before the fetch and concurrent callers share one in-flight request. `bearerAuth` is Hono-shaped and does not turn downstream errors into 401s.
 
 "Token exchange" in this SDK means exchanging an authorization code. RFC 8693 token exchange is a server grant and is not implemented here.
 

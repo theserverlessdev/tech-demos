@@ -84,9 +84,20 @@ await context.close();
 await browser.close();
 if (video) {
   const src = await video.path();
+  const raw = resolve(outDir, "melody-auth-flow.webm");
   const dest = resolve(outDir, "melody-auth-flow.mp4");
-  await copyFile(src, dest);
+  await copyFile(src, raw);
   await unlink(src).catch(() => {});
+  const ffmpeg = Bun.spawn(["ffmpeg", "-y", "-i", raw, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an", "-movflags", "+faststart", dest], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const code = await ffmpeg.exited;
+  if (code !== 0) {
+    const err = await new Response(ffmpeg.stderr).text();
+    throw new Error(`ffmpeg exited ${code}: ${err.slice(-400)}`);
+  }
+  await unlink(raw).catch(() => {});
   console.log(`video ${dest}`);
 }
 console.log(`playground ${resolve(outDir, "playground-390.png")}`);

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { decodeJwt, importSigningKey, importVerifyKey, publicJwkFromPrivate, signJwt, verifyJwt } from "../src/worker/jwt";
+import { decodeJwt, importSigningKey, importVerifyKey, publicJwkFromPrivate, signJwt, verifyJwt, verifyJwtWithKeys } from "../src/worker/jwt";
 
 const DEMO: Parameters<typeof importSigningKey>[0] = {
   crv: "P-256",
@@ -38,4 +38,17 @@ test("verifyJwt rejects a non-numeric exp", async () => {
     key,
   );
   expect(await verifyJwt(token, pub, now)).toBeNull();
+});
+
+test("private_key_jwt accepts a missing typ and client-authentication+jwt", async () => {
+  const key = await importSigningKey(DEMO);
+  const now = Math.floor(Date.now() / 1000);
+  const claims = { iss: "client", sub: "client", aud: "https://issuer.example/token", iat: now, exp: now + 60, jti: "j1" };
+  const omitted = await signJwt({ alg: "ES256", kid: "melody-demo-1" }, claims, key);
+  const clientAuth = await signJwt({ alg: "ES256", typ: "client-authentication+jwt", kid: "melody-demo-1" }, claims, key);
+  expect(decodeJwt(omitted)).toBeNull();
+  expect(decodeJwt(clientAuth)).toBeNull();
+  expect(await verifyJwtWithKeys(omitted, [publicJwkFromPrivate(DEMO)], now, { looseTyp: true })).toBeTruthy();
+  expect(await verifyJwtWithKeys(clientAuth, [publicJwkFromPrivate(DEMO)], now, { looseTyp: true })).toBeTruthy();
+  expect(await verifyJwtWithKeys(omitted, [publicJwkFromPrivate(DEMO)], now)).toBeNull();
 });

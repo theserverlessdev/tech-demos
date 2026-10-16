@@ -46,4 +46,6 @@ Review pass: `email_verified` is false; claim-first codes and refresh rotation; 
 
 Second review: token exchange and client-credentials are confined to the caller's grant, scopes, and `resources`; DCR strips privileged grants; device codes are client-bound; federation rotates an unverified local password and checks the ID token plus a state cookie; the key ring wraps `d` with `AUTH_KEK`, republishes on a 60s read, and stages the next `kid` for one JWKS cache period; `private_key_jwt` is single-use; ID tokens are not access tokens. Migration `0005_review_fixes.sql` is additive.
 
+Third review: federation lock is one batch that also denies pending device grants and deletes unused auth codes; the SDK JWKS refetch limit is per URI and shared in flight; key rotation reads KV fresh and does not write on a read error; public clients can revoke their own tokens; admin clients can store up to five https resources and are not labeled as dynamic registration.
+
 First slice: hosted authorize, sample-app PKCE client, token inspector, admin list, 24-hour cron purge, Turnstile, rate limits `7481` / `7482` / `7483` / `7484`. Phone layout uses 16px fields and 44px controls.

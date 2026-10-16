@@ -62,7 +62,7 @@ export function authorizePage(input: {
       <section class="gate">
         <p class="eyebrow">Hosted authorize</p>
         <h2>${mode === "signup" ? "Create a demo account" : "Sign in to continue"}</h2>
-        <p class="lede"><span class="shows__k">What this shows</span> A Worker hosts the sign-in page. Passwords are PBKDF2-hashed in D1. The sample app never sees your password.</p>
+        <p class="lede"><span class="shows__k">What it proves</span> A Worker hosts the sign-in page. Passwords are PBKDF2-hashed in D1. The sample app never sees your password.</p>
         ${continueBlock}
         <div class="tabs" role="tablist">
           <a class="tab${signinActive}" href="${escapeHtml(tabHref(basePath, fields, "signin"))}">Sign in</a>
@@ -110,7 +110,7 @@ export function consentPage(input: {
       <section class="gate">
         <p class="eyebrow">Consent</p>
         <h2>${escapeHtml(input.clientName)} wants access</h2>
-        <p class="lede"><span class="shows__k">What this shows</span> Consent is remembered per client + scopes. Allow once, then sign in again — this page is skipped until scopes grow. Signed in as ${escapeHtml(input.email)}.</p>
+        <p class="lede"><span class="shows__k">What it proves</span> Consent is remembered per client + scopes. Allow once, then sign in again — this page is skipped until scopes grow. Signed in as ${escapeHtml(input.email)}.</p>
         ${badge}${host}${resource}
         <ul class="list">${items}</ul>
         <form method="post" action="${escapeHtml(`${input.basePath}/consent`)}" class="card card--auth">
@@ -150,7 +150,7 @@ export function devicePage(input: {
         <section class="gate">
           <p class="eyebrow">Device authorization</p>
           <h2>Sign in to approve ${escapeHtml(input.pendingName)}</h2>
-          <p class="lede"><span class="shows__k">What this shows</span> RFC 8628 — the TV/CLI flow. User code <span class="device-code">${escapeHtml(input.userCode)}</span></p>
+          <p class="lede"><span class="shows__k">What it proves</span> RFC 8628 — the TV/CLI flow. User code <span class="device-code">${escapeHtml(input.userCode)}</span></p>
           ${extra}
           <a class="btn btn-primary" href="${escapeHtml(input.signInHref || `${input.basePath}/`)}">Sign in</a>
         </section>`,
@@ -164,7 +164,7 @@ export function devicePage(input: {
         <section class="gate">
           <p class="eyebrow">Device authorization</p>
           <h2>Approve ${escapeHtml(input.pendingName)}?</h2>
-          <p class="lede"><span class="shows__k">What this shows</span> RFC 8628 — the TV/CLI flow. Signed in as ${escapeHtml(input.sessionEmail)}. User code <span class="device-code">${escapeHtml(input.userCode)}</span></p>
+          <p class="lede"><span class="shows__k">What it proves</span> RFC 8628 — the TV/CLI flow. Signed in as ${escapeHtml(input.sessionEmail)}. User code <span class="device-code">${escapeHtml(input.userCode)}</span></p>
           ${extra}
           <form method="post" action="${escapeHtml(`${input.basePath}/device`)}" class="card card--auth">
             <input type="hidden" name="user_code" value="${escapeHtml(input.userCode)}" />
@@ -186,7 +186,7 @@ export function devicePage(input: {
       <section class="gate">
         <p class="eyebrow">Device authorization</p>
         <h2>Enter the code from your TV or CLI</h2>
-        <p class="lede"><span class="shows__k">What this shows</span> RFC 8628 user-code page. <span class="shows__k">Try</span> Start a device grant in the playground, type the code here, then approve.</p>
+        <p class="lede"><span class="shows__k">What it proves</span> RFC 8628 user-code page. <span class="shows__k">Try</span> Start a device grant in the playground, type the code here, then approve.</p>
         <form method="get" action="${escapeHtml(`${input.basePath}/device`)}" class="card card--auth">
           <label>User code
             <input name="user_code" value="${escapeHtml(input.userCode)}" maxlength="9" autocapitalize="characters" autocomplete="one-time-code" />
@@ -203,7 +203,7 @@ export function devicePage(input: {
   });
 }
 
-export function formPostPage(target: string, fields: Record<string, string>): string {
+export function formPostPage(target: string, fields: Record<string, string>, assetBase = ""): string {
   const inputs = Object.entries(fields)
     .map(([name, value]) => hiddenField(name, value))
     .join("");
@@ -215,7 +215,7 @@ export function formPostPage(target: string, fields: Record<string, string>): st
 </head>
 <body>
   <form method="post" action="${escapeHtml(target)}">${inputs}<button type="submit">Continue</button></form>
-  <script src="/assets/formpost.js"></script>
+  <script src="${escapeHtml(`${assetBase}/assets/formpost.js`)}"></script>
 </body>
 </html>`;
 }
@@ -320,7 +320,7 @@ function layout(input: { basePath: string; title: string; body: string }): strin
   </header>
   <div class="strip" role="status">
     <span class="strip__dot"></span>
-    <span class="strip__copy"><strong>What this shows</strong> A Worker hosts sign-in, consent, and device approval. <strong>What to try</strong> Finish the flow and read the tokens. <strong>What you could build</strong> An edge IdP for apps that already speak OIDC.</span>
+    <span class="strip__copy"><strong>What it proves</strong> A Worker hosts sign-in, consent, and device approval. <strong>What to try</strong> Finish the flow and read the tokens. <strong>What you could build</strong> An edge IdP for apps that already speak OIDC.</span>
   </div>
   <main>${input.body}</main>
   <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>

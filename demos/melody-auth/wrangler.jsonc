@@ -43,8 +43,7 @@
     // Empty in production. .dev.vars sets "local" so the Turnstile test secret
     // works under wrangler dev, which rewrites Host to the first route.
     "ENVIRONMENT": "",
-    // PLACEHOLDER — owner must mint a dedicated Turnstile widget for
-    // melody-auth.tech-demos.theserverless.dev. Do not reuse another demo's live key.
+    // Live widget for melody-auth.tech-demos.theserverless.dev.
     "TURNSTILE_SITE_KEY": "0x4AAAAAAFYQUTxFgredOxQl",
     "GOOGLE_CLIENT_ID": "",
     "GITHUB_CLIENT_ID": "",

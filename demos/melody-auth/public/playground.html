@@ -55,7 +55,7 @@
       <p class="eyebrow">authorization_code + PKCE S256</p>
       <h2>Sign in, then exchange the code</h2>
       <ol class="steps">
-        <li>Register a public client via DCR (Turnstile) or use <span class="mono">melody-sample</span>.</li>
+        <li>Use the public client <span class="mono">melody-sample</span>.</li>
         <li>Redirect to <span class="mono">/authorize</span> with S256.</li>
         <li>Consent, then POST <span class="mono">/token</span>.</li>
       </ol>
@@ -96,7 +96,7 @@
     <section class="card" id="flow-ops" hidden>
       <p class="eyebrow">RFC 7662 / 7009</p>
       <h2>Introspect and revoke</h2>
-      <p class="lede">Introspection and revocation require a confidential client. Use the machine client id and secret from the client-credentials panel. An ID token is not an access token.</p>
+      <p class="lede">Introspection stays confidential: <span class="mono">active:false</span> means this client cannot see the token, not that the token is dead. A public client can revoke its own token. Revoking someone else's token returns 200 and is ignored. An ID token is not an access token.</p>
       <div class="actions">
         <button class="btn btn-primary" id="ops-introspect" type="button">Introspect last token</button>
         <button class="btn" id="ops-revoke" type="button">Revoke last token</button>

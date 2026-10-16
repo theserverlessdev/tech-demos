@@ -132,31 +132,44 @@ export async function refresh(
 
 type Jwk = { kty: string; crv?: string; x?: string; y?: string; kid?: string; alg?: string };
 const jwksCache = new Map<string, { exp: number; keys: Jwk[] }>();
-let lastForceAt = 0;
+const forceAt = new Map<string, number>();
+const inflight = new Map<string, Promise<Jwk[]>>();
 
 export async function jwksKeys(jwksUri: string, now = Date.now(), force = false): Promise<Jwk[]> {
-  if (force && now - lastForceAt < 30_000) {
-    const hit = jwksCache.get(jwksUri);
-    if (hit?.keys.length) return hit.keys;
-    throw new Error("jwks");
-  }
   if (!force) {
     const hit = jwksCache.get(jwksUri);
     if (hit && hit.exp > now && hit.keys.length) return hit.keys;
   }
-  const res = await fetch(jwksUri);
-  if (!res.ok) throw new Error("jwks");
-  const doc = (await res.json()) as { keys?: Jwk[] };
-  const keys = doc.keys ?? [];
-  if (!keys.length) throw new Error("jwks");
-  if (force) lastForceAt = now;
-  jwksCache.set(jwksUri, { exp: now + 300_000, keys });
-  return keys;
+  const pending = inflight.get(jwksUri);
+  if (pending) return pending;
+  const stamped = forceAt.get(jwksUri);
+  if (force && stamped !== undefined && now - stamped < 30_000) {
+    const hit = jwksCache.get(jwksUri);
+    if (hit?.keys.length) return hit.keys;
+    throw new Error("jwks");
+  }
+  if (force) forceAt.set(jwksUri, now);
+  const job = (async () => {
+    const res = await fetch(jwksUri);
+    if (!res.ok) throw new Error("jwks");
+    const doc = (await res.json()) as { keys?: Jwk[] };
+    const keys = doc.keys ?? [];
+    if (!keys.length) throw new Error("jwks");
+    jwksCache.set(jwksUri, { exp: now + 300_000, keys });
+    return keys;
+  })();
+  inflight.set(jwksUri, job);
+  try {
+    return await job;
+  } finally {
+    if (inflight.get(jwksUri) === job) inflight.delete(jwksUri);
+  }
 }
 
 export function resetJwksCacheForTests(): void {
   jwksCache.clear();
-  lastForceAt = 0;
+  forceAt.clear();
+  inflight.clear();
 }
 
 function fromB64url(value: string): Uint8Array {
@@ -178,8 +191,9 @@ export async function verifyJwt(
   const header = JSON.parse(new TextDecoder().decode(fromB64url(parts[0]))) as { alg?: string; kid?: string; typ?: string };
   if (header.alg !== "ES256") throw new Error("alg");
   const claims = JSON.parse(new TextDecoder().decode(fromB64url(parts[1]))) as Record<string, unknown>;
-  if (expected.access && (header.typ !== "at+jwt" || claims.token_use !== "access")) throw new Error("typ");
-  if (expected.id && (header.typ === "at+jwt" || claims.token_use === "access")) throw new Error("typ");
+  const accessTyp = header.typ?.toLowerCase() === "at+jwt" || header.typ?.toLowerCase() === "application/at+jwt";
+  if (expected.access && (!accessTyp || claims.token_use !== "access")) throw new Error("typ");
+  if (expected.id && (accessTyp || claims.token_use === "access")) throw new Error("typ");
   if (claims.iss !== expected.issuer) throw new Error("iss");
   if (typeof claims.exp !== "number" || claims.exp + SKEW_SEC <= now) throw new Error("exp");
   if (typeof claims.nbf === "number" && claims.nbf > now + SKEW_SEC) throw new Error("nbf");
@@ -227,12 +241,26 @@ export async function verifyAccessToken(
   }
 }
 
+function audiencePresent(audience: string | string[] | undefined): boolean {
+  if (!audience) return false;
+  if (Array.isArray(audience)) return audience.some((item) => item.length > 0);
+  return audience.length > 0;
+}
+
 export async function verifyIdToken(
   token: string,
   input: { issuer: string; jwksUri: string; audience: string | string[]; nonce?: string; azp?: string },
 ): Promise<Record<string, unknown>> {
+  if (!audiencePresent(input.audience)) throw new Error("aud_required");
+  const expected = { issuer: input.issuer, audience: input.audience, nonce: input.nonce, azp: input.azp, id: true as const };
   const keys = await jwksKeys(input.jwksUri);
-  return verifyJwt(token, keys, { issuer: input.issuer, audience: input.audience, nonce: input.nonce, azp: input.azp, id: true });
+  try {
+    return await verifyJwt(token, keys, expected);
+  } catch (err) {
+    if (!(err instanceof Error) || err.message !== "kid") throw err;
+    const fresh = await jwksKeys(input.jwksUri, Date.now(), true);
+    return verifyJwt(token, fresh, expected);
+  }
 }
 
 /** Authorization-code callback: checks state, exchanges the code, and checks the ID token nonce. */
@@ -260,15 +288,15 @@ export async function completeAuthorizationCode(input: {
     verifier: input.verifier,
     clientSecret: input.clientSecret,
   });
-  if (tokens.id_token) {
-    await verifyIdToken(tokens.id_token, {
-      issuer: input.discovered.issuer,
-      jwksUri: input.jwksUri ?? input.discovered.jwks_uri,
-      audience: input.clientId,
-      nonce: input.expectedNonce,
-      azp: input.clientId,
-    });
-  }
+  if (!input.expectedNonce) throw new OauthClientError("invalid_request", "Missing nonce.", 400);
+  if (!tokens.id_token) throw new OauthClientError("invalid_token", "Missing id_token.", 400);
+  await verifyIdToken(tokens.id_token, {
+    issuer: input.discovered.issuer,
+    jwksUri: input.jwksUri ?? input.discovered.jwks_uri,
+    audience: input.clientId,
+    nonce: input.expectedNonce,
+    azp: input.clientId,
+  });
   return tokens;
 }
 
@@ -308,10 +336,13 @@ export function bearerAuth(input: { issuer: string; jwksUri?: string; audience: 
       const claims = await check(raw);
       if (c.set) c.set("jwt", claims);
       c.jwt = claims;
-      await next();
     } catch (err) {
       if (err instanceof Response) return err;
-      return c.json({ error: "unauthorized" }, 401);
+      return new Response(JSON.stringify({ error: "unauthorized" }), {
+        status: 401,
+        headers: { "content-type": "application/json", "www-authenticate": 'Bearer error="invalid_token"' },
+      });
     }
+    await next();
   };
 }

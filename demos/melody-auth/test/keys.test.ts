@@ -68,6 +68,39 @@ test("rotateSigningKeys publishes the next kid for one JWKS period before it sig
   resetRingForTests();
 });
 
+test("rotateSigningKeys does not write when KEYS.get throws", async () => {
+  resetRingForTests();
+  const store = new Map<string, string>();
+  let failGet = false;
+  let puts = 0;
+  const env = {
+    ENVIRONMENT: "local",
+    AUTH_PRIVATE_JWK: JSON.stringify(DEMO),
+    AUTH_KEK: "11".repeat(32),
+    KEYS: {
+      async get(key: string, type?: string) {
+        if (failGet) throw new Error("kv");
+        const raw = store.get(String(key));
+        if (!raw) return null;
+        return type === "json" ? JSON.parse(raw) : raw;
+      },
+      async put(key: string, value: string) {
+        puts += 1;
+        store.set(String(key), value);
+      },
+    },
+  } as unknown as Env;
+  const started = Date.now();
+  await rotateSigningKeys(env, started);
+  expect(puts).toBe(1);
+  puts = 0;
+  failGet = true;
+  const aborted = await rotateSigningKeys(env, started + KEY_ROTATE_MS + 1);
+  expect(aborted.rotated).toBeFalse();
+  expect(puts).toBe(0);
+  resetRingForTests();
+});
+
 test("generateEs256 yields a P-256 private JWK with kid", async () => {
   const jwk = await generateEs256("melody-test");
   expect(jwk.kty).toBe("EC");

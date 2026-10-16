@@ -49,6 +49,15 @@ export function filterScopes(scope: string, extra: string[] = []): string {
     .join(" ");
 }
 
+/** Authorize and device authorization keep only scopes the app itself registered. */
+export function filterToAppScopes(scope: string, allowed: string[]): string {
+  const allow = new Set(allowed);
+  return scope
+    .split(/\s+/)
+    .filter((part) => allow.has(part))
+    .join(" ");
+}
+
 export async function limit(binding: RateLimit, request: Request): Promise<void> {
   const { success } = await binding.limit({ key: clientKey(request) });
   if (!success) throw new HttpError(429, "rate_limited", "Too many requests from this address. Wait a minute.");
@@ -128,7 +137,7 @@ export async function validateAuthorize(
   if (requirePkce && (fields.method !== "S256" || !challengeShape(fields.challenge))) {
     return { ok: false, safe: true, message: "PKCE S256 is required." };
   }
-  fields.scope = filterScopes(fields.scope, appScopes(app));
+  fields.scope = filterToAppScopes(fields.scope, appScopes(app));
   if (!fields.scope.split(/\s+/).includes("openid")) return { ok: false, safe: true, message: "The openid scope is required." };
   if (fields.resource && !audienceAllowed(fields.resource, app.resources, app.client_id)) {
     return { ok: false, safe: true, message: "The resource is not allowed for this client." };
@@ -136,10 +145,10 @@ export async function validateAuthorize(
   return { ok: true, app };
 }
 
-export function failRedirect(fields: AuthorizeFields, error: string, description: string, issuer = ""): Response {
+export function failRedirect(fields: AuthorizeFields, error: string, description: string, issuer = "", assetBase = ""): Response {
   if (fields.responseMode === "form_post") {
     return html(
-      formPostPage(fields.redirectUri, { error, error_description: description, state: fields.state, ...(issuer ? { iss: issuer } : {}) }),
+      formPostPage(fields.redirectUri, { error, error_description: description, state: fields.state, ...(issuer ? { iss: issuer } : {}) }, assetBase),
       200,
       undefined,
       formActionOrigin(fields.redirectUri),
@@ -153,10 +162,10 @@ export function failRedirect(fields: AuthorizeFields, error: string, description
   return Response.redirect(target.toString(), 302);
 }
 
-export function codeRedirect(fields: AuthorizeFields, code: string, issuer = ""): Response {
+export function codeRedirect(fields: AuthorizeFields, code: string, issuer = "", assetBase = ""): Response {
   if (fields.responseMode === "form_post") {
     return html(
-      formPostPage(fields.redirectUri, { code, state: fields.state, ...(issuer ? { iss: issuer } : {}) }),
+      formPostPage(fields.redirectUri, { code, state: fields.state, ...(issuer ? { iss: issuer } : {}) }, assetBase),
       200,
       undefined,
       formActionOrigin(fields.redirectUri),
@@ -269,7 +278,7 @@ export async function completeAuthorize(
   const consentNeeded = await needsConsent(env, user.id, fields, now, forceConsent);
   const { issuer } = publicBase(request, env);
   if (fields.prompt.split(/\s+/).includes("none")) {
-    if (consentNeeded) return failRedirect(fields, "consent_required", "Consent is required.", issuer);
+    if (consentNeeded) return failRedirect(fields, "consent_required", "Consent is required.", issuer, onHub ? "/demos/melody-auth" : "");
   }
   if (consentNeeded && !fields.prompt.split(/\s+/).includes("none")) {
     const app = await getFullApp(env.DB, fields.clientId);
@@ -307,7 +316,7 @@ export async function completeAuthorize(
     resource: fields.resource || undefined,
     authTime,
   });
-  const redirect = codeRedirect(fields, code, issuer);
+  const redirect = codeRedirect(fields, code, issuer, onHub ? "/demos/melody-auth" : "");
   if (!sessionId) return redirect;
   const headers = new Headers(redirect.headers);
   if (redirect.status === 200) {
@@ -331,7 +340,7 @@ export async function handleAuthorizeGet(request: Request, env: Env, onHub: bool
   const maxAge = Number(fields.maxAge);
   const tooOld = session && Number.isFinite(maxAge) && fields.maxAge !== "" && now / 1000 - session.authTime > maxAge;
   if (fields.prompt.split(/\s+/).includes("none")) {
-    if (!session || tooOld) return failRedirect(fields, "login_required", "Sign-in is required.", publicBase(request, env).issuer);
+    if (!session || tooOld) return failRedirect(fields, "login_required", "Sign-in is required.", publicBase(request, env).issuer, basePath);
     return completeAuthorize(env, request, onHub, fields, session.user, session.authTime, now);
   }
   const user = tooOld ? null : session?.user ?? null;
@@ -384,7 +393,7 @@ export async function handleAuthorizePost(request: Request, env: Env, onHub: boo
   const checked = await validateAuthorize(env, fields);
   if (!checked.ok) {
     if (!checked.safe) return html(errorPage(basePath, "Cannot continue", checked.message), 400);
-    return failRedirect(fields, "invalid_request", checked.message, publicBase(request, env).issuer);
+    return failRedirect(fields, "invalid_request", checked.message, publicBase(request, env).issuer, basePath);
   }
 
   try {
@@ -448,11 +457,11 @@ export async function handleConsentPost(request: Request, env: Env, onHub: boole
   const checked = await validateAuthorize(env, fields);
   if (!checked.ok) {
     if (!checked.safe) return html(errorPage(basePath, "Cannot continue", checked.message), 400);
-    return failRedirect(fields, "invalid_request", checked.message, publicBase(request, env).issuer);
+    return failRedirect(fields, "invalid_request", checked.message, publicBase(request, env).issuer, basePath);
   }
   const session = await sessionAuthTime(env.DB, sessionFrom(request) ?? "", now);
   if (!session) return html(errorPage(basePath, "Cannot continue", "Sign in first."), 401);
-  if (form.decision !== "allow") return failRedirect(fields, "access_denied", "The user denied the request.", publicBase(request, env).issuer);
+  if (form.decision !== "allow") return failRedirect(fields, "access_denied", "The user denied the request.", publicBase(request, env).issuer, basePath);
   await rememberConsent(env.DB, session.user.id, fields.clientId, fields.scope, now);
   const code = await issueAuthCode(env.DB, {
     userId: session.user.id,
@@ -465,7 +474,7 @@ export async function handleConsentPost(request: Request, env: Env, onHub: boole
     resource: fields.resource || undefined,
     authTime: session.authTime,
   });
-  return codeRedirect(fields, code, publicBase(request, env).issuer);
+  return codeRedirect(fields, code, publicBase(request, env).issuer, basePath);
 }
 
 export async function handleUserinfo(request: Request, env: Env): Promise<Response> {

@@ -27,7 +27,7 @@ Inspired by [ValueMelody/melody-auth](https://github.com/ValueMelody/melody-auth
 | Userinfo, RP-initiated logout / `end_session_endpoint` | Done |
 | PAR (RFC 9126), `response_mode=form_post` | Done |
 | `prompt` / `max_age` / `login_hint`, consent per client+scopes | Done |
-| Resource indicators (RFC 8707) | Done (`resource` → access-token `aud`) |
+| Resource indicators (RFC 8707) | Done. Admin create/PATCH stores up to 5 `https` resources; otherwise `aud` is the client id |
 | Dynamic client registration (RFC 7591/7592), gated | Done |
 | Key ring rotation + verify window | Done (cron; previous `kid` kept 24h) |
 | Implicit / resource-owner password | **Rejected** — removed in OAuth 2.1 |
@@ -174,7 +174,7 @@ env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3
 | `ADMIN_TOKEN` | no | Admin mutations + DCR bypass |
 | `MACHINE_CLIENT_SECRET` | no | Seeds `melody-machine` for client-credentials demos |
 | `GOOGLE_*` / `GITHUB_*` / `MICROSOFT_*` / `OIDC_*` | no | Federation RP, when configured |
-| `AUTH_KEK` | no | 32-byte AES-GCM key (base64url or 64 hex chars) that wraps signing-key `d` in KV. Rotation no-ops until this is set. Not in `secrets.required`, so deploy is not blocked. `wrangler secret put AUTH_KEK` |
+| `AUTH_KEK` | no | 32-byte AES-GCM key (base64url or 64 hex chars) that wraps signing-key `d` in KV. Rotation no-ops until this is set. Not in `secrets.required`, so deploy is not blocked. `wrangler secret put AUTH_KEK`. Once `jwks:ring` exists, do not change `AUTH_KEK` without first deleting that KV key — a mismatch fails unwrap and isolates fall back to `AUTH_PRIVATE_JWK`. |
 
 Migrations `0004_oidc_full.sql` and `0005_review_fixes.sql` are additive only (ALTER + new tables). Bookmark D1 Time Travel before applying them. Never drop data. Client secrets are SHA-256; user passwords stay PBKDF2. Dynamic registration does not grant `client_credentials` or token exchange unless the caller presents `ADMIN_TOKEN`. The SDK's code exchange is not RFC 8693 token exchange.
 

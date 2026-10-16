@@ -20,6 +20,7 @@ function asAdminApp(row: Awaited<ReturnType<typeof listFullApps>>[number]): Admi
     authMethod: row.token_endpoint_auth_method || "none",
     clientType: row.client_type || "public",
     scopes: row.scopes || "",
+    resources: parseJsonList(row.resources, []),
     expiresAt: row.expires_at,
   };
 }
@@ -43,7 +44,7 @@ export async function handleAdminApi(request: Request, env: Env, path: string): 
     const body = await readAdminBody(request);
     const secret = toBase64Url(randomBytes(24));
     const hashed = await hashClientSecret(secret);
-    const clientId = typeof body.client_id === "string" && body.client_id.trim() ? body.client_id.trim() : `cid_${toBase64Url(randomBytes(8))}`;
+    const clientId = typeof body.client_id === "string" && body.client_id.trim() ? body.client_id.trim() : `app_${toBase64Url(randomBytes(8))}`;
     const clientType = body.client_type === "confidential" ? "confidential" : "public";
     await insertApp(env.DB, {
       clientId,
@@ -57,6 +58,7 @@ export async function handleAdminApi(request: Request, env: Env, path: string): 
       secretSalt: clientType === "confidential" ? "" : undefined,
       now,
       requirePkce: clientType === "public",
+      resources: resourcesOf(body.resources),
     });
     return json({ clientId, clientSecret: clientType === "confidential" ? secret : undefined, shownOnce: true }, 201);
   }
@@ -72,6 +74,7 @@ export async function handleAdminApi(request: Request, env: Env, path: string): 
       grantTypes: body.grant_types !== undefined ? asList(body.grant_types) : undefined,
       scopes: typeof body.scopes === "string" ? body.scopes : undefined,
       authMethod: typeof body.auth_method === "string" ? body.auth_method : undefined,
+      resources: body.resources !== undefined ? resourcesOf(body.resources) : undefined,
     });
     return json({ ok: true });
   }
@@ -87,6 +90,21 @@ async function readAdminBody(request: Request): Promise<Record<string, unknown>>
   const text = await readBounded(request, 16_000);
   if (type.includes("application/x-www-form-urlencoded")) return parseForm(text);
   return parseObject(text);
+}
+
+function resourcesOf(value: unknown): string[] {
+  const list = asList(value);
+  if (list.length > 5) throw new HttpError(400, "invalid_request", "At most 5 resource indicators.");
+  for (const item of list) {
+    let url: URL;
+    try {
+      url = new URL(item);
+    } catch {
+      throw new HttpError(400, "invalid_request", "Resource indicators must be https URLs.");
+    }
+    if (url.protocol !== "https:") throw new HttpError(400, "invalid_request", "Resource indicators must be https URLs.");
+  }
+  return list;
 }
 
 function asList(value: unknown): string[] {

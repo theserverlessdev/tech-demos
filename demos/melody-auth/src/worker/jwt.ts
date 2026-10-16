@@ -1,6 +1,6 @@
 import { bytes, fromBase64Url, toBase64Url } from "./encoding";
 
-export type JwtHeader = { alg: "ES256"; typ: "JWT" | "at+jwt"; kid: string };
+export type JwtHeader = { alg: "ES256"; typ?: string; kid: string };
 export type JwtClaims = {
   iss: string;
   sub: string;
@@ -22,7 +22,7 @@ export type JwtClaims = {
 
 export type ActClaim = { sub: string; act?: ActClaim };
 
-export type VerifyOptions = { ignoreExp?: boolean };
+export type VerifyOptions = { ignoreExp?: boolean; looseTyp?: boolean };
 
 export type PublicJwk = {
   kty: "EC";
@@ -99,13 +99,19 @@ export async function signJwt(header: JwtHeader, claims: JwtClaims, key: CryptoK
   return `${signingInput}.${toBase64Url(signature)}`;
 }
 
-export function decodeJwt(token: string): { header: JwtHeader; claims: JwtClaims } | null {
+function typAllowed(typ: string | undefined, loose: boolean | undefined): boolean {
+  if (typ === "JWT" || typ === "at+jwt") return true;
+  if (!loose) return false;
+  return typ == null || typ === "" || typ === "client-authentication+jwt";
+}
+
+export function decodeJwt(token: string, options?: { looseTyp?: boolean }): { header: JwtHeader; claims: JwtClaims } | null {
   const parts = token.split(".");
   if (parts.length !== 3 || !parts[0] || !parts[1]) return null;
   try {
     const header = JSON.parse(new TextDecoder().decode(fromBase64Url(parts[0]))) as JwtHeader;
     const claims = JSON.parse(new TextDecoder().decode(fromBase64Url(parts[1]))) as JwtClaims;
-    if (header.alg !== "ES256" || (header.typ !== "JWT" && header.typ !== "at+jwt") || typeof claims.sub !== "string") return null;
+    if (header.alg !== "ES256" || !typAllowed(header.typ, options?.looseTyp) || typeof claims.sub !== "string") return null;
     return { header, claims };
   } catch {
     return null;
@@ -120,7 +126,7 @@ export async function verifyJwt(
 ): Promise<JwtClaims | null> {
   const parts = token.split(".");
   if (parts.length !== 3 || !parts[0] || !parts[1] || !parts[2]) return null;
-  const decoded = decodeJwt(token);
+  const decoded = decodeJwt(token, options);
   if (!decoded) return null;
   const ok = await crypto.subtle.verify(
     { name: "ECDSA", hash: "SHA-256" },
@@ -157,7 +163,7 @@ export async function verifyJwtWithKeys(
   now = Math.floor(Date.now() / 1000),
   options?: VerifyOptions,
 ): Promise<JwtClaims | null> {
-  const decoded = decodeJwt(token);
+  const decoded = decodeJwt(token, options);
   if (!decoded) return null;
   const match = keys.filter((key) => !decoded.header.kid || key.kid === decoded.header.kid);
   const list = match.length ? match : keys;

@@ -47,6 +47,7 @@ export type AdminApp = {
   authMethod: string;
   clientType: string;
   scopes: string;
+  resources: string[];
   expiresAt: number | null;
 };
 

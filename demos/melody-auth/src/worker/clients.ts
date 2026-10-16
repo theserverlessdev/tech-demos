@@ -65,7 +65,7 @@ export async function authenticateClient(
         keys = [];
       }
       const nowSec = Math.floor(now / 1000);
-      const claims = await verifyJwtWithKeys(body.client_assertion, keys, nowSec);
+      const claims = await verifyJwtWithKeys(body.client_assertion, keys, nowSec, { looseTyp: true });
       if (!claims || claims.sub !== clientId || claims.iss !== clientId || !assertionLifetimeOk(claims, nowSec)) {
         throw new OauthError(401, "invalid_client", "Client authentication failed.");
       }

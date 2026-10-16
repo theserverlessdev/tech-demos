@@ -66,7 +66,6 @@ export async function handleRevoke(request: Request, env: Env): Promise<Response
   const body = await formBody(request);
   const now = Date.now();
   const app = await authenticateClient(env, request, body, now);
-  await requireConfidential(app);
   const token = body.token ?? "";
   if (!token) return new Response(null, { status: 200 });
   const refresh = await lookupRefresh(env.DB, token);

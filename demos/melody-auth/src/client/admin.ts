@@ -53,7 +53,8 @@ if (res.status !== 200 || !data || !("users" in data) || !users || !apps) {
       title.textContent = `${app.name} · ${app.clientId}`;
       const meta = document.createElement("p");
       meta.className = "row__meta";
-      meta.textContent = `${app.clientType} · ${app.authMethod} · ${app.grantTypes.join(", ")} · ${app.redirectUris.join(" · ")}`;
+      const resources = app.resources?.length ? ` · resources ${app.resources.join(", ")}` : "";
+      meta.textContent = `${app.clientType} · ${app.authMethod} · ${app.grantTypes.join(", ")} · ${app.redirectUris.join(" · ")}${resources}`;
       li.append(title, meta);
       return li;
     }),
@@ -68,6 +69,7 @@ form?.addEventListener("submit", async (event) => {
   const redirects = (document.getElementById("app-redirects") as HTMLInputElement).value.trim();
   const clientType = (document.getElementById("app-type") as HTMLSelectElement).value;
   const grantChoice = (document.getElementById("app-grants") as HTMLSelectElement | null)?.value ?? "authorization_code";
+  const resources = (document.getElementById("app-resources") as HTMLInputElement | null)?.value.trim() ?? "";
   const created = document.getElementById("created-secret");
   const result = await fetch(`${apiRoot()}/api/admin/apps`, {
     method: "POST",
@@ -83,6 +85,7 @@ form?.addEventListener("submit", async (event) => {
         clientType === "confidential" && grantChoice === "client_credentials"
           ? ["client_credentials"]
           : ["authorization_code", "refresh_token"],
+      resources: resources.split(",").map((item) => item.trim()).filter(Boolean),
     }),
   });
   const payload = (await result.json().catch(() => null)) as { clientId?: string; clientSecret?: string; error?: { message?: string } } | null;

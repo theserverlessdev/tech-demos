@@ -32,22 +32,27 @@ function err(message: string): void {
   $("play-error").textContent = message;
 }
 
-type TurnstileApi = { render: (el: HTMLElement, opts: { sitekey: string; callback?: (token: string) => void }) => string; reset: (id?: string) => void };
-function turnstileApi(): TurnstileApi | undefined {
-  return (window as Window & { turnstile?: TurnstileApi }).turnstile;
-}
-
 let config: AppConfig | null = null;
 let lastTokens: TokenResponse | null = null;
 let device: { device_code: string; user_code: string; interval: number } | null = null;
-let turnstileWidget = "";
 
 function rememberTokens(status: number, data: unknown): void {
   if (status !== 200 || !data || typeof data !== "object" || !("access_token" in data)) return;
   const next = data as TokenResponse;
   if (!next.access_token) return;
-  lastTokens = { ...lastTokens, ...next, refresh_token: next.refresh_token || lastTokens?.refresh_token };
+  lastTokens = next;
   sessionStorage.setItem("melody-play-tokens", JSON.stringify(lastTokens));
+}
+
+function tokenOwner(token: string): string {
+  const part = token.split(".")[1] ?? "";
+  try {
+    const padded = part.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(part.length / 4) * 4, "=");
+    const claims = JSON.parse(atob(padded)) as { client_id?: string };
+    return typeof claims.client_id === "string" ? claims.client_id : "";
+  } catch {
+    return "";
+  }
 }
 
 function machineCreds(): { id: string; secret: string } {
@@ -85,23 +90,6 @@ if (location.hostname === "127.0.0.1" || location.hostname === "localhost") {
 const configRes = await fetch(`${apiRoot()}/api/config`);
 const loaded = (await configRes.json()) as AppConfig;
 config = loaded;
-const host = document.getElementById("turnstile");
-if (host) host.dataset.sitekey = loaded.turnstileSiteKey;
-const wait = async (): Promise<void> => {
-  const started = Date.now();
-  while (Date.now() - started < 8000 && !turnstileApi()) await new Promise((r) => setTimeout(r, 100));
-  const api = turnstileApi();
-  const tokenEl = document.getElementById("turnstile-token") as HTMLInputElement | null;
-  if (api && host && loaded.turnstileSiteKey && !loaded.turnstileSiteKey.startsWith("REPLACE_ME")) {
-    turnstileWidget = api.render(host, {
-      sitekey: loaded.turnstileSiteKey,
-      callback: (token) => {
-        if (tokenEl) tokenEl.value = token;
-      },
-    });
-  }
-};
-void wait();
 
 document.getElementById("pkce-start")?.addEventListener("click", async () => {
   if (!config) return;
@@ -199,7 +187,6 @@ document.getElementById("cc-token")?.addEventListener("click", async () => {
   const res = await post("/token", body);
   rememberTokens(res.status, res.data);
   show({ request: { ...body, client_secret: "***" }, status: res.status, response: res.data }, res.data, "POST /token grant_type=client_credentials");
-  if (turnstileWidget) turnstileApi()?.reset(turnstileWidget);
 });
 
 document.getElementById("device-start")?.addEventListener("click", async () => {
@@ -234,27 +221,41 @@ document.getElementById("device-poll")?.addEventListener("click", async () => {
 document.getElementById("ops-introspect")?.addEventListener("click", async () => {
   const creds = machineCreds();
   if (!lastTokens?.access_token || !creds.id || !creds.secret) {
-    err("Mint a token, then enter a confidential client id and secret.");
+    err("Mint a token, then enter a confidential client id and secret. Introspection is confidential-only.");
     return;
   }
   const body = { token: lastTokens.access_token, client_id: creds.id, client_secret: creds.secret };
   const res = await post("/introspect", body);
-  show({ request: { token: "<access_token>", client_id: creds.id }, status: res.status, response: res.data }, res.data, "POST /introspect");
+  const inactive = res.data && typeof res.data === "object" && "active" in res.data && (res.data as { active?: boolean }).active === false;
+  const note = inactive
+    ? "POST /introspect — active:false means this client cannot see the token (not the owner, and the audience is not in its resources). It does not prove the token is dead."
+    : "POST /introspect";
+  show({ request: { token: "<access_token>", client_id: creds.id }, status: res.status, response: res.data }, res.data, note);
 });
 
 document.getElementById("ops-revoke")?.addEventListener("click", async () => {
-  const creds = machineCreds();
-  if (!lastTokens?.access_token || !creds.id || !creds.secret) {
-    err("Mint a token, then enter a confidential client id and secret.");
+  if (!lastTokens?.access_token || !config) {
+    err("Mint a token first.");
     return;
   }
-  const body = { token: lastTokens.access_token, client_id: creds.id, client_secret: creds.secret };
+  const owner = tokenOwner(lastTokens.access_token);
+  const creds = machineCreds();
+  const publicOwn = owner !== "" && owner === config.clientId;
+  if (!publicOwn && (!creds.id || !creds.secret)) {
+    err("Enter a confidential client id and secret, or revoke a token this public client owns.");
+    return;
+  }
+  const body: Record<string, string> = publicOwn
+    ? { token: lastTokens.access_token, client_id: config.clientId }
+    : { token: lastTokens.access_token, client_id: creds.id, client_secret: creds.secret };
   const res = await fetch(`${apiRoot()}/revoke`, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams(body),
   });
-  show({ request: { token: "<access_token>" }, status: res.status, body: await res.text() }, { status: res.status }, "POST /revoke");
+  const foreign = !publicOwn && creds.id !== "" && owner !== "" && creds.id !== owner;
+  const note = foreign ? "POST /revoke — HTTP 200, not owned, ignored." : "POST /revoke";
+  show({ request: { token: "<access_token>", client_id: body.client_id }, status: res.status, body: await res.text() }, { status: res.status }, note);
 });
 
 document.getElementById("ops-password")?.addEventListener("click", async () => {

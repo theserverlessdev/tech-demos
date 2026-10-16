@@ -169,6 +169,7 @@ async function ringFromStored(stored: StoredRing, kek: CryptoKey | null, now: nu
         const d = await unwrapD(wrappedD, kek);
         privateJwk = { ...publicJwk, d };
       } catch {
+        console.error(JSON.stringify({ event: "kek_unwrap_failed", kid: item.kid }));
         privateJwk = null;
       }
     } else if (item.privateJwk?.d) {
@@ -252,9 +253,31 @@ export async function jwksDocument(env: Env): Promise<{ keys: PublicJwk[] }> {
 
 export async function rotateSigningKeys(env: Env, now = Date.now()): Promise<{ kid: string; rotated: boolean }> {
   const kek = await importKek(env);
-  const ring = await loadRing(env, now);
+  if (!kek) {
+    const ring = await loadRing(env, now);
+    return { kid: ring.currentKid, rotated: false };
+  }
+  let stored: unknown;
+  try {
+    stored = await env.KEYS.get(RING_KEY, "json");
+  } catch {
+    return { kid: isolateRing?.currentKid ?? "unknown", rotated: false };
+  }
+  let ring: Ring;
+  if (isStoredRing(stored)) {
+    const parsed = await ringFromStored(stored, kek, now);
+    if (!parsed) return { kid: isolateRing?.currentKid ?? stored.currentKid, rotated: false };
+    ring = parsed;
+  } else {
+    ring = await memoryFromSecret(env, now);
+    try {
+      await persistRing(env, ring, kek);
+    } catch {
+      return { kid: ring.currentKid, rotated: false };
+    }
+  }
   const current = ring.keys.find((key) => key.kid === ring.currentKid);
-  if (!kek || !current) return { kid: ring.currentKid, rotated: false };
+  if (!current) return { kid: ring.currentKid, rotated: false };
   if (rejectDemoSigningKey(current.privateJwk, env)) return { kid: current.kid, rotated: false };
 
   const staged = ring.nextKid ? ring.keys.find((key) => key.kid === ring.nextKid) : undefined;

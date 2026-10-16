@@ -8,7 +8,15 @@ type TurnstileApi = {
   reset: (id?: string) => void;
 };
 
-type StoredPkce = { verifier: string; state: string; nonce: string; mode?: string };
+type StoredPkce = { verifier: string; state: string; nonce: string; mode?: string; returnTo?: string };
+
+function safeDeviceReturn(value: string | null): string | null {
+  if (!value || !value.startsWith("/") || value.startsWith("//") || value.includes("\\") || value.includes("://")) return null;
+  const path = value.split("?")[0] ?? "";
+  const root = apiRoot();
+  if (path !== `${root}/device`) return null;
+  return value;
+}
 
 function apiRoot(): string {
   const path = location.pathname;
@@ -191,7 +199,8 @@ async function startPkce(mode: "signin" | "signup"): Promise<void> {
   const verifier = randomB64(32);
   const state = randomB64(16);
   const nonce = randomB64(16);
-  const stored: StoredPkce = { verifier, state, nonce, mode };
+  const returnTo = safeDeviceReturn(sessionStorage.getItem("melody-return")) ?? undefined;
+  const stored: StoredPkce = { verifier, state, nonce, mode, returnTo };
   sessionStorage.setItem(PKCE_KEY, JSON.stringify(stored));
   const url = new URL(config.authorizationEndpoint);
   url.searchParams.set("response_type", "code");
@@ -251,6 +260,12 @@ async function finishPkce(): Promise<boolean> {
   }
   tokens = res.data;
   sessionStorage.setItem("melody-tokens", JSON.stringify(tokens));
+  const back = safeDeviceReturn(stored.returnTo ?? null);
+  sessionStorage.removeItem("melody-return");
+  if (back) {
+    location.assign(back);
+    return true;
+  }
   paintClaims(res.data.id_token, await loadUserinfo(tokens.access_token));
   showTokens();
   return true;
@@ -265,6 +280,8 @@ async function bootSample(): Promise<void> {
     $("intro-error").textContent = "The page could not reach the Worker.";
     return;
   }
+  const pendingReturn = safeDeviceReturn(new URLSearchParams(location.search).get("return_to"));
+  if (pendingReturn) sessionStorage.setItem("melody-return", pendingReturn);
   if (await finishPkce()) return;
   const saved = sessionStorage.getItem("melody-tokens");
   if (saved) {

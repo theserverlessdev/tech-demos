@@ -4,7 +4,7 @@ import { HttpError } from "./errors";
 import { corsJson, html } from "./headers";
 import { originAllowed, publicBase } from "./origin";
 import { devicePage, errorPage } from "./pages";
-import { filterScopes, limit } from "./oidc";
+import { filterToAppScopes, limit } from "./oidc";
 import { audienceAllowed, isDcrClient } from "./policy";
 import { sessionFrom } from "./session";
 import {
@@ -35,7 +35,7 @@ export async function handleDeviceAuthorization(request: Request, env: Env): Pro
   if (!clientAllowsGrant(app, "urn:ietf:params:oauth:grant-type:device_code")) {
     throw new HttpError(400, "unauthorized_client", "This client cannot use that grant.");
   }
-  const scope = filterScopes(typeof body.scope === "string" && body.scope ? body.scope : "openid profile email offline_access", appScopes(app));
+  const scope = filterToAppScopes(typeof body.scope === "string" && body.scope ? body.scope : "openid profile email offline_access", appScopes(app));
   if (!scope) throw new HttpError(400, "invalid_scope", "The requested scope is not allowed.");
   const audience = typeof body.resource === "string" ? body.resource : "";
   if (audience && !audienceAllowed(audience, app.resources, app.client_id)) {
@@ -89,7 +89,7 @@ export async function handleDevicePage(request: Request, env: Env, onHub: boolea
           userCode: row.user_code,
           sessionEmail: null,
           error: "",
-          signInHref: `${basePath}/`,
+          signInHref: `${basePath}/?return_to=${encodeURIComponent(`${basePath}/device?user_code=${encodeURIComponent(row.user_code)}`)}`,
           ...pending,
         }),
         401,

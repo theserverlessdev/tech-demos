@@ -166,7 +166,11 @@ async function exchange(cfg: ProviderCfg, code: string, redirectUri: string, ver
     body,
   });
   if (!res.ok) return null;
-  return (await res.json()) as TokenJson;
+  try {
+    return (await res.json()) as TokenJson;
+  } catch {
+    return null;
+  }
 }
 
 function parseIdClaims(idToken: string | undefined): Record<string, unknown> | null {

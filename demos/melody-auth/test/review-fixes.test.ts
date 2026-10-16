@@ -135,6 +135,7 @@ test("authorization responses include iss and form_post has no inline script", (
     expect(html).toContain('name="iss"');
     expect(html).not.toContain("document.forms[0].submit()");
     expect(formPostPage("https://app.example/cb", { code: "c" })).toContain('src="/assets/formpost.js"');
+    expect(formPostPage("https://app.example/cb", { code: "c" }, "/demos/melody-auth")).toContain('src="/demos/melody-auth/assets/formpost.js"');
     expect(formPostPage("https://app.example/cb", { code: "c" })).not.toContain("document.forms[0].submit()");
     const script = PAGE_CSP.split(";").find((part) => part.includes("script-src")) ?? "";
     expect(script).toContain("'self'");
@@ -173,11 +174,13 @@ test("federation state cookie is host-bound only on the production issuer", () =
 
 test("linking an unverified local user rotates the password and drops sessions", async () => {
   const sql: string[] = [];
+  const batches: string[][] = [];
   const user = { id: "usr_1", email: "a@b.c", email_verified: 0, password_hash: "old", salt: "salt", created_at: 1, expires_at: Date.now() + 10_000 };
   const db = {
     prepare(query: string) {
       sql.push(query);
       return {
+        query,
         bind() {
           return this;
         },
@@ -189,7 +192,8 @@ test("linking an unverified local user rotates the password and drops sessions",
         },
       };
     },
-    async batch(stmts: { run: () => Promise<unknown> }[]) {
+    async batch(stmts: { query: string; run: () => Promise<unknown> }[]) {
+      batches.push(stmts.map((stmt) => stmt.query));
       for (const stmt of stmts) await stmt.run();
       return [];
     },
@@ -197,14 +201,49 @@ test("linking an unverified local user rotates the password and drops sessions",
   const linked = await userForFederation(db as unknown as D1Database, "a@b.c", Date.now(), "usr_1");
   expect(linked?.id).toBe("usr_1");
   expect(sql.some((query) => query.includes("UPDATE users SET email_verified"))).toBeFalse();
+  expect(batches).toHaveLength(0);
 
   sql.length = 0;
   const rotated = await userForFederation(db as unknown as D1Database, "a@b.c", Date.now(), null);
   expect(rotated?.email_verified).toBe(1);
   expect(rotated?.password_hash).not.toBe("old");
-  expect(sql.some((query) => query.startsWith("DELETE FROM sessions"))).toBeTrue();
-  expect(sql.some((query) => query.startsWith("DELETE FROM refresh_tokens"))).toBeTrue();
-  expect(sql.some((query) => query.startsWith("DELETE FROM consents"))).toBeTrue();
+  expect(batches).toHaveLength(1);
+  const batch = batches[0] ?? [];
+  expect(batch.some((query) => query.startsWith("UPDATE users SET email_verified"))).toBeTrue();
+  expect(batch.some((query) => query.startsWith("DELETE FROM sessions"))).toBeTrue();
+  expect(batch.some((query) => query.startsWith("DELETE FROM refresh_tokens"))).toBeTrue();
+  expect(batch.some((query) => query.startsWith("DELETE FROM consents"))).toBeTrue();
+  expect(batch.some((query) => query.startsWith("UPDATE device_grants SET denied_at"))).toBeTrue();
+  expect(batch.some((query) => query.startsWith("DELETE FROM auth_codes WHERE user_id = ? AND used_at IS NULL"))).toBeTrue();
+});
+
+test("federation create deletes an expired user with the same email first", async () => {
+  const sql: string[] = [];
+  const db = {
+    prepare(query: string) {
+      sql.push(query);
+      return {
+        bind() {
+          return this;
+        },
+        async first() {
+          return null;
+        },
+        async run() {
+          return { success: true, meta: { changes: 1 } };
+        },
+      };
+    },
+    async batch() {
+      return [];
+    },
+  };
+  const created = await userForFederation(db as unknown as D1Database, "a@b.c", Date.now(), null);
+  expect(created?.email).toBe("a@b.c");
+  const deleted = sql.findIndex((query) => query.startsWith("DELETE FROM users WHERE email"));
+  const inserted = sql.findIndex((query) => query.startsWith("INSERT INTO users"));
+  expect(deleted).toBeGreaterThanOrEqual(0);
+  expect(inserted).toBeGreaterThan(deleted);
 });
 
 test("insertApp keeps an explicit null client expiry", async () => {

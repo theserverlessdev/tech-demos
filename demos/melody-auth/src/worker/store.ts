@@ -5,7 +5,7 @@ import { hashClientSecret } from "./secret";
 import { FED_CLAIM_SQL, PAR_CLAIM_SQL } from "./policy";
 import { parseRedirectUris } from "./redirect";
 import type { AppRow, UserRow } from "./db";
-import { createUser, getApp, getUserByEmail, getUserById } from "./db";
+import { createUser, deleteExpiredUserByEmail, getUserByEmail, getUserById } from "./db";
 
 export type FullApp = AppRow & {
   client_secret_hash: string | null;
@@ -82,13 +82,14 @@ export async function insertApp(
     now: number;
     expiresAt?: number | null;
     requirePkce?: boolean;
+    resources?: string[];
   },
 ): Promise<FullApp> {
   const id = randomId("app");
   await db
     .prepare(
       `INSERT INTO apps (id, client_id, name, redirect_uris, created_at, client_secret_hash, client_secret_salt, token_endpoint_auth_method, grant_types, scopes, jwks, client_type, resources, registration_access_hash, expires_at, require_pkce, response_types)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, '["code"]')`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '["code"]')`,
     )
     .bind(
       id,
@@ -103,6 +104,7 @@ export async function insertApp(
       input.scopes,
       input.jwks ?? null,
       input.clientType,
+      input.resources?.length ? JSON.stringify(input.resources) : null,
       input.registrationHash ?? null,
       input.expiresAt === undefined ? input.now + CLIENT_TTL_MS : input.expiresAt,
       input.requirePkce === false ? 0 : 1,
@@ -116,18 +118,20 @@ export async function insertApp(
 export async function updateApp(
   db: D1Database,
   clientId: string,
-  patch: { name?: string; redirectUris?: string[]; grantTypes?: string[]; scopes?: string; authMethod?: string },
+  patch: { name?: string; redirectUris?: string[]; grantTypes?: string[]; scopes?: string; authMethod?: string; resources?: string[] },
 ): Promise<void> {
   const current = await getFullApp(db, clientId);
   if (!current) return;
+  const resources = patch.resources !== undefined ? (patch.resources.length ? JSON.stringify(patch.resources) : null) : current.resources;
   await db
-    .prepare("UPDATE apps SET name = ?, redirect_uris = ?, grant_types = ?, scopes = ?, token_endpoint_auth_method = ? WHERE client_id = ?")
+    .prepare("UPDATE apps SET name = ?, redirect_uris = ?, grant_types = ?, scopes = ?, token_endpoint_auth_method = ?, resources = ? WHERE client_id = ?")
     .bind(
       patch.name ?? current.name,
       JSON.stringify(patch.redirectUris ?? parseRedirectUris(current.redirect_uris)),
       JSON.stringify(patch.grantTypes ?? appGrants(current)),
       patch.scopes ?? current.scopes,
       patch.authMethod ?? current.token_endpoint_auth_method,
+      resources,
       clientId,
     )
     .run();
@@ -139,7 +143,17 @@ export async function deleteApp(db: D1Database, clientId: string): Promise<void>
 
 export async function ensureMachineApp(db: D1Database, now: number, secret: string): Promise<void> {
   const hashed = await hashClientSecret(secret);
-  if (await getApp(db, MACHINE_CLIENT_ID)) {
+  const existing = await getFullApp(db, MACHINE_CLIENT_ID);
+  if (existing) {
+    if (
+      existing.client_secret_hash === hashed &&
+      (existing.client_secret_salt ?? "") === "" &&
+      existing.expires_at == null &&
+      existing.client_type === "confidential" &&
+      existing.token_endpoint_auth_method === "client_secret_post"
+    ) {
+      return;
+    }
     await db
       .prepare("UPDATE apps SET client_secret_hash = ?, client_secret_salt = '', expires_at = NULL, client_type = 'confidential', token_endpoint_auth_method = 'client_secret_post' WHERE client_id = ?")
       .bind(hashed, MACHINE_CLIENT_ID)
@@ -281,14 +295,13 @@ export async function userForFederation(db: D1Database, email: string, now: numb
   if (existing) {
     if (!existing.email_verified) {
       const hashed = await hashPassword(toBase64Url(randomBytes(18)));
-      await db
-        .prepare("UPDATE users SET email_verified = 1, password_hash = ?, salt = ? WHERE id = ?")
-        .bind(hashed.hash, hashed.salt, existing.id)
-        .run();
       await db.batch([
+        db.prepare("UPDATE users SET email_verified = 1, password_hash = ?, salt = ? WHERE id = ?").bind(hashed.hash, hashed.salt, existing.id),
         db.prepare("DELETE FROM sessions WHERE user_id = ?").bind(existing.id),
         db.prepare("DELETE FROM refresh_tokens WHERE user_id = ?").bind(existing.id),
         db.prepare("DELETE FROM consents WHERE user_id = ?").bind(existing.id),
+        db.prepare("UPDATE device_grants SET denied_at = ? WHERE user_id = ? AND expires_at > ?").bind(now, existing.id, now),
+        db.prepare("DELETE FROM auth_codes WHERE user_id = ? AND used_at IS NULL").bind(existing.id),
       ]);
       existing.email_verified = 1;
       existing.password_hash = hashed.hash;
@@ -297,6 +310,7 @@ export async function userForFederation(db: D1Database, email: string, now: numb
     return existing;
   }
   const hashed = await hashPassword(toBase64Url(randomBytes(18)));
+  await deleteExpiredUserByEmail(db, email, now);
   return createUser(db, email, hashed.hash, hashed.salt, now, true);
 }
 
@@ -349,15 +363,17 @@ export async function ensureSampleMeta(db: D1Database, now: number, local: boole
   const merged = [...new Set([...current, ...extra.filter((uri): uri is string => Boolean(uri))])];
   const grants = appGrants(app);
   const nextGrants = [...new Set([...grants, "urn:ietf:params:oauth:grant-type:device_code"])];
+  const nextRedirects = JSON.stringify(merged);
+  const nextGrantJson = JSON.stringify(nextGrants);
+  const nextScopes = app.scopes || "openid profile email offline_access api";
+  const nextLogout = JSON.stringify(merged);
+  if (app.redirect_uris === nextRedirects && app.grant_types === nextGrantJson && app.scopes === nextScopes && (app.post_logout_redirect_uris ?? null) === nextLogout) {
+    void now;
+    return;
+  }
   await db
     .prepare("UPDATE apps SET redirect_uris = ?, grant_types = ?, scopes = ?, post_logout_redirect_uris = ? WHERE client_id = ?")
-    .bind(
-      JSON.stringify(merged),
-      JSON.stringify(nextGrants),
-      app.scopes || "openid profile email offline_access api",
-      JSON.stringify(merged),
-      SAMPLE_CLIENT_ID,
-    )
+    .bind(nextRedirects, nextGrantJson, nextScopes, nextLogout, SAMPLE_CLIENT_ID)
     .run();
   void now;
 }
