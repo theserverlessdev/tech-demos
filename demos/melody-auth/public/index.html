@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="theme-color" content="#0e0e11" />
+  <title>Melody Auth · Tech Demos · theserverless.dev</title>
+  <meta name="description" content="A standards-compliant OAuth 2.0 / OIDC sign-in server on Workers + D1 + KV. Sign up, PKCE, inspect tokens, refresh, sign out." />
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,560..760&family=Hanken+Grotesk:wght@420..680&family=JetBrains+Mono:wght@440;560&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./assets/app.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="https://tech-demos.theserverless.dev/" aria-label="Tech Demos gallery">
+      <svg class="brand__mark" width="26" height="26" viewBox="0 -3 128 128" aria-hidden="true">
+        <g stroke="currentColor" stroke-width="6" stroke-linecap="round" opacity="0.45"><line x1="4" y1="58" x2="20" y2="58"/><line x1="1" y1="72" x2="19" y2="72"/><line x1="6" y1="86" x2="22" y2="86"/></g>
+        <path d="M44 92 C31 92 20 82 20 69 C20 57 29 47 41 46 C45 33 57 24 70 24 C85 24 98 35 100 51 C110 53 118 62 118 72 C118 83 109 92 97 92 Z" fill="none" stroke="currentColor" stroke-width="7.5" stroke-linejoin="round"/>
+        <path d="M69 36 L50 71 L63 71 L57 102 L88 60 L72 60 L80 36 Z" fill="currentColor"/>
+      </svg>
+      <span>Tech Demos</span>
+    </a>
+    <div class="topbar__title">
+      <h1>Melody Auth</h1>
+      <p>OIDC at the edge</p>
+    </div>
+    <div class="topbar__actions">
+      <a class="btn" href="./admin">Admin</a>
+      <a class="btn btn-ghost" href="https://github.com/ValueMelody/melody-auth" rel="noopener" target="_blank">Upstream</a>
+    </div>
+  </header>
+
+  <div class="strip" role="status">
+    <span class="strip__dot"></span>
+    <span>You can run your own standards-compliant sign-in server on Workers + D1 + KV.</span>
+  </div>
+
+  <main>
+    <section class="gate" id="intro">
+      <p class="eyebrow">Sample app</p>
+      <h2>Sign in with PKCE. Read the tokens.</h2>
+      <p class="lede"><span class="shows__k">What this shows</span> The sample app starts an authorization-code flow with PKCE S256. The hosted page signs you up or in. This page then shows the ID token claims and <span class="mono">/userinfo</span>.</p>
+      <p class="fine">Try it: create an account, come back through sign-in, refresh the access token, then sign out. Demo users expire after 24 hours. No email is sent.</p>
+      <div class="actions">
+        <button class="btn btn-primary" id="start" type="button">Sign in with PKCE</button>
+        <button class="btn" id="start-signup" type="button">Create account</button>
+      </div>
+      <p class="hint" id="intro-error" role="status"></p>
+    </section>
+
+    <section class="card" id="tokens" hidden>
+      <p class="eyebrow">Signed in</p>
+      <h2>ID token claims</h2>
+      <p class="lede">Decoded locally. The signature was accepted by this Worker when it minted the token.</p>
+      <table class="claims" id="claims"></table>
+      <h3>Userinfo</h3>
+      <pre class="pre" id="userinfo"></pre>
+      <div class="actions">
+        <button class="btn btn-primary" id="refresh" type="button">Refresh tokens</button>
+        <button class="btn" id="signout" type="button">Sign out</button>
+      </div>
+      <p class="hint" id="token-error" role="status"></p>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <p>
+      Inspired by <a href="https://github.com/ValueMelody/melody-auth" rel="noopener" target="_blank">ValueMelody/melody-auth</a> (MIT). Signup / password / OIDC only — no MFA, no social, no email.
+      <a href="https://theserverless.dev/contact" rel="noopener">Contact</a>
+    </p>
+  </footer>
+
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
+  <script type="module" src="./assets/app.js"></script>
+</body>
+</html>

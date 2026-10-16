@@ -1,0 +1,52 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tech-demos-melody-auth",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-10-16",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "tech-demos-melody-auth",
+      "database_id": "00000000-0000-4000-8000-000000007471",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "KEYS",
+      "id": "00000000000000000000000000007471"
+    }
+  ],
+  // 7471 authorize, 7472 token, 7473 admin. 7471 currently overlaps feedlog READ_LIMIT.
+  "ratelimits": [
+    { "name": "AUTH_LIMIT", "namespace_id": "7471", "simple": { "limit": 8, "period": 60 } },
+    { "name": "TOKEN_LIMIT", "namespace_id": "7472", "simple": { "limit": 20, "period": 60 } },
+    { "name": "ADMIN_LIMIT", "namespace_id": "7473", "simple": { "limit": 60, "period": 60 } }
+  ],
+  "vars": {
+    // Empty in production. .dev.vars sets "local" so the Turnstile test secret
+    // works under wrangler dev, which rewrites Host to the first route.
+    "ENVIRONMENT": "",
+    // Placeholder until the owner pastes a live widget key for these hostnames.
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFX7Ws8qEiyDj57x"
+  },
+  "secrets": { "required": ["TURNSTILE_SECRET", "AUTH_PRIVATE_JWK"] },
+  "triggers": { "crons": ["*/15 * * * *"] },
+  "routes": [
+    { "pattern": "tech-demos.theserverless.dev/demos/melody-auth*", "zone_name": "theserverless.dev" },
+    { "pattern": "melody-auth.tech-demos.theserverless.dev/*", "zone_name": "theserverless.dev" }
+  ],
+  "workers_dev": false,
+  "observability": {
+    "enabled": true,
+    "logs": { "enabled": true, "head_sampling_rate": 1 },
+    "traces": { "enabled": true, "head_sampling_rate": 1 }
+  }
+}
