@@ -1,0 +1,56 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tech-demos-melody-auth",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-10-08",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "tech-demos-melody-auth",
+      "database_id": "e522863a-1932-4955-99d7-18a13014c631",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "KEYS",
+      "id": "24dc62b3e8d94d139a8c5d63fdca1a1b"
+    }
+  ],
+  // 7481 authorize POST, 7482 token, 7483 admin, 7484 userinfo/logout, 7485 authorize GET.
+  // Unused elsewhere (7480 is goodvibes CONNECT_LIMIT).
+  "ratelimits": [
+    { "name": "AUTH_LIMIT", "namespace_id": "7481", "simple": { "limit": 8, "period": 60 } },
+    { "name": "TOKEN_LIMIT", "namespace_id": "7482", "simple": { "limit": 20, "period": 60 } },
+    { "name": "ADMIN_LIMIT", "namespace_id": "7483", "simple": { "limit": 60, "period": 60 } },
+    { "name": "SESSION_LIMIT", "namespace_id": "7484", "simple": { "limit": 30, "period": 60 } },
+    { "name": "PAGE_LIMIT", "namespace_id": "7485", "simple": { "limit": 30, "period": 60 } }
+  ],
+  "vars": {
+    // Empty in production. .dev.vars sets "local" so the Turnstile test secret
+    // works under wrangler dev, which rewrites Host to the first route.
+    "ENVIRONMENT": "",
+    // PLACEHOLDER — owner must mint a dedicated Turnstile widget for
+    // melody-auth.tech-demos.theserverless.dev. Do not reuse another demo's live key.
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFYQUTxFgredOxQl"
+  },
+  "secrets": { "required": ["TURNSTILE_SECRET", "AUTH_PRIVATE_JWK"] },
+  "triggers": { "crons": ["*/15 * * * *"] },
+  "routes": [
+    { "pattern": "tech-demos.theserverless.dev/demos/melody-auth*", "zone_name": "theserverless.dev" },
+    { "pattern": "melody-auth.tech-demos.theserverless.dev/*", "zone_name": "theserverless.dev" }
+  ],
+  "workers_dev": false,
+  "observability": {
+    "enabled": true,
+    "logs": { "enabled": true, "head_sampling_rate": 1 },
+    "traces": { "enabled": true, "head_sampling_rate": 1 }
+  }
+}

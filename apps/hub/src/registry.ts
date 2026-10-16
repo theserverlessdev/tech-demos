@@ -91,7 +91,33 @@ const byokPlaygroundFallbackSource = standalone("byok-playground");
 // The zone route wins, and this source only redirects if that route is missing.
 const edgeBrowserFallbackSource = standalone("edge-browser");
 
+// melody-auth is a standalone Worker (ASSETS, DB, KEYS, AUTH/TOKEN/ADMIN/SESSION/PAGE limits, cron, Turnstile).
+// The zone route 308s /demos/melody-auth* to the subdomain issuer. This source only redirects if that route is missing.
+const melodyAuthFallbackSource = standalone("melody-auth");
+
 export const demos: DemoEntry[] = [
+  {
+    slug: "melody-auth",
+    title: "Melody Auth",
+    description: "Run your own OAuth 2.0 / OIDC sign-in server at the edge. Sign up, PKCE, inspect tokens, refresh, sign out.",
+    demonstrates:
+      "You can run a standards-compliant sign-in server on Workers + D1 + KV: hosted sign-up and sign-in, authorization codes with PKCE S256, ES256 JWKS, and refresh-token rotation — without a SaaS IdP.",
+    capabilities: [
+      "Sign up and sign in on the hosted authorize page",
+      "Complete the PKCE authorization-code flow in the sample app",
+      "Inspect decoded ID token claims and the /userinfo result",
+      "Refresh the access token (rotation) and sign out",
+      "Open the admin list of masked demo users and registered apps",
+    ],
+    useCases: [
+      "SSO for your own apps on Workers",
+      "Auth for a side project without a SaaS IdP",
+      "A standards-compliant login box you host at the edge",
+    ],
+    tags: ["oauth", "oidc", "pkce", "d1", "kv", "turnstile"],
+    kind: "standalone",
+    source: melodyAuthFallbackSource,
+  },
   {
     slug: "edge-browser",
     title: "Edge browser",

@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="theme-color" content="#0e0e11" />
+  <title>Admin · Melody Auth · Tech Demos</title>
+  <meta name="description" content="Demo-safe admin list of masked users and registered OAuth apps." />
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,560..760&family=Hanken+Grotesk:wght@420..680&family=JetBrains+Mono:wght@440;560&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./assets/app.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="https://tech-demos.theserverless.dev/" aria-label="Tech Demos gallery">
+      <svg class="brand__mark" width="26" height="26" viewBox="0 -3 128 128" aria-hidden="true">
+        <g stroke="currentColor" stroke-width="6" stroke-linecap="round" opacity="0.45"><line x1="4" y1="58" x2="20" y2="58"/><line x1="1" y1="72" x2="19" y2="72"/><line x1="6" y1="86" x2="22" y2="86"/></g>
+        <path d="M44 92 C31 92 20 82 20 69 C20 57 29 47 41 46 C45 33 57 24 70 24 C85 24 98 35 100 51 C110 53 118 62 118 72 C118 83 109 92 97 92 Z" fill="none" stroke="currentColor" stroke-width="7.5" stroke-linejoin="round"/>
+        <path d="M69 36 L50 71 L63 71 L57 102 L88 60 L72 60 L80 36 Z" fill="currentColor"/>
+      </svg>
+      <span>Tech Demos</span>
+    </a>
+    <div class="topbar__title">
+      <h1>Melody Auth</h1>
+      <p>Admin list</p>
+    </div>
+    <div class="topbar__actions">
+      <a class="btn" href="./">Sample app</a>
+    </div>
+  </header>
+
+  <div class="strip" role="status">
+    <span class="strip__dot"></span>
+    <span>Read-only. Emails are masked. A cron deletes demo users after 24 hours.</span>
+  </div>
+
+  <main>
+    <section class="card">
+      <p class="eyebrow">Users</p>
+      <h2>Demo accounts</h2>
+      <p class="lede">Masked so this page cannot be used to harvest addresses. There are no delete or edit actions.</p>
+      <ul class="list" id="users"></ul>
+    </section>
+    <section class="card">
+      <p class="eyebrow">Apps</p>
+      <h2>Registered clients</h2>
+      <p class="lede">Redirect URIs must match exactly. The sample app is <span class="mono">melody-sample</span>.</p>
+      <ul class="list" id="apps"></ul>
+    </section>
+    <p class="hint" id="admin-error" role="status"></p>
+  </main>
+
+  <footer class="foot">
+    <p>Inspired by <a href="https://github.com/ValueMelody/melody-auth" rel="noopener" target="_blank">ValueMelody/melody-auth</a> (MIT).</p>
+  </footer>
+  <script type="module" src="./assets/admin.js"></script>
+</body>
+</html>
