@@ -145,15 +145,6 @@ const tokens = await postForm("/token", {
 const issued = tokens.data as { access_token?: string; id_token?: string; refresh_token?: string };
 check("token exchange returns three tokens", tokens.status === 200 && Boolean(issued.access_token && issued.id_token && issued.refresh_token), tokens.status);
 
-const reuse = await postForm("/token", {
-  grant_type: "authorization_code",
-  code: code ?? "",
-  redirect_uri: redirectUri,
-  client_id: "melody-sample",
-  code_verifier: verifier,
-});
-check("code reuse is invalid_grant", reuse.status === 400 && (reuse.data as { error?: string })?.error === "invalid_grant", reuse.data);
-
 const userinfo = await fetch(`${base}/userinfo`, { headers: { authorization: `Bearer ${issued.access_token}` } });
 const info = (await userinfo.json()) as { email?: string; email_verified?: boolean };
 check("userinfo returns the signup email", userinfo.status === 200 && info.email === email, info);
@@ -176,6 +167,22 @@ const replay = await postForm("/token", {
   client_id: "melody-sample",
 });
 check("refresh reuse is invalid_grant", replay.status === 400 && (replay.data as { error?: string })?.error === "invalid_grant", replay.data);
+
+const reuse = await postForm("/token", {
+  grant_type: "authorization_code",
+  code: code ?? "",
+  redirect_uri: redirectUri,
+  client_id: "melody-sample",
+  code_verifier: verifier,
+});
+check("code reuse is invalid_grant", reuse.status === 400 && (reuse.data as { error?: string })?.error === "invalid_grant", reuse.data);
+
+const afterReuse = await postForm("/token", {
+  grant_type: "refresh_token",
+  refresh_token: next.refresh_token ?? "",
+  client_id: "melody-sample",
+});
+check("code reuse revokes the refresh family", afterReuse.status === 400 && (afterReuse.data as { error?: string })?.error === "invalid_grant", afterReuse.data);
 
 const raced = await signupCode(redirectUri);
 check("second signup issued a code for the race", raced.signed.status === 302 && Boolean(raced.code), raced.signed.status);
