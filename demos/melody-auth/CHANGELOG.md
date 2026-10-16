@@ -40,4 +40,4 @@ Hub Graphite & Ember. Background `#0e0e11`, ember `#c2410c`, Bricolage Grotesque
 
 ## 2026-10-16
 
-First slice: hosted authorize, sample-app PKCE client, token inspector, admin list, 24-hour cron purge, Turnstile, rate limits `7471` / `7472` / `7473`. Phone layout uses 16px fields and 44px controls.
+First slice: hosted authorize, sample-app PKCE client, token inspector, admin list, 24-hour cron purge, Turnstile, rate limits `7481` / `7482` / `7483`. Phone layout uses 16px fields and 44px controls.

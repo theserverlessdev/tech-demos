@@ -31,7 +31,7 @@ Inspired by [ValueMelody/melody-auth](https://github.com/ValueMelody/melody-auth
 
 - Signup / password / OIDC only. No MFA, no social logins, no email delivery.
 - Demo users expire after 24 hours. A cron every 15 minutes deletes them and their codes, sessions, and refresh tokens.
-- Sign-up and sign-in require Turnstile. Rate limits are authorize `7471` (8/min), token `7472` (20/min), and admin `7473` (60/min).
+- Sign-up and sign-in require Turnstile. Rate limits are authorize `7481` (8/min), token `7482` (20/min), and admin `7483` (60/min).
 - `redirect_uri` is an exact string match. Codes are 60 seconds and single-use. A reused refresh token revokes its family.
 - Error copy is generic. A missing user and a wrong password both return “Email or password is incorrect.”
 
@@ -85,7 +85,7 @@ Generate `AUTH_PRIVATE_JWK` as an ES256 (P-256) JWK with `kid`, `d`, `x`, and `y
 | Secret | `TURNSTILE_SECRET` | **Create.** `wrangler secret put TURNSTILE_SECRET`. Do not commit it. |
 | Secret | `AUTH_PRIVATE_JWK` | **Create.** ES256 private JWK JSON. Public JWKS is derived and stored in KV. |
 | Turnstile widget | `tech-demos-melody-auth` | **Create or reuse.** Hostnames: `tech-demos.theserverless.dev`, `melody-auth.tech-demos.theserverless.dev`. Site key var is `TURNSTILE_SITE_KEY` (placeholder `0x4AAAAAAFX7Ws8qEiyDj57x` until a dedicated widget exists). Action `melody-auth`. |
-| Rate-limit namespaces | `7471` authorize, `7472` token, `7473` admin | Created on deploy. `7471` currently overlaps feedlog `READ_LIMIT` — remint feedlog if both are live. |
+| Rate-limit namespaces | `7481` authorize, `7482` token, `7483` admin | Created on deploy. Unused elsewhere in this repo (`7480` is Ember Rush). |
 | Cron | `*/15 * * * *` | Applied on deploy. Deletes users with `expires_at` in the past (24 hours after creation) and their codes, sessions, and refresh tokens. |
 | Routes | `tech-demos.theserverless.dev/demos/melody-auth*` and `melody-auth.tech-demos.theserverless.dev/*` | Applied on deploy. The zone is `theserverless.dev`. |
 
