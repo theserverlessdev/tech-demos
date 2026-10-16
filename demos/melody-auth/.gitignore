@@ -2,6 +2,8 @@ public/assets/app.js
 public/assets/app.js.map
 public/assets/admin.js
 public/assets/admin.js.map
+public/assets/playground.js
+public/assets/playground.js.map
 worker-configuration.d.ts
 .dev.vars
 .wrangler/

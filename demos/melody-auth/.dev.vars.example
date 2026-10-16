@@ -6,3 +6,4 @@ TURNSTILE_SITE_KEY=1x00000000000000000000AA
 TURNSTILE_SECRET=1x0000000000000000000000000000000AA
 # Demo-only ES256 JWK. Production uses `wrangler secret put AUTH_PRIVATE_JWK`. Do not reuse this key live.
 AUTH_PRIVATE_JWK={"crv":"P-256","d":"p2rJ5XiDRi5pLLG9gzH4qoXbs2GKJ5KN3jruLjfILW0","ext":true,"key_ops":["sign"],"kty":"EC","x":"7n9MQV0h4T-Efij9pjzvLnn-oJO9ML24pQucNjbzIm8","y":"2MvQMOmOe1_-fieWGS6QYIjtvzCAZWme26W1BNJ7qUM","kid":"melody-demo-1","alg":"ES256","use":"sig"}
+MACHINE_CLIENT_SECRET=melody-machine-secret

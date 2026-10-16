@@ -16,6 +16,11 @@ export type AuthorizeFields = {
   challenge: string;
   method: string;
   responseType: string;
+  prompt: string;
+  maxAge: string;
+  loginHint: string;
+  resource: string;
+  responseMode: string;
 };
 
 export function authorizePage(input: {
@@ -26,19 +31,11 @@ export function authorizePage(input: {
   error: string;
   sessionEmail: string | null;
   email?: string;
+  providers?: { id: string; label: string }[];
 }): string {
   const { basePath, siteKey, fields, mode, error, sessionEmail } = input;
-  const email = input.email ?? "";
-  const hidden = [
-    hiddenField("response_type", fields.responseType || "code"),
-    hiddenField("client_id", fields.clientId),
-    hiddenField("redirect_uri", fields.redirectUri),
-    hiddenField("state", fields.state),
-    hiddenField("nonce", fields.nonce),
-    hiddenField("scope", fields.scope),
-    hiddenField("code_challenge", fields.challenge),
-    hiddenField("code_challenge_method", fields.method),
-  ].join("");
+  const email = input.email ?? fields.loginHint ?? "";
+  const hidden = hiddenOauth(fields);
   const signinActive = mode === "signin" ? " is-active" : "";
   const signupActive = mode === "signup" ? " is-active" : "";
   const continueBlock = sessionEmail
@@ -47,11 +44,17 @@ export function authorizePage(input: {
         <input type="hidden" name="mode" value="continue" />
         <p class="eyebrow">Already signed in</p>
         <h2>Continue as ${escapeHtml(sessionEmail)}</h2>
-        <p class="lede">This browser already has a hosted session. Continue to issue a one-time code.</p>
+        <p class="lede">This browser already has a hosted session. Continue to review consent and issue a one-time code.</p>
         <button class="btn btn-primary btn-block" type="submit">Continue as ${escapeHtml(sessionEmail)}</button>
         <p class="fine"><a href="${escapeHtml(tabHref(basePath, fields, "signin", true))}">Use a different account</a></p>
       </form>`
     : "";
+  const fed = (input.providers ?? [])
+    .map((provider) => {
+      const url = `${basePath}/fed/${encodeURIComponent(provider.id)}?return_to=${encodeURIComponent(authorizeQuery(fields))}`;
+      return `<a class="btn btn-block" href="${escapeHtml(url)}">Sign in with ${escapeHtml(provider.label)}</a>`;
+    })
+    .join("");
   return layout({
     basePath,
     title: mode === "signup" ? "Create account" : "Sign in",
@@ -74,14 +77,120 @@ export function authorizePage(input: {
           <label>Password
             <input id="password" name="password" type="password" autocomplete="${mode === "signup" ? "new-password" : "current-password"}" required minlength="8" maxlength="128" />
           </label>
-          <p class="fine">At least 8 characters. Demo accounts expire after 24 hours. No email is sent.</p>
+          <p class="fine">At least 8 characters. Demo accounts expire after 24 hours. No email is sent. Local sign-up sets <span class="mono">email_verified=false</span>.</p>
           <div id="turnstile" class="turnstile" data-sitekey="${escapeHtml(siteKey)}"></div>
           <input type="hidden" name="turnstileToken" id="turnstile-token" />
           <button class="btn btn-primary btn-block" id="submit" type="submit" disabled>${mode === "signup" ? "Create account" : "Sign in"}</button>
+          ${fed ? `<div class="actions">${fed}</div>` : ""}
           <p class="hint" id="auth-error" role="status">${escapeHtml(error)}</p>
         </form>
       </section>`,
   });
+}
+
+export function consentPage(input: {
+  basePath: string;
+  fields: AuthorizeFields;
+  clientName: string;
+  email: string;
+  scopes: string[];
+  error?: string;
+}): string {
+  const hidden = hiddenOauth(input.fields);
+  const items = input.scopes.map((scope) => `<li class="row">${escapeHtml(scope)}</li>`).join("");
+  return layout({
+    basePath: input.basePath,
+    title: "Consent",
+    body: `
+      <section class="gate">
+        <p class="eyebrow">Consent</p>
+        <h2>${escapeHtml(input.clientName)} wants access</h2>
+        <p class="lede"><span class="shows__k">What this shows</span> Consent is remembered per client + scopes. <span class="shows__k">Try</span> Allow once, then sign in again — this page is skipped until scopes grow. Signed in as ${escapeHtml(input.email)}.</p>
+        <ul class="list">${items}</ul>
+        <form method="post" action="${escapeHtml(`${input.basePath}/consent`)}" class="card card--auth">
+          ${hidden}
+          <input type="hidden" name="decision" value="allow" />
+          <button class="btn btn-primary btn-block" type="submit">Allow</button>
+        </form>
+        <form method="post" action="${escapeHtml(`${input.basePath}/consent`)}" class="card card--auth">
+          ${hidden}
+          <input type="hidden" name="decision" value="deny" />
+          <button class="btn btn-block" type="submit">Deny</button>
+        </form>
+        <p class="hint" role="status">${escapeHtml(input.error ?? "")}</p>
+      </section>`,
+  });
+}
+
+export function devicePage(input: {
+  basePath: string;
+  siteKey: string;
+  userCode: string;
+  sessionEmail: string | null;
+  error: string;
+  pendingName?: string;
+}): string {
+  if (input.sessionEmail && input.pendingName) {
+    return layout({
+      basePath: input.basePath,
+      title: "Device",
+      body: `
+        <section class="gate">
+          <p class="eyebrow">Device authorization</p>
+          <h2>Approve ${escapeHtml(input.pendingName)}?</h2>
+          <p class="lede"><span class="shows__k">What this shows</span> RFC 8628 — the TV/CLI flow. Signed in as ${escapeHtml(input.sessionEmail)}. User code <span class="device-code">${escapeHtml(input.userCode)}</span></p>
+          <form method="post" action="${escapeHtml(`${input.basePath}/device`)}" class="card card--auth">
+            <input type="hidden" name="user_code" value="${escapeHtml(input.userCode)}" />
+            <input type="hidden" name="decision" value="allow" />
+            <button class="btn btn-primary btn-block" type="submit">Approve</button>
+          </form>
+          <form method="post" action="${escapeHtml(`${input.basePath}/device`)}" class="card card--auth">
+            <input type="hidden" name="user_code" value="${escapeHtml(input.userCode)}" />
+            <input type="hidden" name="decision" value="deny" />
+            <button class="btn btn-block" type="submit">Deny</button>
+          </form>
+        </section>`,
+    });
+  }
+  return layout({
+    basePath: input.basePath,
+    title: "Device",
+    body: `
+      <section class="gate">
+        <p class="eyebrow">Device authorization</p>
+        <h2>Enter the code from your TV or CLI</h2>
+        <p class="lede"><span class="shows__k">What this shows</span> RFC 8628 user-code page. <span class="shows__k">Try</span> Start a device grant in the playground, type the code here, then approve.</p>
+        <form method="get" action="${escapeHtml(`${input.basePath}/device`)}" class="card card--auth">
+          <label>User code
+            <input name="user_code" value="${escapeHtml(input.userCode)}" maxlength="9" autocapitalize="characters" autocomplete="one-time-code" />
+          </label>
+          <button class="btn btn-primary btn-block" type="submit">Continue</button>
+        </form>
+        ${
+          input.sessionEmail
+            ? `<p class="fine">Signed in as ${escapeHtml(input.sessionEmail)}.</p>`
+            : `<p class="fine">You will sign in on the next step.</p>`
+        }
+        <p class="hint" role="status">${escapeHtml(input.error)}</p>
+      </section>`,
+  });
+}
+
+export function formPostPage(target: string, fields: Record<string, string>): string {
+  const inputs = Object.entries(fields)
+    .map(([name, value]) => hiddenField(name, value))
+    .join("");
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Returning to the app</title>
+</head>
+<body>
+  <form method="post" action="${escapeHtml(target)}">${inputs}<button type="submit">Continue</button></form>
+  <script>document.forms[0].submit()</script>
+</body>
+</html>`;
 }
 
 export function errorPage(basePath: string, title: string, message: string): string {
@@ -98,11 +207,29 @@ export function errorPage(basePath: string, title: string, message: string): str
   });
 }
 
+function hiddenOauth(fields: AuthorizeFields): string {
+  return [
+    hiddenField("response_type", fields.responseType || "code"),
+    hiddenField("client_id", fields.clientId),
+    hiddenField("redirect_uri", fields.redirectUri),
+    hiddenField("state", fields.state),
+    hiddenField("nonce", fields.nonce),
+    hiddenField("scope", fields.scope),
+    hiddenField("code_challenge", fields.challenge),
+    hiddenField("code_challenge_method", fields.method),
+    hiddenField("prompt", fields.prompt),
+    hiddenField("max_age", fields.maxAge),
+    hiddenField("login_hint", fields.loginHint),
+    hiddenField("resource", fields.resource),
+    hiddenField("response_mode", fields.responseMode),
+  ].join("");
+}
+
 function hiddenField(name: string, value: string): string {
   return `<input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(value)}" />`;
 }
 
-function tabHref(basePath: string, fields: AuthorizeFields, mode: "signin" | "signup", switchAccount = false): string {
+function authorizeQuery(fields: AuthorizeFields): string {
   const url = new URL("https://local.invalid/authorize");
   url.searchParams.set("response_type", fields.responseType || "code");
   url.searchParams.set("client_id", fields.clientId);
@@ -112,6 +239,16 @@ function tabHref(basePath: string, fields: AuthorizeFields, mode: "signin" | "si
   url.searchParams.set("scope", fields.scope);
   url.searchParams.set("code_challenge", fields.challenge);
   url.searchParams.set("code_challenge_method", fields.method);
+  if (fields.prompt) url.searchParams.set("prompt", fields.prompt);
+  if (fields.maxAge) url.searchParams.set("max_age", fields.maxAge);
+  if (fields.loginHint) url.searchParams.set("login_hint", fields.loginHint);
+  if (fields.resource) url.searchParams.set("resource", fields.resource);
+  if (fields.responseMode) url.searchParams.set("response_mode", fields.responseMode);
+  return `${url.pathname}${url.search}`;
+}
+
+function tabHref(basePath: string, fields: AuthorizeFields, mode: "signin" | "signup", switchAccount = false): string {
+  const url = new URL(`https://local.invalid${authorizeQuery(fields)}`);
   url.searchParams.set("mode", mode);
   if (switchAccount) url.searchParams.set("switch", "1");
   return `${basePath}${url.pathname}${url.search}`;
@@ -146,10 +283,11 @@ function layout(input: { basePath: string; title: string; body: string }): strin
     </a>
     <div class="topbar__title">
       <h1>Melody Auth</h1>
-      <p>Hosted sign-in on Workers</p>
+      <p>OAuth 2.1 / OIDC at the edge</p>
     </div>
     <div class="topbar__actions">
-      <a class="btn" href="${input.basePath}/">Sample app</a>
+      <a class="btn" href="${input.basePath}/">Sample</a>
+      <a class="btn" href="${input.basePath}/playground.html">Playground</a>
       <a class="btn btn-ghost" href="${input.basePath}/admin">Admin</a>
     </div>
   </header>

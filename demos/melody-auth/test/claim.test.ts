@@ -38,6 +38,8 @@ const row = {
   expires_at: Date.now() + 60_000,
   used_at: Date.now(),
   family_id: "fam_1",
+  resource: null,
+  auth_time: Math.floor(Date.now() / 1000),
 };
 
 test("claimCode requires meta.changes === 1", async () => {

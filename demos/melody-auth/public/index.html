@@ -28,6 +28,7 @@
       <p>OIDC at the edge</p>
     </div>
     <div class="topbar__actions">
+      <a class="btn" href="./playground.html">Playground</a>
       <a class="btn" href="./admin">Admin</a>
       <a class="btn btn-ghost" href="https://github.com/ValueMelody/melody-auth" rel="noopener" target="_blank">Upstream</a>
     </div>
@@ -35,7 +36,7 @@
 
   <div class="strip" role="status">
     <span class="strip__dot"></span>
-    <span class="strip__copy">You can run your own standards-compliant sign-in server on Workers + D1 + KV. What you could build: SSO for your own apps, auth without a SaaS IdP, or a login box at the edge.</span>
+    <span class="strip__copy"><strong>What it proves</strong> A Worker can be a full OAuth 2.1 / OIDC server and a relying party. <strong>What to try</strong> PKCE sign-in, the playground grants, consent, device code. <strong>What you could build</strong> Plug Melody into Auth.js, Grafana, oauth2-proxy, or Cloudflare Access.</span>
   </div>
 
   <main>
@@ -68,7 +69,7 @@
 
   <footer class="foot">
     <p>
-      Inspired by <a href="https://github.com/ValueMelody/melody-auth" rel="noopener" target="_blank">ValueMelody/melody-auth</a> (MIT). Signup / password / OIDC only — no MFA, no social, no email.
+      Inspired by <a href="https://github.com/ValueMelody/melody-auth" rel="noopener" target="_blank">ValueMelody/melody-auth</a> (MIT). OAuth 2.1 / OIDC OP + RP. No implicit or password grant.
       <a href="https://theserverless.dev/contact" rel="noopener">Contact</a>
     </p>
   </footer>

@@ -193,7 +193,7 @@ async function startPkce(mode: "signin" | "signup"): Promise<void> {
   url.searchParams.set("response_type", "code");
   url.searchParams.set("client_id", config.clientId);
   url.searchParams.set("redirect_uri", config.redirectUri);
-  url.searchParams.set("scope", "openid email profile");
+  url.searchParams.set("scope", "openid email profile offline_access");
   url.searchParams.set("state", state);
   url.searchParams.set("nonce", nonce);
   url.searchParams.set("code_challenge", await s256(verifier));
@@ -230,7 +230,7 @@ async function finishPkce(): Promise<boolean> {
     },
   });
   history.replaceState({}, "", `${apiRoot()}/`);
-  if (res.status !== 200 || !res.data || !("id_token" in res.data)) {
+  if (res.status !== 200 || !res.data || !("access_token" in res.data) || !res.data.id_token) {
     $("intro-error").textContent = messageOf(res.data, "The token exchange failed.");
     return true;
   }
@@ -241,7 +241,7 @@ async function finishPkce(): Promise<boolean> {
   }
   tokens = res.data;
   sessionStorage.setItem("melody-tokens", JSON.stringify(tokens));
-  paintClaims(tokens.id_token, await loadUserinfo(tokens.access_token));
+  paintClaims(res.data.id_token, await loadUserinfo(tokens.access_token));
   showTokens();
   return true;
 }
@@ -259,6 +259,10 @@ async function bootSample(): Promise<void> {
   const saved = sessionStorage.getItem("melody-tokens");
   if (saved) {
     const parsed = JSON.parse(saved) as TokenResponse;
+    if (!parsed.id_token) {
+      sessionStorage.removeItem("melody-tokens");
+      return;
+    }
     const invalid = idTokenInvalid(parsed.id_token, { aud: config.clientId, iss: config.issuer }, { ignoreExp: true });
     if (invalid) {
       sessionStorage.removeItem("melody-tokens");
@@ -266,7 +270,7 @@ async function bootSample(): Promise<void> {
       return;
     }
     tokens = parsed;
-    paintClaims(tokens.id_token, await loadUserinfo(tokens.access_token));
+    paintClaims(parsed.id_token, await loadUserinfo(tokens.access_token));
     showTokens();
     if (idTokenExpired(parsed.id_token)) $("token-error").textContent = "expired, refresh";
   }
@@ -299,7 +303,7 @@ if (refreshBtn) {
         client_id: config.clientId,
       },
     });
-    if (res.status !== 200 || !res.data || !("id_token" in res.data)) {
+    if (res.status !== 200 || !res.data || !("access_token" in res.data) || !res.data.id_token) {
       $("token-error").textContent = messageOf(res.data, "Refresh failed.");
       return;
     }
@@ -310,7 +314,7 @@ if (refreshBtn) {
     }
     tokens = res.data;
     sessionStorage.setItem("melody-tokens", JSON.stringify(tokens));
-    paintClaims(tokens.id_token, await loadUserinfo(tokens.access_token));
+    paintClaims(res.data.id_token, await loadUserinfo(tokens.access_token));
   });
 }
 

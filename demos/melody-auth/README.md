@@ -2,47 +2,145 @@
 
 Live at [melody-auth.tech-demos.theserverless.dev](https://melody-auth.tech-demos.theserverless.dev/) after deploy. The hub path `308`s there.
 
-A standards-compliant OAuth 2.0 / OIDC sign-in server on Cloudflare Workers + D1 + KV. The sample app runs the full PKCE flow: sign up, sign in, inspect tokens, refresh, sign out.
+A **pluggable OAuth 2.1-aligned OpenID Provider and relying party** on Cloudflare Workers + D1 + KV. Any app that already speaks OIDC/OAuth can use it as IdP. Melody can also broker Google / GitHub / Microsoft / generic OIDC logins and issue its own tokens.
 
 Inspired by [ValueMelody/melody-auth](https://github.com/ValueMelody/melody-auth) (MIT). This is a hosted mini, not a fork, and it does not vendor that codebase.
 
 - **Plan:** [PLAN.md](./PLAN.md)
 - **What changed vs upstream:** [CHANGELOG.md](./CHANGELOG.md)
+- **Client SDK:** [sdk/](./sdk/) (discovery, PKCE, callback, refresh, JWKS verify, Hono-shaped `bearerAuth`)
+
+## Feature matrix
+
+| Spec | Status |
+| --- | --- |
+| OIDC Discovery + JWKS (`kid`, ES256) | Done |
+| Authorization code + PKCE S256 | Done |
+| Refresh rotation + reuse detection | Done |
+| Confidential `client_secret_basic` / `post` / `private_key_jwt` | Done |
+| Public clients | Done |
+| Client credentials | Done |
+| Device authorization (RFC 8628) + `/device` | Done |
+| Token exchange (RFC 8693) | Done |
+| RFC 9068 `at+jwt` access tokens | Done |
+| Introspection (RFC 7662) / revocation (RFC 7009) | Done |
+| Userinfo, RP-initiated logout / `end_session_endpoint` | Done |
+| PAR (RFC 9126), `response_mode=form_post` | Done |
+| `prompt` / `max_age` / `login_hint`, consent per client+scopes | Done |
+| Resource indicators (RFC 8707) | Done (`resource` → access-token `aud`) |
+| Dynamic client registration (RFC 7591/7592), gated | Done |
+| Key ring rotation + verify window | Done (cron; previous `kid` kept 24h) |
+| Implicit / resource-owner password | **Rejected** — removed in OAuth 2.1 |
+| Federation RP (Google / GitHub / Microsoft / generic OIDC) | Done when secrets are set |
+| DPoP, JAR, CIBA, MFA | Out of scope |
 
 ## What this demonstrates
 
-**Pattern.** You can run your own standards-compliant sign-in server at the edge on Workers + D1 + KV. Hosted sign-up and sign-in, authorization codes with PKCE S256, ES256 JWKS, and refresh-token rotation — without a SaaS IdP.
+**Pattern.** You can run a standards-compliant OpenID Provider at the edge and plug it into anything that already speaks OAuth/OIDC.
 
 **What you can try**
 
-- Sign up and sign in on the hosted authorize page.
-- Complete the PKCE authorization-code flow in the sample app.
-- Inspect decoded ID token claims and the `/userinfo` result.
-- Refresh the access token (rotation) and sign out.
-- Open the admin list of masked demo users and registered apps.
+- Sample app: sign up, consent, PKCE, inspect tokens, refresh, sign out.
+- [OAuth playground](./public/playground.html): auth code, client credentials, device code, introspect, revoke, and the rejected password grant.
+- `/device` user-code page (TV/CLI flow).
+- Admin: masked users, registered clients; `ADMIN_TOKEN` to create a client (secret shown once).
 
 **What you could build**
 
-- SSO for your own apps on Workers.
-- Auth for a side project without a SaaS IdP.
-- A standards-compliant login box you host at the edge.
+- SSO for your own apps without a SaaS IdP.
+- Broker Google/GitHub/Microsoft into *your* tokens.
+- Point Auth.js, Grafana, oauth2-proxy, or Cloudflare Access at this issuer.
 
 **Limits**
 
-- Signup / password / OIDC only. No MFA, no social logins, no email delivery. Emails are not verified (`email_verified` is always `false`).
-- Demo users expire after 24 hours. A cron every 15 minutes deletes them and their codes, sessions, and refresh tokens.
-- Sign-up and sign-in require Turnstile. Rate limits are authorize POST `7481` (8/min), token `7482` (20/min), admin `7483` (60/min), userinfo/logout `7484` (30/min), and authorize GET `7485` (30/min). `7480` is goodvibes `CONNECT_LIMIT`.
-- `redirect_uri` is an exact string match. Codes are 60 seconds and single-use (claim-first). A reused refresh token revokes its family.
-- Error copy is generic. A missing user and a wrong password both return “Email or password is incorrect.”
-- Sign-up hashes with PBKDF2 before the existence check. A unique-email constraint and insert-vs-conflict timing can still leak whether an address is already registered.
+- Demo users, DCR clients, and machine clients expire after 24 hours (sample + machine kept). Cron `*/15`.
+- Local password sign-up sets `email_verified=false`. Federation links **only** on a verified upstream email.
+- Turnstile on human sign-in/sign-up and DCR. Rate limits: `7481` authorize POST, `7482` token, `7483` admin, `7484` userinfo/logout, `7485` authorize GET, `7486` register, `7487` device, `7488` introspect, `7489` revoke, `7490` federation, `7491` PAR, `7492` playground. `7480` is goodvibes `CONNECT_LIMIT`.
+- No implicit or password grant (OAuth 2.1). Error copy on `/token` explains why.
 
-## What is real
+## Plug it into X
 
-- D1 tables for users, apps, auth codes, hosted sessions, and refresh tokens.
-- The ES256 private JWK is `AUTH_PRIVATE_JWK` (a Worker secret). `/.well-known/jwks.json` is derived from that secret and isolate-cached. KV holds a best-effort public-JWK copy (`jwks:current`). Production rejects the committed demo key.
-- `/.well-known/openid-configuration`, `/.well-known/jwks.json`, `/authorize`, `/token`, `/userinfo`, `/logout`.
-- Passwords are PBKDF2-SHA-256 (100k iterations) with a per-user salt, via WebCrypto.
-- Admin is read-only. Emails are masked. There are no delete or edit actions.
+Issuer: `https://melody-auth.tech-demos.theserverless.dev`
+
+Register a client (playground DCR, admin + `ADMIN_TOKEN`, or `POST /register` with Turnstile). Redirect URIs are exact-match. Public clients must use PKCE S256. Confidential clients use `client_secret_post` by default.
+
+### Auth.js / NextAuth
+
+```ts
+import NextAuth from "next-auth";
+
+export const { handlers, auth } = NextAuth({
+  providers: [
+    {
+      id: "melody",
+      name: "Melody Auth",
+      type: "oidc",
+      issuer: "https://melody-auth.tech-demos.theserverless.dev",
+      clientId: process.env.MELODY_CLIENT_ID!,
+      clientSecret: process.env.MELODY_CLIENT_SECRET, // omit for public + PKCE
+      checks: ["pkce", "state", "nonce"],
+    },
+  ],
+});
+```
+
+### oauth2-proxy
+
+```bash
+oauth2-proxy \
+  --provider=oidc \
+  --oidc-issuer-url=https://melody-auth.tech-demos.theserverless.dev \
+  --client-id=YOUR_CLIENT_ID \
+  --client-secret=YOUR_CLIENT_SECRET \
+  --redirect-url=https://app.example/oauth2/callback \
+  --email-domain=* \
+  --oidc-extra-audience=YOUR_CLIENT_ID
+```
+
+### Grafana
+
+```ini
+[auth.generic_oauth]
+enabled = true
+name = Melody Auth
+client_id = YOUR_CLIENT_ID
+client_secret = YOUR_CLIENT_SECRET
+scopes = openid email profile offline_access
+auth_url = https://melody-auth.tech-demos.theserverless.dev/authorize
+token_url = https://melody-auth.tech-demos.theserverless.dev/token
+api_url = https://melody-auth.tech-demos.theserverless.dev/userinfo
+use_pkce = true
+```
+
+### Cloudflare Access (custom OIDC IdP)
+
+In Zero Trust → Settings → Authentication → Add OpenID Connect:
+
+- Issuer: `https://melody-auth.tech-demos.theserverless.dev`
+- Auth URL: `…/authorize`
+- Token URL: `…/token`
+- JWKS URL: `…/.well-known/jwks.json`
+- Client ID / secret from Melody admin or DCR. Redirect URI is the Access callback Cloudflare shows.
+
+### Express / Hono (SDK)
+
+```ts
+import { discover, bearerAuth } from "../sdk/src/index.ts";
+
+const oidc = await discover("https://melody-auth.tech-demos.theserverless.dev");
+app.use("/api/*", bearerAuth({ issuer: oidc.issuer, audience: "YOUR_CLIENT_ID" }));
+```
+
+## Upstream provider setup (optional RP)
+
+Sign-in buttons stay hidden until the matching vars/secrets exist.
+
+| Provider | Vars | Secrets | Notes |
+| --- | --- | --- | --- |
+| Google | `GOOGLE_CLIENT_ID` | `GOOGLE_CLIENT_SECRET` | Redirect `https://melody-auth.tech-demos.theserverless.dev/fed/google/callback` |
+| GitHub | `GITHUB_CLIENT_ID` | `GITHUB_CLIENT_SECRET` | Scopes `read:user user:email`. Only **verified** emails link. |
+| Microsoft | `MICROSOFT_CLIENT_ID` | `MICROSOFT_CLIENT_SECRET` | Common tenant `/common`. |
+| Generic OIDC | `OIDC_ISSUER`, `OIDC_CLIENT_ID` | `OIDC_CLIENT_SECRET` | Discovery-based. Requires `email_verified`. |
 
 ## Run locally
 
@@ -53,53 +151,41 @@ bun install
 bun run dev:local
 ```
 
-`.dev.vars` uses Cloudflare's [always-pass Turnstile test keys](https://developers.cloudflare.com/turnstile/troubleshooting/testing/). `ENVIRONMENT=local` is required because `wrangler dev` rewrites Host to the first production route. The widget token for those keys is `XXXX.DUMMY.TOKEN.XXXX`.
-
 `bun run dev:local` listens on `http://127.0.0.1:8788`. `bun run smoke` expects that URL.
-
-`bun run typecheck` runs `wrangler types` before `tsc`. `bun test` covers PKCE, `redirect_uri`, code reuse, refresh rotation, and password hashing.
 
 ## Deploy
 
-Do not deploy from this PR until the resources below exist. From this folder, with the owner account (unset any other API token):
+Resources already exist from PR #43 (D1 `e522863a-1932-4955-99d7-18a13014c631`, KV `24dc62b3e8d94d139a8c5d63fdca1a1b`, Turnstile site key `0x4AAAAAAFYQUTxFgredOxQl`). Apply the additive migration, then deploy:
 
 ```bash
-bunx wrangler d1 create tech-demos-melody-auth
-# paste the database_id over the placeholder in wrangler.jsonc
-bunx wrangler kv namespace create tech-demos-melody-auth-keys
-# paste the id over the placeholder in wrangler.jsonc
+cd demos/melody-auth
 CI=1 bunx wrangler d1 migrations apply DB --remote
-# TURNSTILE_SITE_KEY in wrangler.jsonc is REPLACE_ME_MINT_A_DEDICATED_WIDGET. Mint a dedicated widget, then paste the site key.
 env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bunx wrangler deploy
-env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bunx wrangler secret put TURNSTILE_SECRET
-env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bunx wrangler secret put AUTH_PRIVATE_JWK
+# optional
+env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bunx wrangler secret put ADMIN_TOKEN
+env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bunx wrangler secret put MACHINE_CLIENT_SECRET
 ```
 
-Generate `AUTH_PRIVATE_JWK` as an ES256 (P-256) JWK with `kid`, `d`, `x`, and `y`. A brand-new Worker with `secrets.required` needs a first deploy before `wrangler secret put` works. Run both secret commands after the first deploy, then deploy once more.
+### New secrets / vars
 
-### Deploy checklist
-
-| Resource | Name | Status |
+| Name | Required | Purpose |
 | --- | --- | --- |
-| D1 database | `tech-demos-melody-auth` | **Create.** `wrangler d1 create tech-demos-melody-auth`, then paste `database_id` over `00000000-0000-4000-8000-000000007471` in `wrangler.jsonc`. Apply all migrations. |
-| KV namespace | `tech-demos-melody-auth-keys` | **Create.** `wrangler kv namespace create tech-demos-melody-auth-keys`, then paste `id` over `00000000000000000000000000007471`. |
-| Secret | `TURNSTILE_SECRET` | **Create.** `wrangler secret put TURNSTILE_SECRET`. Do not commit it. |
-| Secret | `AUTH_PRIVATE_JWK` | **Create.** ES256 private JWK JSON. Public JWKS is derived and stored in KV. |
-| Turnstile widget | `tech-demos-melody-auth` | **Create.** Mint a dedicated widget for `melody-auth.tech-demos.theserverless.dev`. Site key var is `TURNSTILE_SITE_KEY` (placeholder `REPLACE_ME_MINT_A_DEDICATED_WIDGET`). Action `melody-auth`. |
-| Rate-limit namespaces | `7481` authorize POST, `7482` token, `7483` admin, `7484` userinfo/logout, `7485` authorize GET | Created on deploy. Unused elsewhere in this repo (`7480` is goodvibes `CONNECT_LIMIT`). |
-| Cron | `*/15 * * * *` | Applied on deploy. Deletes users with `expires_at` in the past (24 hours after creation) and their codes, sessions, and refresh tokens. |
-| Routes | `tech-demos.theserverless.dev/demos/melody-auth*` and `melody-auth.tech-demos.theserverless.dev/*` | Applied on deploy. The zone is `theserverless.dev`. |
+| `TURNSTILE_SECRET` / `AUTH_PRIVATE_JWK` | yes | Existing |
+| `ADMIN_TOKEN` | no | Admin mutations + DCR bypass |
+| `MACHINE_CLIENT_SECRET` | no | Seeds `melody-machine` for client-credentials demos |
+| `GOOGLE_*` / `GITHUB_*` / `MICROSOFT_*` / `OIDC_*` | no | Federation RP |
 
-Production fails closed when `TURNSTILE_SECRET` or `AUTH_PRIVATE_JWK` is missing, and it rejects the always-pass test secret unless `ENVIRONMENT` is `local`.
+Migration `0004_oidc_full.sql` is additive only (ALTER + new tables). Never drop data.
 
-The issuer is only `https://melody-auth.tech-demos.theserverless.dev`. Requests on the hub path `308` to that origin. After the Worker is deployed, redeploy `apps/hub` so the gallery card is not only the fallback.
+After deploy, redeploy `apps/hub` so the gallery card picks up the new copy.
 
 ## Layout
 
 ```
-src/worker/   OIDC endpoints, D1, JWKS, Turnstile, hosted pages
-src/client/   sample app PKCE client, admin list
+src/worker/   OP endpoints, D1, JWKS ring, federation, hosted pages
+src/client/   sample app, playground, admin
+sdk/          zero-dep client + bearerAuth
 public/       Graphite & Ember pages
-migrations/   users, apps, codes, sessions, refresh
-test/         PKCE, redirect_uri, codes, refresh, passwords
+migrations/   additive D1
+test/         grants, discovery, device slow_down, keys, PKCE
 ```

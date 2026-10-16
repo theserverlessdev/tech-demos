@@ -28,13 +28,14 @@
       <p>Admin list</p>
     </div>
     <div class="topbar__actions">
-      <a class="btn" href="./">Sample app</a>
+      <a class="btn" href="./">Sample</a>
+      <a class="btn" href="./playground.html">Playground</a>
     </div>
   </header>
 
   <div class="strip" role="status">
     <span class="strip__dot"></span>
-    <span>Read-only. Emails are masked. A cron deletes demo users after 24 hours.</span>
+    <span class="strip__copy"><strong>What it proves</strong> Clients are hashed at rest; secrets are shown once. <strong>What to try</strong> Paste ADMIN_TOKEN to create a client. <strong>What you could build</strong> An internal IdP catalog for your apps.</span>
   </div>
 
   <main>
@@ -47,8 +48,27 @@
     <section class="card">
       <p class="eyebrow">Apps</p>
       <h2>Registered clients</h2>
-      <p class="lede">Redirect URIs must match exactly. The sample app is <span class="mono">melody-sample</span>.</p>
+      <p class="lede">Redirect URIs must match exactly. The sample app is <span class="mono">melody-sample</span>. Mutations need a Bearer ADMIN_TOKEN — without it this list stays read-only.</p>
       <ul class="list" id="apps"></ul>
+      <form class="card card--auth" id="create-app">
+        <label>Admin token
+          <input id="admin-token" type="password" autocomplete="off" />
+        </label>
+        <label>Name
+          <input id="app-name" value="Demo app" />
+        </label>
+        <label>Redirect URIs (comma-separated)
+          <input id="app-redirects" placeholder="https://app.example/callback" />
+        </label>
+        <label>Type
+          <select id="app-type">
+            <option value="public">public (PKCE)</option>
+            <option value="confidential">confidential</option>
+          </select>
+        </label>
+        <button class="btn btn-primary" type="submit">Create client</button>
+        <p class="fine" id="created-secret"></p>
+      </form>
     </section>
     <p class="hint" id="admin-error" role="status"></p>
   </main>

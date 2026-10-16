@@ -1,28 +1,38 @@
 import { ensureLocalApp, purgeExpired } from "./db";
 import { BodyTooLargeError, HttpError, OauthError } from "./errors";
-import { PAGE_CSP, json } from "./headers";
+import { PAGE_CSP, corsJson, corsPreflight, json } from "./headers";
+import { envSecret } from "./clients";
+import { handleDeviceAuthorization, handleDevicePage } from "./device";
+import { handleFederationCallback, handleFederationStart } from "./federation";
+import { handleToken } from "./grants";
+import { rotateSigningKeys } from "./jwks";
+import { isLocalEnv, PROD_ORIGIN } from "./origin";
 import {
   handleAuthorizeGet,
   handleAuthorizePost,
   handleConfig,
+  handleConsentPost,
   handleDiscovery,
   handleJwks,
   handleLogout,
-  handleToken,
   handleUserinfo,
   limit,
   stripBase,
 } from "./oidc";
+import { handlePar } from "./par";
+import { handleRegister } from "./register";
+import { ensureMachineApp, ensureSampleMeta } from "./store";
 import { handleAdminApi } from "./admin";
-import { isLocalEnv, PROD_ORIGIN } from "./origin";
+import { handleIntrospect, handleRevoke } from "./tokenops";
 
 const BASE_PATH = "/demos/melody-auth";
 
 let localSeeded = false;
 
-function errorResponse(err: unknown): Response {
+function errorResponse(err: unknown, request?: Request): Response {
   if (err instanceof OauthError) {
-    return json({ error: err.error, error_description: err.description }, err.status);
+    const payload = { error: err.error, error_description: err.description };
+    return request ? corsJson(request, payload, err.status) : json(payload, err.status);
   }
   if (err instanceof HttpError) {
     return json({ error: { code: err.code, message: err.message } }, err.status);
@@ -40,6 +50,8 @@ function assetPathAllowed(path: string): boolean {
     path === "/index.html" ||
     path === "/admin" ||
     path === "/admin.html" ||
+    path === "/playground" ||
+    path === "/playground.html" ||
     path === "/favicon.svg" ||
     path.startsWith("/assets/")
   );
@@ -50,6 +62,7 @@ async function serveAsset(request: Request, env: Env, path: string): Promise<Res
   if (!assetPathAllowed(path)) return new Response("Not found", { status: 404, headers: { "x-content-type-options": "nosniff" } });
   const assetUrl = new URL(request.url);
   if (path === "/admin") assetUrl.pathname = "/admin.html";
+  else if (path === "/playground") assetUrl.pathname = "/playground.html";
   else assetUrl.pathname = path === "/" ? "/index.html" : path;
   const res = await env.ASSETS.fetch(new Request(assetUrl, { method: request.method, headers: request.headers }));
   const headers = new Headers(res.headers);
@@ -59,12 +72,20 @@ async function serveAsset(request: Request, env: Env, path: string): Promise<Res
   return new Response(res.body, { status: res.status, headers });
 }
 
+async function seed(env: Env): Promise<void> {
+  const now = Date.now();
+  if (isLocalEnv(env)) await ensureLocalApp(env.DB, now);
+  await ensureSampleMeta(env.DB, now, isLocalEnv(env));
+  const machineSecret = envSecret(env, "MACHINE_CLIENT_SECRET") || (isLocalEnv(env) ? "melody-machine-secret" : "");
+  if (machineSecret) await ensureMachineApp(env.DB, now, machineSecret);
+}
+
 async function handle(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const { path, onHub } = stripBase(url.pathname);
 
-  if (isLocalEnv(env) && !localSeeded) {
-    await ensureLocalApp(env.DB, Date.now());
+  if (!localSeeded) {
+    await seed(env);
     localSeeded = true;
   }
 
@@ -78,8 +99,10 @@ async function handle(request: Request, env: Env): Promise<Response> {
     return Response.redirect(url.toString(), 308);
   }
 
+  if (request.method === "OPTIONS") return corsPreflight(request);
+
   if (path === "/.well-known/openid-configuration" && request.method === "GET") return handleDiscovery(request, env);
-  if (path === "/.well-known/jwks.json" && request.method === "GET") return handleJwks(env);
+  if (path === "/.well-known/jwks.json" && request.method === "GET") return handleJwks(request, env);
   if (path === "/api/health" && request.method === "GET") {
     let d1 = false;
     try {
@@ -100,6 +123,7 @@ async function handle(request: Request, env: Env): Promise<Response> {
     return handleAuthorizeGet(request, env, onHub);
   }
   if (path === "/authorize" && request.method === "POST") return handleAuthorizePost(request, env, onHub);
+  if (path === "/consent" && request.method === "POST") return handleConsentPost(request, env, onHub);
   if (path === "/token") return handleToken(request, env);
   if (path === "/userinfo" && request.method === "GET") {
     await limit(env.SESSION_LIMIT, request);
@@ -108,6 +132,20 @@ async function handle(request: Request, env: Env): Promise<Response> {
   if (path === "/logout" && (request.method === "GET" || request.method === "POST")) {
     await limit(env.SESSION_LIMIT, request);
     return handleLogout(request, env, onHub);
+  }
+  if (path === "/introspect") return handleIntrospect(request, env);
+  if (path === "/revoke") return handleRevoke(request, env);
+  if (path === "/par") return handlePar(request, env);
+  if (path === "/device_authorization") return handleDeviceAuthorization(request, env);
+  if (path === "/device") return handleDevicePage(request, env, onHub);
+  if (path === "/register" || path.startsWith("/register/")) return handleRegister(request, env);
+  const fed = /^\/fed\/([a-z]+)(?:\/callback)?$/.exec(path);
+  if (fed?.[1]) {
+    if (path.endsWith("/callback")) return handleFederationCallback(request, env, fed[1], onHub);
+    return handleFederationStart(request, env, fed[1], onHub);
+  }
+  if (path === "/playground.html" || path === "/playground") {
+    await limit(env.PLAY_LIMIT, request);
   }
 
   return serveAsset(request, env, path);
@@ -118,14 +156,17 @@ export default {
     try {
       return await handle(request, env);
     } catch (err) {
-      return errorResponse(err);
+      return errorResponse(err, request);
     }
   },
 
   async scheduled(_event, env, ctx): Promise<void> {
     ctx.waitUntil(
-      purgeExpired(env.DB, Date.now())
-        .then((result) => console.log(JSON.stringify({ event: "cleanup", ...result })))
+      Promise.all([
+        purgeExpired(env.DB, Date.now()),
+        rotateSigningKeys(env),
+      ])
+        .then(([result, keys]) => console.log(JSON.stringify({ event: "cleanup", ...result, keys })))
         .catch((err: unknown) => console.error(JSON.stringify({ event: "cleanup_error", name: err instanceof Error ? err.name : "error" }))),
     );
   },

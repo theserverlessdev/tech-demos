@@ -7,10 +7,10 @@ This demo is a slice inspired by [ValueMelody/melody-auth](https://github.com/Va
 | | Melody Auth (upstream) | This demo |
 | --- | --- | --- |
 | Runtime | Worker + D1 + KV, or Node + Postgres + Redis | Worker + D1 + KV only |
-| Grants | Authorization code, refresh, S2S, embedded auth | Authorization code + PKCE S256, refresh rotation |
-| Signing | RS256 JWKS, key rotation UI | ES256 via WebCrypto. Private JWK is a Worker secret. Public JWKS in KV |
-| Identity | Password, passwordless, social, SAML, MFA | Email + password only |
-| Admin | Full panel: users, apps, roles, orgs, logs | Read-only masked users and registered apps |
+| Grants | Authorization code, refresh, S2S, embedded auth | Authorization code + PKCE, refresh, client credentials, device, token exchange |
+| Signing | RS256 JWKS, key rotation UI | ES256 key ring in KV (`kid`, cron rotate, verify window) |
+| Identity | Password, passwordless, social, SAML, MFA | Email + password, plus optional Google/GitHub/Microsoft/OIDC |
+| Admin | Full panel: users, apps, roles, orgs, logs | Masked users; client create/edit with ADMIN_TOKEN |
 | Tenancy | Long-lived customer data | Demo users expire after 24 hours. Cron purge |
 | Auth | Product accounts | Turnstile on sign-up and sign-in |
 | UI | React / Vue / Angular SDKs | Graphite & Ember static sample app |
@@ -18,11 +18,9 @@ This demo is a slice inspired by [ValueMelody/melody-auth](https://github.com/Va
 ## What we cut
 
 - MFA, passkeys, recovery codes
-- Social, OIDC federation, and SAML
-- Email delivery, password reset, email verification
+- SAML, DPoP, JAR, CIBA (federation presets are Google/GitHub/Microsoft + generic OIDC only)
+- Email delivery, password reset
 - RBAC, organizations, user attributes
-- Embedded Auth API and first-party SDKs
-- Admin mutations and impersonation
 - Workers for Platforms / dispatch namespaces
 
 ## What we kept (simplified)
@@ -39,6 +37,8 @@ This demo is a slice inspired by [ValueMelody/melody-auth](https://github.com/Va
 Hub Graphite & Ember. Background `#0e0e11`, ember `#c2410c`, Bricolage Grotesque and Hanken Grotesk. Contact links to https://theserverless.dev/contact.
 
 ## 2026-10-16
+
+Full OP + RP: authorization code + PKCE, client credentials, device code (RFC 8628), token exchange (RFC 8693), RFC 9068 `at+jwt`, introspection, revocation, PAR, `form_post`, consent, DCR (RFC 7591/7592), JWKS key ring, admin client CRUD, federation RP (Google/GitHub/Microsoft/OIDC), playground, `sdk/` client. Implicit and password grants rejected (OAuth 2.1). Rate limits `7486`–`7492`.
 
 Polish: refresh claim+child insert is one D1 batch; code reuse revokes only the stored family; JWKS prefers the secret; authorize GET uses `7485`.
 
