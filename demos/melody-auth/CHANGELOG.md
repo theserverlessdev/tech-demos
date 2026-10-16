@@ -40,4 +40,6 @@ Hub Graphite & Ember. Background `#0e0e11`, ember `#c2410c`, Bricolage Grotesque
 
 ## 2026-10-16
 
-First slice: hosted authorize, sample-app PKCE client, token inspector, admin list, 24-hour cron purge, Turnstile, rate limits `7481` / `7482` / `7483`. Phone layout uses 16px fields and 44px controls.
+Review pass: `email_verified` is false; claim-first codes and refresh rotation; Origin `null` and `sec-fetch-site: cross-site` rejected; sole issuer `melody-auth.tech-demos.theserverless.dev`; `__Host-ma_session` only on the subdomain; demo signing key `503`s outside local; prod seed drops loopback / hub / docs clients; authorize validates `response_type`, scopes, and state/nonce length; sample app checks nonce/aud/iss/exp.
+
+First slice: hosted authorize, sample-app PKCE client, token inspector, admin list, 24-hour cron purge, Turnstile, rate limits `7481` / `7482` / `7483` / `7484`. Phone layout uses 16px fields and 44px controls.

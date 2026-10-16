@@ -1,6 +1,8 @@
-import { ACCESS_TTL_SEC, CODE_TTL_MS, REFRESH_TTL_MS, SESSION_TTL_MS, USER_TTL_MS } from "../shared/types";
+import { ACCESS_TTL_SEC, CODE_TTL_MS, REFRESH_TTL_MS, SAMPLE_CLIENT_ID, SESSION_TTL_MS, USER_TTL_MS } from "../shared/types";
 import { randomBytes, randomId, sha256Hex, toBase64Url } from "./encoding";
 import { parseRedirectUris } from "./redirect";
+
+const LOCAL_REDIRECTS = ["http://127.0.0.1:8788/", "http://localhost:8788/"];
 
 export type UserRow = {
   id: string;
@@ -53,12 +55,28 @@ export async function appRedirects(db: D1Database, clientId: string): Promise<st
   return app ? parseRedirectUris(app.redirect_uris) : [];
 }
 
-export async function getUserByEmail(db: D1Database, email: string): Promise<UserRow | null> {
-  return db.prepare("SELECT * FROM users WHERE email = ?").bind(email).first<UserRow>();
+export async function ensureLocalApp(db: D1Database, now: number): Promise<void> {
+  const app = await getApp(db, SAMPLE_CLIENT_ID);
+  const current = app ? parseRedirectUris(app.redirect_uris) : [];
+  const merged = [...new Set([...current, ...LOCAL_REDIRECTS])];
+  if (!app) {
+    await db
+      .prepare("INSERT INTO apps (id, client_id, name, redirect_uris, created_at) VALUES (?, ?, ?, ?, ?)")
+      .bind("app_sample", SAMPLE_CLIENT_ID, "Sample app", JSON.stringify(merged), now)
+      .run();
+    return;
+  }
+  if (LOCAL_REDIRECTS.some((uri) => !current.includes(uri))) {
+    await db.prepare("UPDATE apps SET redirect_uris = ? WHERE client_id = ?").bind(JSON.stringify(merged), SAMPLE_CLIENT_ID).run();
+  }
 }
 
-export async function getUserById(db: D1Database, id: string): Promise<UserRow | null> {
-  return db.prepare("SELECT * FROM users WHERE id = ?").bind(id).first<UserRow>();
+export async function getUserByEmail(db: D1Database, email: string, now: number): Promise<UserRow | null> {
+  return db.prepare("SELECT * FROM users WHERE email = ? AND expires_at > ?").bind(email, now).first<UserRow>();
+}
+
+export async function getUserById(db: D1Database, id: string, now: number): Promise<UserRow | null> {
+  return db.prepare("SELECT * FROM users WHERE id = ? AND expires_at > ?").bind(id, now).first<UserRow>();
 }
 
 export async function createUser(db: D1Database, email: string, hash: string, salt: string, now: number): Promise<UserRow> {
@@ -78,25 +96,27 @@ export async function createUser(db: D1Database, email: string, hash: string, sa
 }
 
 export async function createSession(db: D1Database, userId: string, now: number): Promise<string> {
-  const id = toBase64Url(randomBytes(32));
+  const raw = toBase64Url(randomBytes(32));
   await db
     .prepare("INSERT INTO sessions (id, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)")
-    .bind(id, userId, now, now + SESSION_TTL_MS)
+    .bind(await sha256Hex(raw), userId, now, now + SESSION_TTL_MS)
     .run();
-  return id;
+  return raw;
 }
 
 export async function sessionUser(db: D1Database, sessionId: string, now: number): Promise<UserRow | null> {
-  const session = await db
-    .prepare("SELECT user_id FROM sessions WHERE id = ? AND expires_at > ?")
-    .bind(sessionId, now)
-    .first<{ user_id: string }>();
-  if (!session) return null;
-  return getUserById(db, session.user_id);
+  if (!sessionId) return null;
+  return db
+    .prepare(
+      "SELECT users.* FROM sessions JOIN users ON users.id = sessions.user_id WHERE sessions.id = ? AND sessions.expires_at > ? AND users.expires_at > ?",
+    )
+    .bind(await sha256Hex(sessionId), now, now)
+    .first<UserRow>();
 }
 
 export async function deleteSession(db: D1Database, sessionId: string): Promise<void> {
-  await db.prepare("DELETE FROM sessions WHERE id = ?").bind(sessionId).run();
+  if (!sessionId) return;
+  await db.prepare("DELETE FROM sessions WHERE id = ?").bind(await sha256Hex(sessionId)).run();
 }
 
 export async function issueAuthCode(
@@ -129,8 +149,23 @@ export async function lookupCode(db: D1Database, code: string): Promise<CodeRow 
   return db.prepare("SELECT * FROM auth_codes WHERE code_hash = ?").bind(codeHash).first<CodeRow>();
 }
 
-export async function markCodeUsed(db: D1Database, id: string, now: number): Promise<void> {
-  await db.prepare("UPDATE auth_codes SET used_at = ? WHERE id = ? AND used_at IS NULL").bind(now, id).run();
+export async function claimCode(db: D1Database, code: string, now: number): Promise<CodeRow | null> {
+  const codeHash = await sha256Hex(code);
+  const claimed = await db
+    .prepare("UPDATE auth_codes SET used_at = ? WHERE code_hash = ? AND used_at IS NULL AND expires_at > ?")
+    .bind(now, codeHash, now)
+    .run();
+  if ((claimed.meta.changes ?? 0) !== 1) {
+    const existing = await db.prepare("SELECT * FROM auth_codes WHERE code_hash = ?").bind(codeHash).first<CodeRow>();
+    if (existing) {
+      await db
+        .prepare("UPDATE refresh_tokens SET revoked_at = ? WHERE user_id = ? AND client_id = ? AND revoked_at IS NULL")
+        .bind(now, existing.user_id, existing.client_id)
+        .run();
+    }
+    return null;
+  }
+  return db.prepare("SELECT * FROM auth_codes WHERE code_hash = ?").bind(codeHash).first<CodeRow>();
 }
 
 export async function issueRefresh(
@@ -153,8 +188,23 @@ export async function lookupRefresh(db: D1Database, token: string): Promise<Refr
   return db.prepare("SELECT * FROM refresh_tokens WHERE token_hash = ?").bind(await sha256Hex(token)).first<RefreshRow>();
 }
 
-export async function rotateRefresh(db: D1Database, oldId: string, newId: string, now: number): Promise<void> {
-  await db.prepare("UPDATE refresh_tokens SET revoked_at = ?, replaced_by = ? WHERE id = ?").bind(now, newId, oldId).run();
+export async function claimRefresh(db: D1Database, token: string, now: number): Promise<RefreshRow | null> {
+  const tokenHash = await sha256Hex(token);
+  const row = await db.prepare("SELECT * FROM refresh_tokens WHERE token_hash = ?").bind(tokenHash).first<RefreshRow>();
+  if (!row) return null;
+  const claimed = await db
+    .prepare("UPDATE refresh_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL AND expires_at > ?")
+    .bind(now, row.id, now)
+    .run();
+  if ((claimed.meta.changes ?? 0) !== 1) {
+    await revokeFamily(db, row.family_id, now);
+    return null;
+  }
+  return { ...row, revoked_at: now };
+}
+
+export async function setReplacedBy(db: D1Database, oldId: string, newId: string): Promise<void> {
+  await db.prepare("UPDATE refresh_tokens SET replaced_by = ? WHERE id = ?").bind(newId, oldId).run();
 }
 
 export async function revokeFamily(db: D1Database, familyId: string, now: number): Promise<void> {
@@ -175,18 +225,20 @@ export async function listApps(db: D1Database): Promise<AppRow[]> {
 }
 
 export async function purgeExpired(db: D1Database, now: number): Promise<{ users: number; codes: number; sessions: number; refresh: number }> {
-  const codes = await db.prepare("DELETE FROM auth_codes WHERE expires_at < ? OR used_at IS NOT NULL AND used_at < ?").bind(now, now - 3600_000).run();
-  const sessions = await db.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(now).run();
-  const refresh = await db.prepare("DELETE FROM refresh_tokens WHERE expires_at < ?").bind(now).run();
-  await db.prepare("DELETE FROM auth_codes WHERE user_id IN (SELECT id FROM users WHERE expires_at < ?)").bind(now).run();
-  await db.prepare("DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE expires_at < ?)").bind(now).run();
-  await db.prepare("DELETE FROM refresh_tokens WHERE user_id IN (SELECT id FROM users WHERE expires_at < ?)").bind(now).run();
-  const users = await db.prepare("DELETE FROM users WHERE expires_at < ?").bind(now).run();
+  const results = await db.batch([
+    db.prepare("DELETE FROM auth_codes WHERE expires_at < ? OR (used_at IS NOT NULL AND used_at < ?)").bind(now, now - 3600_000),
+    db.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(now),
+    db.prepare("DELETE FROM refresh_tokens WHERE expires_at < ?").bind(now),
+    db.prepare("DELETE FROM auth_codes WHERE user_id IN (SELECT id FROM users WHERE expires_at < ?)").bind(now),
+    db.prepare("DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE expires_at < ?)").bind(now),
+    db.prepare("DELETE FROM refresh_tokens WHERE user_id IN (SELECT id FROM users WHERE expires_at < ?)").bind(now),
+    db.prepare("DELETE FROM users WHERE expires_at < ?").bind(now),
+  ]);
   return {
-    users: users.meta.changes ?? 0,
-    codes: codes.meta.changes ?? 0,
-    sessions: sessions.meta.changes ?? 0,
-    refresh: refresh.meta.changes ?? 0,
+    codes: (results[0]?.meta.changes ?? 0) + (results[3]?.meta.changes ?? 0),
+    sessions: (results[1]?.meta.changes ?? 0) + (results[4]?.meta.changes ?? 0),
+    refresh: (results[2]?.meta.changes ?? 0) + (results[5]?.meta.changes ?? 0),
+    users: results[6]?.meta.changes ?? 0,
   };
 }
 

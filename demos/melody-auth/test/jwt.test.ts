@@ -27,3 +27,15 @@ test("ES256 JWT signs and verifies", async () => {
   expect(decodeJwt(token)?.header.kid).toBe("melody-demo-1");
   expect(await verifyJwt(token, pub, now + 120)).toBeNull();
 });
+
+test("verifyJwt rejects a non-numeric exp", async () => {
+  const key = await importSigningKey(DEMO);
+  const pub = await importVerifyKey(publicJwkFromPrivate(DEMO));
+  const now = Math.floor(Date.now() / 1000);
+  const token = await signJwt(
+    { alg: "ES256", typ: "JWT", kid: "melody-demo-1" },
+    { iss: "http://127.0.0.1:8788", sub: "usr_1", aud: "melody-sample", iat: now, exp: "9999999999" as unknown as number },
+    key,
+  );
+  expect(await verifyJwt(token, pub, now)).toBeNull();
+});

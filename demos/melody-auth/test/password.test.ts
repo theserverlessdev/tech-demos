@@ -23,8 +23,9 @@ test("email is normalized and shaped", () => {
   expect(passwordShape("12345678")).toBeTrue();
 });
 
-test("maskEmail hides the local part and host", () => {
-  expect(maskEmail("alice@example.com")).toBe("a***@e***.com");
-  expect(maskEmail("b@x.io")).toBe("b***@x***.io");
+test("maskEmail keeps only the last domain label", () => {
+  expect(maskEmail("alice@example.com")).toBe("a***@***.com");
+  expect(maskEmail("b@x.io")).toBe("b***@***.io");
+  expect(maskEmail("ada@mail.example.co.uk")).toBe("a***@***.uk");
   expect(maskEmail("broken")).toBe("***");
 });

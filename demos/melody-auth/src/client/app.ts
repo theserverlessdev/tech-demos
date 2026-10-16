@@ -49,6 +49,18 @@ function decodeJwtPayload(token: string): Record<string, unknown> | null {
   }
 }
 
+function idTokenInvalid(token: string, expected: { nonce?: string; aud: string; iss: string }): string | null {
+  const claims = decodeJwtPayload(token);
+  if (!claims) return "The ID token could not be read.";
+  if (expected.nonce !== undefined && claims.nonce !== expected.nonce) return "Nonce did not match. Start again.";
+  if (claims.aud !== expected.aud) return "Audience did not match. Start again.";
+  if (claims.iss !== expected.iss) return "Issuer did not match. Start again.";
+  if (typeof claims.exp !== "number" || !Number.isFinite(claims.exp) || claims.exp <= Math.floor(Date.now() / 1000)) {
+    return "The ID token expired. Start again.";
+  }
+  return null;
+}
+
 function isError(data: unknown): data is ApiError {
   if (!data || typeof data !== "object" || !("error" in data)) return false;
   const error = (data as ApiError).error;
@@ -96,20 +108,25 @@ async function wireAuthorizeForm(): Promise<void> {
   const form = document.getElementById("auth-form") as HTMLFormElement | null;
   const host = document.getElementById("turnstile");
   const hidden = document.getElementById("turnstile-token") as HTMLInputElement | null;
+  const submit = document.getElementById("submit") as HTMLButtonElement | null;
   if (!form || !host || !hidden) return;
+  if (submit) submit.disabled = true;
   const sitekey = host.dataset.sitekey ?? "";
+  const ready = (token: string) => {
+    hidden.value = token;
+    if (submit && token) submit.disabled = false;
+  };
   const api = await waitForTurnstile();
-  if (api && sitekey) {
+  if (api && sitekey && !sitekey.startsWith("REPLACE_ME")) {
     api.render(host, {
       sitekey,
       action: "melody-auth",
-      callback: (token) => {
-        hidden.value = token;
-      },
+      callback: ready,
     });
   }
-  form.addEventListener("submit", () => {
+  form.addEventListener("submit", (event) => {
     if (!hidden.value) hidden.value = turnstileApi()?.getResponse() || "";
+    if (!hidden.value) event.preventDefault();
   });
 }
 
@@ -210,6 +227,11 @@ async function finishPkce(): Promise<boolean> {
     $("intro-error").textContent = messageOf(res.data, "The token exchange failed.");
     return true;
   }
+  const invalid = idTokenInvalid(res.data.id_token, { nonce: stored.nonce, aud: config.clientId, iss: config.issuer });
+  if (invalid) {
+    $("intro-error").textContent = invalid;
+    return true;
+  }
   tokens = res.data;
   sessionStorage.setItem("melody-tokens", JSON.stringify(tokens));
   paintClaims(tokens.id_token, await loadUserinfo(tokens.access_token));
@@ -229,7 +251,14 @@ async function bootSample(): Promise<void> {
   if (await finishPkce()) return;
   const saved = sessionStorage.getItem("melody-tokens");
   if (saved) {
-    tokens = JSON.parse(saved) as TokenResponse;
+    const parsed = JSON.parse(saved) as TokenResponse;
+    const invalid = idTokenInvalid(parsed.id_token, { aud: config.clientId, iss: config.issuer });
+    if (invalid) {
+      sessionStorage.removeItem("melody-tokens");
+      $("intro-error").textContent = invalid;
+      return;
+    }
+    tokens = parsed;
     paintClaims(tokens.id_token, await loadUserinfo(tokens.access_token));
     showTokens();
   }

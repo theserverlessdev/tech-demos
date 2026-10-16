@@ -35,7 +35,7 @@
 
   <div class="strip" role="status">
     <span class="strip__dot"></span>
-    <span>You can run your own standards-compliant sign-in server on Workers + D1 + KV.</span>
+    <span>You can run your own standards-compliant sign-in server on Workers + D1 + KV. What you could build: SSO for your own apps, auth without a SaaS IdP, or a login box at the edge.</span>
   </div>
 
   <main>
@@ -54,7 +54,7 @@
     <section class="card" id="tokens" hidden>
       <p class="eyebrow">Signed in</p>
       <h2>ID token claims</h2>
-      <p class="lede">Decoded locally. The signature was accepted by this Worker when it minted the token.</p>
+      <p class="lede">Decoded locally. This page checks nonce, audience, issuer, and expiry. It does not verify the ES256 signature in the browser.</p>
       <table class="claims" id="claims"></table>
       <h3>Userinfo</h3>
       <pre class="pre" id="userinfo"></pre>
@@ -73,7 +73,6 @@
     </p>
   </footer>
 
-  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
   <script type="module" src="./assets/app.js"></script>
 </body>
 </html>

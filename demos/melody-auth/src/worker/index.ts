@@ -1,4 +1,4 @@
-import { purgeExpired } from "./db";
+import { ensureLocalApp, purgeExpired } from "./db";
 import { BodyTooLargeError, HttpError, OauthError } from "./errors";
 import { PAGE_CSP, json } from "./headers";
 import {
@@ -10,11 +10,15 @@ import {
   handleLogout,
   handleToken,
   handleUserinfo,
+  limit,
   stripBase,
 } from "./oidc";
 import { handleAdminApi } from "./admin";
+import { isLocalEnv, PROD_ORIGIN } from "./origin";
 
 const BASE_PATH = "/demos/melody-auth";
+
+let localSeeded = false;
 
 function errorResponse(err: unknown): Response {
   if (err instanceof OauthError) {
@@ -59,25 +63,51 @@ async function serveAsset(request: Request, env: Env, path: string): Promise<Res
 
 async function handle(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
-  const { path, onHub, rawPath } = stripBase(url.pathname);
+  const { path, onHub } = stripBase(url.pathname);
+
+  if (isLocalEnv(env) && !localSeeded) {
+    await ensureLocalApp(env.DB, Date.now());
+    localSeeded = true;
+  }
+
+  if (onHub && !isLocalEnv(env)) {
+    const rest = `${url.pathname.slice(BASE_PATH.length) || "/"}${url.search}`;
+    return Response.redirect(`${PROD_ORIGIN}${rest}`, 308);
+  }
 
   if (url.pathname === BASE_PATH) {
     url.pathname = `${BASE_PATH}/`;
     return Response.redirect(url.toString(), 308);
   }
 
-  if (path === "/.well-known/openid-configuration" && request.method === "GET") return handleDiscovery(request, rawPath);
+  if (path === "/.well-known/openid-configuration" && request.method === "GET") return handleDiscovery(request, env);
   if (path === "/.well-known/jwks.json" && request.method === "GET") return handleJwks(env);
   if (path === "/api/health" && request.method === "GET") {
-    return json({ ok: true, d1: true, turnstile: Boolean(env.TURNSTILE_SECRET), keys: Boolean(env.AUTH_PRIVATE_JWK) });
+    let d1 = false;
+    try {
+      const row = await env.DB.prepare("SELECT 1 AS ok").first<{ ok: number }>();
+      d1 = row?.ok === 1;
+    } catch {
+      d1 = false;
+    }
+    return json(
+      { ok: d1, d1, turnstile: Boolean(env.TURNSTILE_SECRET), keys: Boolean(env.AUTH_PRIVATE_JWK) },
+      d1 ? 200 : 503,
+    );
   }
-  if (path === "/api/config" && request.method === "GET") return handleConfig(request, env, rawPath);
+  if (path === "/api/config" && request.method === "GET") return handleConfig(request, env);
   if (path.startsWith("/api/admin")) return handleAdminApi(request, env, path);
   if (path === "/authorize" && request.method === "GET") return handleAuthorizeGet(request, env, onHub);
   if (path === "/authorize" && request.method === "POST") return handleAuthorizePost(request, env, onHub);
-  if (path === "/token") return handleToken(request, env, rawPath);
-  if (path === "/userinfo" && request.method === "GET") return handleUserinfo(request, env, rawPath);
-  if (path === "/logout" && (request.method === "GET" || request.method === "POST")) return handleLogout(request, env, onHub);
+  if (path === "/token") return handleToken(request, env);
+  if (path === "/userinfo" && request.method === "GET") {
+    await limit(env.SESSION_LIMIT, request);
+    return handleUserinfo(request, env);
+  }
+  if (path === "/logout" && (request.method === "GET" || request.method === "POST")) {
+    await limit(env.SESSION_LIMIT, request);
+    return handleLogout(request, env, onHub);
+  }
 
   return serveAsset(request, env, path);
 }

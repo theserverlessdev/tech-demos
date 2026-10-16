@@ -66,13 +66,6 @@ INSERT OR IGNORE INTO apps (id, client_id, name, redirect_uris, created_at) VALU
   'app_sample',
   'melody-sample',
   'Sample app',
-  '["http://127.0.0.1:8788/","http://127.0.0.1:8788/callback","http://localhost:8788/","http://localhost:8788/callback","https://tech-demos.theserverless.dev/demos/melody-auth/","https://tech-demos.theserverless.dev/demos/melody-auth/callback","https://melody-auth.tech-demos.theserverless.dev/","https://melody-auth.tech-demos.theserverless.dev/callback"]',
-  0
-),
-(
-  'app_docs',
-  'melody-docs',
-  'Docs example',
-  '["https://melody-auth.tech-demos.theserverless.dev/docs/callback"]',
+  '["https://melody-auth.tech-demos.theserverless.dev/"]',
   0
 );

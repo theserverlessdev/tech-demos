@@ -115,6 +115,7 @@ export async function verifyJwt(token: string, key: CryptoKey, now = Math.floor(
     bytes(`${parts[0]}.${parts[1]}`),
   );
   if (!ok) return null;
+  if (typeof decoded.claims.exp !== "number" || !Number.isFinite(decoded.claims.exp)) return null;
   if (decoded.claims.exp <= now || (decoded.claims.nbf ?? 0) > now) return null;
   return decoded.claims;
 }

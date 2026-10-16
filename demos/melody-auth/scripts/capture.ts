@@ -38,6 +38,8 @@ await page.locator("#password").fill("correct-horse");
 await page.evaluate((token) => {
   const hidden = document.getElementById("turnstile-token") as HTMLInputElement | null;
   if (hidden) hidden.value = token;
+  const submit = document.getElementById("submit") as HTMLButtonElement | null;
+  if (submit) submit.disabled = false;
 }, DUMMY);
 await page.locator("#submit").click();
 await page.waitForSelector("#tokens:not([hidden])", { timeout: 20_000 });

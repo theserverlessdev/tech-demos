@@ -24,7 +24,7 @@ function localHost(hostname: string): boolean {
 
 export function turnstileConfigured(env: Env): boolean {
   const siteKey = env.TURNSTILE_SITE_KEY?.trim() ?? "";
-  return Boolean(env.TURNSTILE_SECRET?.trim() && siteKey && siteKey !== "REPLACE_ME");
+  return Boolean(env.TURNSTILE_SECRET?.trim() && siteKey && !siteKey.startsWith("REPLACE_ME"));
 }
 
 export async function verifyTurnstile(env: Env, request: Request, token: string): Promise<boolean> {

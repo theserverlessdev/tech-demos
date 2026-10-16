@@ -95,6 +95,7 @@ button { cursor: pointer; }
 .strip {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 0.6rem;
   padding: 0.55rem 1.25rem;
   color: var(--muted);

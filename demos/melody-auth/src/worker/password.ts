@@ -31,13 +31,13 @@ export function passwordShape(password: string): boolean {
   return password.length >= 8 && password.length <= 128;
 }
 
-/** First local char + *** @ first domain char + *** . rest of domain. */
+/** First local char + *** @ *** . last domain label only. */
 export function maskEmail(email: string): string {
   const at = email.indexOf("@");
   if (at < 1 || at === email.length - 1) return "***";
   const local = email.slice(0, at);
   const domain = email.slice(at + 1);
-  const dot = domain.indexOf(".");
-  if (dot < 1) return `${local[0]}***@***`;
-  return `${local[0]}***@${domain[0]}***.${domain.slice(dot + 1)}`;
+  const lastDot = domain.lastIndexOf(".");
+  if (lastDot < 1 || lastDot === domain.length - 1) return `${local[0]}***@***`;
+  return `${local[0]}***@***.${domain.slice(lastDot + 1)}`;
 }

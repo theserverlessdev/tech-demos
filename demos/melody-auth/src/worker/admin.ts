@@ -19,7 +19,6 @@ export async function handleAdminApi(request: Request, env: Env, path: string): 
 
 export async function adminView(env: Env, now: number): Promise<AdminView> {
   const users: AdminUser[] = (await listUsers(env.DB, now)).map((row) => ({
-    id: row.id,
     emailMasked: maskEmail(row.email),
     createdAt: row.created_at,
     expiresAt: row.expires_at,

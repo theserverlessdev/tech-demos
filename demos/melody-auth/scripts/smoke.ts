@@ -28,15 +28,15 @@ async function get(path: string) {
   } catch {
     data = text;
   }
-  return { status: res.status, data, text, location: res.headers.get("location"), cookies: res.headers.getSetCookie?.() ?? [] };
+  return { status: res.status, data, text, location: res.headers.get("location"), cache: res.headers.get("cache-control") };
 }
 
-async function postForm(path: string, body: Record<string, string>, cookie = "") {
+async function postForm(path: string, body: Record<string, string>, extra: HeadersInit = {}) {
   const res = await fetch(`${base}${path}`, {
     method: "POST",
     headers: {
       "content-type": "application/x-www-form-urlencoded",
-      ...(cookie ? { cookie } : {}),
+      ...extra,
     },
     body: new URLSearchParams(body),
     redirect: "manual",
@@ -51,54 +51,86 @@ async function postForm(path: string, body: Record<string, string>, cookie = "")
   return { status: res.status, data, text, location: res.headers.get("location") };
 }
 
+function authFields(input: { redirectUri: string; state: string; nonce: string; challenge: string; mode?: string }) {
+  return {
+    response_type: "code",
+    client_id: "melody-sample",
+    redirect_uri: input.redirectUri,
+    scope: "openid email profile",
+    state: input.state,
+    nonce: input.nonce,
+    code_challenge: input.challenge,
+    code_challenge_method: "S256",
+    ...(input.mode ? { mode: input.mode } : {}),
+  };
+}
+
+async function signupCode(redirectUri: string) {
+  const verifier = b64url(crypto.getRandomValues(new Uint8Array(32)));
+  const challenge = await s256(verifier);
+  const state = b64url(crypto.getRandomValues(new Uint8Array(16)));
+  const nonce = b64url(crypto.getRandomValues(new Uint8Array(16)));
+  const email = `ada+${Date.now()}-${Math.random().toString(16).slice(2)}@example.com`;
+  const signed = await postForm("/authorize", {
+    ...authFields({ redirectUri, state, nonce, challenge, mode: "signup" }),
+    email,
+    password: "correct-horse",
+    turnstileToken: DUMMY,
+  });
+  const code = signed.location ? new URL(signed.location).searchParams.get("code") : null;
+  return { verifier, state, nonce, email, signed, code };
+}
+
 console.log(`Target: ${base}`);
 
 const health = await get("/api/health");
-check("health is ok", health.status === 200 && (health.data as { ok?: boolean })?.ok === true, health.data);
+check("health is ok and D1 answered", health.status === 200 && (health.data as { ok?: boolean; d1?: boolean })?.d1 === true, health.data);
 
 const discovery = await get("/.well-known/openid-configuration");
-const issuer = (discovery.data as { issuer?: string; code_challenge_methods_supported?: string[] }) ?? {};
-check("discovery lists S256 only", discovery.status === 200 && issuer.code_challenge_methods_supported?.join() === "S256", issuer);
+const issuerDoc = (discovery.data as { issuer?: string; code_challenge_methods_supported?: string[]; claims_supported?: string[] }) ?? {};
+check("discovery lists S256 only", discovery.status === 200 && issuerDoc.code_challenge_methods_supported?.join() === "S256", issuerDoc);
+check("discovery lists claims_supported", Array.isArray(issuerDoc.claims_supported) && issuerDoc.claims_supported.includes("email_verified"), issuerDoc.claims_supported);
+check("discovery issuer is this origin locally", issuerDoc.issuer === base, issuerDoc.issuer);
+check("discovery is cacheable for 300s", discovery.cache === "public, max-age=300", discovery.cache);
 
 const jwks = await get("/.well-known/jwks.json");
 check("jwks has an ES256 key", jwks.status === 200 && Array.isArray((jwks.data as { keys?: unknown[] })?.keys), jwks.data);
+check("jwks is cacheable for 300s", jwks.cache === "public, max-age=300", jwks.cache);
 
 const verifier = b64url(crypto.getRandomValues(new Uint8Array(32)));
 const challenge = await s256(verifier);
 const state = b64url(crypto.getRandomValues(new Uint8Array(16)));
 const nonce = b64url(crypto.getRandomValues(new Uint8Array(16)));
 const redirectUri = `${base}/`;
-const authorizeQuery = new URLSearchParams({
-  response_type: "code",
-  client_id: "melody-sample",
-  redirect_uri: redirectUri,
-  scope: "openid email profile",
-  state,
-  nonce,
-  code_challenge: challenge,
-  code_challenge_method: "S256",
-  mode: "signup",
-});
+const authorizeQuery = new URLSearchParams(authFields({ redirectUri, state, nonce, challenge, mode: "signup" }));
 
 const authorize = await get(`/authorize?${authorizeQuery}`);
 check("authorize GET is the hosted page", authorize.status === 200 && authorize.text.includes("Create account"), authorize.status);
 
 const evil = await get(`/authorize?${new URLSearchParams({ ...Object.fromEntries(authorizeQuery), redirect_uri: "https://evil.example/cb" })}`);
-check("unregistered redirect_uri stays on the error page", evil.status === 200 && evil.text.includes("not registered"), evil.status);
+check("unregistered redirect_uri is a 400 error page", evil.status === 400 && evil.text.includes("not registered"), evil.status);
+
+const missingType = await get(`/authorize?${new URLSearchParams({ ...Object.fromEntries(authorizeQuery), response_type: "token" })}`);
+check("response_type other than code is a 400", missingType.status === 400 && missingType.text.includes("response_type"), missingType.status);
+
+const originNull = await postForm(
+  "/authorize",
+  {
+    ...authFields({ redirectUri, state, nonce, challenge, mode: "signin" }),
+    email: "ada@example.com",
+    password: "correct-horse",
+    turnstileToken: DUMMY,
+  },
+  { origin: "null" },
+);
+check("Origin null is rejected in-page", originNull.status === 403 && originNull.text.includes("could not be verified"), originNull.status);
 
 const email = `ada+${Date.now()}@example.com`;
 const signed = await postForm("/authorize", {
-  mode: "signup",
+  ...authFields({ redirectUri, state, nonce, challenge, mode: "signup" }),
   email,
   password: "correct-horse",
   turnstileToken: DUMMY,
-  client_id: "melody-sample",
-  redirect_uri: redirectUri,
-  state,
-  nonce,
-  scope: "openid email profile",
-  code_challenge: challenge,
-  code_challenge_method: "S256",
 });
 const code = signed.location ? new URL(signed.location).searchParams.get("code") : null;
 check("signup redirects with a code and matching state", signed.status === 302 && Boolean(code) && signed.location?.includes(`state=${state}`), signed.status);
@@ -123,8 +155,12 @@ const reuse = await postForm("/token", {
 check("code reuse is invalid_grant", reuse.status === 400 && (reuse.data as { error?: string })?.error === "invalid_grant", reuse.data);
 
 const userinfo = await fetch(`${base}/userinfo`, { headers: { authorization: `Bearer ${issued.access_token}` } });
-const info = (await userinfo.json()) as { email?: string };
+const info = (await userinfo.json()) as { email?: string; email_verified?: boolean };
 check("userinfo returns the signup email", userinfo.status === 200 && info.email === email, info);
+check("email_verified is false", info.email_verified === false, info);
+
+const payload = issued.id_token ? JSON.parse(atob(issued.id_token.split(".")[1]!.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(issued.id_token.split(".")[1]!.length / 4) * 4, "="))) : {};
+check("id token email_verified is false", payload.email_verified === false, payload.email_verified);
 
 const refreshed = await postForm("/token", {
   grant_type: "refresh_token",
@@ -141,24 +177,33 @@ const replay = await postForm("/token", {
 });
 check("refresh reuse is invalid_grant", replay.status === 400 && (replay.data as { error?: string })?.error === "invalid_grant", replay.data);
 
+const raced = await signupCode(redirectUri);
+check("second signup issued a code for the race", raced.signed.status === 302 && Boolean(raced.code), raced.signed.status);
+if (raced.code) {
+  const body = {
+    grant_type: "authorization_code",
+    code: raced.code,
+    redirect_uri: redirectUri,
+    client_id: "melody-sample",
+    code_verifier: raced.verifier,
+  };
+  const [a, b] = await Promise.all([postForm("/token", body), postForm("/token", body)]);
+  const oks = [a, b].filter((res) => res.status === 200);
+  check("concurrent code exchange yields exactly one 200", oks.length === 1, { a: a.status, b: b.status });
+}
+
 const wrong = await postForm("/authorize", {
-  mode: "signin",
+  ...authFields({ redirectUri, state, nonce, challenge, mode: "signin" }),
   email,
   password: "wrong-password",
   turnstileToken: DUMMY,
-  client_id: "melody-sample",
-  redirect_uri: redirectUri,
-  state,
-  nonce,
-  scope: "openid email profile",
-  code_challenge: challenge,
-  code_challenge_method: "S256",
 });
-check("wrong password stays generic", wrong.status === 200 && wrong.text.includes("Email or password is incorrect."), wrong.status);
+check("wrong password stays generic and in-page", wrong.status === 200 && wrong.text.includes("Email or password is incorrect.") && wrong.text.includes(email), wrong.status);
 
 const admin = await get("/api/admin/overview");
-const users = (admin.data as { users?: { emailMasked?: string }[] })?.users ?? [];
-check("admin masks the email", admin.status === 200 && users.some((user) => user.emailMasked === "a***@e***.com"), admin.data);
+const users = (admin.data as { users?: { emailMasked?: string; id?: string }[] })?.users ?? [];
+check("admin masks the email to last label only", admin.status === 200 && users.some((user) => user.emailMasked === "a***@***.com"), admin.data);
+check("admin does not emit user id", users.every((user) => user.id === undefined), users[0]);
 
 if (failures) {
   console.error(`\n${failures} check(s) failed.`);

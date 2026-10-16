@@ -27,7 +27,8 @@
   "ratelimits": [
     { "name": "AUTH_LIMIT", "namespace_id": "7481", "simple": { "limit": 8, "period": 60 } },
     { "name": "TOKEN_LIMIT", "namespace_id": "7482", "simple": { "limit": 20, "period": 60 } },
-    { "name": "ADMIN_LIMIT", "namespace_id": "7483", "simple": { "limit": 60, "period": 60 } }
+    { "name": "ADMIN_LIMIT", "namespace_id": "7483", "simple": { "limit": 60, "period": 60 } },
+    { "name": "SESSION_LIMIT", "namespace_id": "7484", "simple": { "limit": 30, "period": 60 } }
   ],
   "vars": {
     "ENVIRONMENT": "local",

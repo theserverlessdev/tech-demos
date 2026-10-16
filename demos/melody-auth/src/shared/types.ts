@@ -27,7 +27,6 @@ export type UserInfo = {
 };
 
 export type AdminUser = {
-  id: string;
   emailMasked: string;
   createdAt: number;
   expiresAt: number;

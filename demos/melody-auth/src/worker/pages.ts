@@ -15,6 +15,7 @@ export type AuthorizeFields = {
   scope: string;
   challenge: string;
   method: string;
+  responseType: string;
 };
 
 export function authorizePage(input: {
@@ -24,9 +25,12 @@ export function authorizePage(input: {
   mode: "signin" | "signup";
   error: string;
   sessionEmail: string | null;
+  email?: string;
 }): string {
   const { basePath, siteKey, fields, mode, error, sessionEmail } = input;
+  const email = input.email ?? "";
   const hidden = [
+    hiddenField("response_type", fields.responseType || "code"),
     hiddenField("client_id", fields.clientId),
     hiddenField("redirect_uri", fields.redirectUri),
     hiddenField("state", fields.state),
@@ -42,9 +46,10 @@ export function authorizePage(input: {
         ${hidden}
         <input type="hidden" name="mode" value="continue" />
         <p class="eyebrow">Already signed in</p>
-        <h2>Continue</h2>
+        <h2>Continue as ${escapeHtml(sessionEmail)}</h2>
         <p class="lede">This browser already has a hosted session. Continue to issue a one-time code.</p>
-        <button class="btn btn-primary btn-block" type="submit">Continue</button>
+        <button class="btn btn-primary btn-block" type="submit">Continue as ${escapeHtml(sessionEmail)}</button>
+        <p class="fine"><a href="${escapeHtml(tabHref(basePath, fields, "signin", true))}">Use a different account</a></p>
       </form>`
     : "";
   return layout({
@@ -64,7 +69,7 @@ export function authorizePage(input: {
           ${hidden}
           <input type="hidden" name="mode" value="${mode}" />
           <label>Email
-            <input id="email" name="email" type="email" autocomplete="${mode === "signup" ? "email" : "username"}" required maxlength="254" />
+            <input id="email" name="email" type="email" autocomplete="${mode === "signup" ? "email" : "username"}" required maxlength="254" value="${escapeHtml(email)}" />
           </label>
           <label>Password
             <input id="password" name="password" type="password" autocomplete="${mode === "signup" ? "new-password" : "current-password"}" required minlength="8" maxlength="128" />
@@ -72,7 +77,7 @@ export function authorizePage(input: {
           <p class="fine">At least 8 characters. Demo accounts expire after 24 hours. No email is sent.</p>
           <div id="turnstile" class="turnstile" data-sitekey="${escapeHtml(siteKey)}"></div>
           <input type="hidden" name="turnstileToken" id="turnstile-token" />
-          <button class="btn btn-primary btn-block" id="submit" type="submit">${mode === "signup" ? "Create account" : "Sign in"}</button>
+          <button class="btn btn-primary btn-block" id="submit" type="submit" disabled>${mode === "signup" ? "Create account" : "Sign in"}</button>
           <p class="hint" id="auth-error" role="status">${escapeHtml(error)}</p>
         </form>
       </section>`,
@@ -97,9 +102,9 @@ function hiddenField(name: string, value: string): string {
   return `<input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(value)}" />`;
 }
 
-function tabHref(basePath: string, fields: AuthorizeFields, mode: "signin" | "signup"): string {
+function tabHref(basePath: string, fields: AuthorizeFields, mode: "signin" | "signup", switchAccount = false): string {
   const url = new URL("https://local.invalid/authorize");
-  url.searchParams.set("response_type", "code");
+  url.searchParams.set("response_type", fields.responseType || "code");
   url.searchParams.set("client_id", fields.clientId);
   url.searchParams.set("redirect_uri", fields.redirectUri);
   url.searchParams.set("state", fields.state);
@@ -108,6 +113,7 @@ function tabHref(basePath: string, fields: AuthorizeFields, mode: "signin" | "si
   url.searchParams.set("code_challenge", fields.challenge);
   url.searchParams.set("code_challenge_method", fields.method);
   url.searchParams.set("mode", mode);
+  if (switchAccount) url.searchParams.set("switch", "1");
   return `${basePath}${url.pathname}${url.search}`;
 }
 
