@@ -93,16 +93,18 @@ button { cursor: pointer; }
 .btn-block { width: 100%; }
 
 .strip {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.6rem;
-  padding: 0.55rem 1.25rem;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 0.55rem 0.6rem;
+  padding: 0.55rem 1rem;
   color: var(--muted);
-  font-size: 0.9rem;
+  font-size: 0.82rem;
+  line-height: 1.35;
   border-bottom: 1px solid var(--border);
 }
-.strip__dot { width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--ember); flex: none; }
+.strip__dot { width: 0.5rem; height: 0.5rem; margin-top: 0.3rem; border-radius: 50%; background: var(--ember); }
+.strip__copy { min-width: 0; overflow-wrap: anywhere; }
 
 main { padding: 1.25rem; max-width: 880px; margin: 0 auto; min-width: 0; }
 .eyebrow { color: var(--ember); font-size: 0.78rem; letter-spacing: 0.12em; text-transform: uppercase; font-weight: 700; margin-bottom: 0.4rem; }

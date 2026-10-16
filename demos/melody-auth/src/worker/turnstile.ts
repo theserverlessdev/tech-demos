@@ -9,7 +9,7 @@ const TEST_SECRETS = new Set([
 
 export const DUMMY_TOKEN = "XXXX.DUMMY.TOKEN.XXXX";
 
-const ALLOWED_HOSTS = new Set(["tech-demos.theserverless.dev", "melody-auth.tech-demos.theserverless.dev"]);
+const ALLOWED_HOSTS = new Set(["melody-auth.tech-demos.theserverless.dev"]);
 
 type Siteverify = {
   success?: boolean;

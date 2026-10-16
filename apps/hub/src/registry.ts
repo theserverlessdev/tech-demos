@@ -91,7 +91,7 @@ const byokPlaygroundFallbackSource = standalone("byok-playground");
 // The zone route wins, and this source only redirects if that route is missing.
 const edgeBrowserFallbackSource = standalone("edge-browser");
 
-// melody-auth is a standalone Worker (ASSETS, DB, KEYS, AUTH/TOKEN/ADMIN/SESSION limits, cron, Turnstile).
+// melody-auth is a standalone Worker (ASSETS, DB, KEYS, AUTH/TOKEN/ADMIN/SESSION/PAGE limits, cron, Turnstile).
 // The zone route 308s /demos/melody-auth* to the subdomain issuer. This source only redirects if that route is missing.
 const melodyAuthFallbackSource = standalone("melody-auth");
 

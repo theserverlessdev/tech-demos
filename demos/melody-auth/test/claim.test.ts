@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { claimCode, claimRefresh } from "../src/worker/db";
+import { claimCode, rotateRefreshAtomic, type RefreshRow } from "../src/worker/db";
 
 type Step = { changes?: number; row?: unknown };
 
@@ -16,7 +16,14 @@ function mockDb(script: Step[]): D1Database {
       return next().row ?? null;
     },
   };
-  return { prepare: () => stmt } as unknown as D1Database;
+  return {
+    prepare: () => stmt,
+    async batch(stmts: { run: () => Promise<{ success: boolean; meta: { changes: number } }> }[]) {
+      const out = [];
+      for (const item of stmts) out.push(await item.run());
+      return out;
+    },
+  } as unknown as D1Database;
 }
 
 const row = {
@@ -30,6 +37,7 @@ const row = {
   scope: "openid",
   expires_at: Date.now() + 60_000,
   used_at: Date.now(),
+  family_id: "fam_1",
 };
 
 test("claimCode requires meta.changes === 1", async () => {
@@ -40,8 +48,13 @@ test("claimCode requires meta.changes === 1", async () => {
   expect(lost).toBeNull();
 });
 
-test("claimRefresh revokes the family when the claim loses", async () => {
-  const refresh = {
+test("code reuse revokes only the stored family", async () => {
+  const lost = await claimCode(mockDb([{ changes: 0 }, { row }, { changes: 1 }]), "used-code", Date.now());
+  expect(lost).toBeNull();
+});
+
+test("rotateRefreshAtomic requires first-stmt meta.changes === 1", async () => {
+  const refresh: RefreshRow = {
     id: "rt_1",
     token_hash: "x",
     family_id: "fam_1",
@@ -49,9 +62,12 @@ test("claimRefresh revokes the family when the claim loses", async () => {
     client_id: "melody-sample",
     scope: "openid",
     expires_at: Date.now() + 60_000,
-    revoked_at: Date.now(),
+    revoked_at: null,
     replaced_by: null,
   };
-  const lost = await claimRefresh(mockDb([{ row: refresh }, { changes: 0 }, { changes: 2 }]), "old-refresh", Date.now());
+  const won = await rotateRefreshAtomic(mockDb([{ changes: 1 }, { changes: 1 }]), refresh, Date.now());
+  expect(won?.familyId).toBe("fam_1");
+
+  const lost = await rotateRefreshAtomic(mockDb([{ changes: 0 }, { changes: 0 }, { changes: 2 }]), refresh, Date.now());
   expect(lost).toBeNull();
 });

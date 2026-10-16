@@ -40,7 +40,6 @@ function assetPathAllowed(path: string): boolean {
     path === "/index.html" ||
     path === "/admin" ||
     path === "/admin.html" ||
-    path === "/callback" ||
     path === "/favicon.svg" ||
     path.startsWith("/assets/")
   );
@@ -51,7 +50,6 @@ async function serveAsset(request: Request, env: Env, path: string): Promise<Res
   if (!assetPathAllowed(path)) return new Response("Not found", { status: 404, headers: { "x-content-type-options": "nosniff" } });
   const assetUrl = new URL(request.url);
   if (path === "/admin") assetUrl.pathname = "/admin.html";
-  else if (path === "/callback") assetUrl.pathname = "/index.html";
   else assetUrl.pathname = path === "/" ? "/index.html" : path;
   const res = await env.ASSETS.fetch(new Request(assetUrl, { method: request.method, headers: request.headers }));
   const headers = new Headers(res.headers);
@@ -97,7 +95,10 @@ async function handle(request: Request, env: Env): Promise<Response> {
   }
   if (path === "/api/config" && request.method === "GET") return handleConfig(request, env);
   if (path.startsWith("/api/admin")) return handleAdminApi(request, env, path);
-  if (path === "/authorize" && request.method === "GET") return handleAuthorizeGet(request, env, onHub);
+  if (path === "/authorize" && request.method === "GET") {
+    await limit(env.PAGE_LIMIT, request);
+    return handleAuthorizeGet(request, env, onHub);
+  }
   if (path === "/authorize" && request.method === "POST") return handleAuthorizePost(request, env, onHub);
   if (path === "/token") return handleToken(request, env);
   if (path === "/userinfo" && request.method === "GET") {

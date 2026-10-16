@@ -2,18 +2,20 @@ import { ACCESS_TTL_SEC, SAMPLE_CLIENT_ID, type AppConfig, type TokenResponse, t
 import { parseForm, parseObject, readBounded, readCookie } from "./body";
 import {
   appRedirects,
+  attachCodeFamily,
   claimCode,
-  claimRefresh,
   createSession,
   createUser,
+  deleteExpiredUserByEmail,
   deleteSession,
   getUserByEmail,
   getUserById,
   issueAuthCode,
   issueRefresh,
+  lookupRefresh,
   revokeFamily,
+  rotateRefreshAtomic,
   sessionUser,
-  setReplacedBy,
 } from "./db";
 import { HttpError, OauthError } from "./errors";
 import { html, json, oauthError } from "./headers";
@@ -193,7 +195,7 @@ export async function handleAuthorizeGet(request: Request, env: Env, onHub: bool
   const fields = fieldsFrom(url.searchParams);
   const basePath = onHub ? "/demos/melody-auth" : "";
   const checked = await validateAuthorize(env, fields);
-  if (!checked.ok) return formHtml(errorPage(basePath, "Cannot continue", checked.message), fields, 400);
+  if (!checked.ok) return html(errorPage(basePath, "Cannot continue", checked.message), 400);
   const switchAccount = url.searchParams.get("switch") === "1";
   const user = switchAccount ? null : await sessionUser(env.DB, sessionFrom(request) ?? "", Date.now());
   const mode = url.searchParams.get("mode") === "signup" ? "signup" : "signin";
@@ -240,7 +242,7 @@ export async function handleAuthorizePost(request: Request, env: Env, onHub: boo
 
   const checked = await validateAuthorize(env, fields);
   if (!checked.ok) {
-    if (!checked.safe) return formHtml(errorPage(basePath, "Cannot continue", checked.message), fields, 400);
+    if (!checked.safe) return html(errorPage(basePath, "Cannot continue", checked.message), 400);
     return failRedirect(fields, "invalid_request", checked.message);
   }
 
@@ -283,6 +285,7 @@ export async function handleAuthorizePost(request: Request, env: Env, onHub: boo
     const hashed = await hashPassword(password);
     const existing = await getUserByEmail(env.DB, email, now);
     if (existing) return page("signup", GENERIC_SIGNUP);
+    await deleteExpiredUserByEmail(env.DB, email, now);
     try {
       user = await createUser(env.DB, email, hashed.hash, hashed.salt, now);
     } catch {
@@ -400,12 +403,21 @@ export async function handleToken(request: Request, env: Env): Promise<Response>
     }
     const user = await getUserById(env.DB, row.user_id, now);
     if (!user) return oauthError("invalid_grant", "The authorization request failed.");
+    const issued = await issueRefresh(env.DB, {
+      userId: user.id,
+      clientId: row.client_id,
+      scope: row.scope,
+      now,
+    });
+    await attachCodeFamily(env.DB, row.id, issued.familyId);
     const tokens = await mintTokens(env, request, {
       userId: user.id,
       email: user.email,
       clientId: row.client_id,
       scope: row.scope,
       nonce: row.nonce,
+      familyId: issued.familyId,
+      refreshToken: issued.token,
       now,
     });
     return json(tokens);
@@ -414,7 +426,7 @@ export async function handleToken(request: Request, env: Env): Promise<Response>
   if (grant === "refresh_token") {
     const presented = body.refresh_token ?? "";
     const clientId = body.client_id ?? "";
-    const row = await claimRefresh(env.DB, presented, now);
+    const row = await lookupRefresh(env.DB, presented);
     if (!row) return oauthError("invalid_grant", "The authorization request failed.");
     if (row.client_id !== clientId) {
       await revokeFamily(env.DB, row.family_id, now);
@@ -425,14 +437,8 @@ export async function handleToken(request: Request, env: Env): Promise<Response>
       await revokeFamily(env.DB, row.family_id, now);
       return oauthError("invalid_grant", "The authorization request failed.");
     }
-    const next = await issueRefresh(env.DB, {
-      userId: row.user_id,
-      clientId: row.client_id,
-      scope: row.scope,
-      familyId: row.family_id,
-      now,
-    });
-    await setReplacedBy(env.DB, row.id, next.id);
+    const next = await rotateRefreshAtomic(env.DB, row, now);
+    if (!next) return oauthError("invalid_grant", "The authorization request failed.");
     const tokens = await mintTokens(env, request, {
       userId: user.id,
       email: user.email,

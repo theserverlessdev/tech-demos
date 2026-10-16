@@ -49,15 +49,22 @@ function decodeJwtPayload(token: string): Record<string, unknown> | null {
   }
 }
 
-function idTokenInvalid(token: string, expected: { nonce?: string; aud: string; iss: string }): string | null {
+function idTokenExpired(token: string): boolean {
+  const claims = decodeJwtPayload(token);
+  return !claims || typeof claims.exp !== "number" || !Number.isFinite(claims.exp) || claims.exp <= Math.floor(Date.now() / 1000);
+}
+
+function idTokenInvalid(
+  token: string,
+  expected: { nonce?: string; aud: string; iss: string },
+  opts: { ignoreExp?: boolean } = {},
+): string | null {
   const claims = decodeJwtPayload(token);
   if (!claims) return "The ID token could not be read.";
   if (expected.nonce !== undefined && claims.nonce !== expected.nonce) return "Nonce did not match. Start again.";
   if (claims.aud !== expected.aud) return "Audience did not match. Start again.";
   if (claims.iss !== expected.iss) return "Issuer did not match. Start again.";
-  if (typeof claims.exp !== "number" || !Number.isFinite(claims.exp) || claims.exp <= Math.floor(Date.now() / 1000)) {
-    return "The ID token expired. Start again.";
-  }
+  if (!opts.ignoreExp && idTokenExpired(token)) return "The ID token expired. Start again.";
   return null;
 }
 
@@ -252,7 +259,7 @@ async function bootSample(): Promise<void> {
   const saved = sessionStorage.getItem("melody-tokens");
   if (saved) {
     const parsed = JSON.parse(saved) as TokenResponse;
-    const invalid = idTokenInvalid(parsed.id_token, { aud: config.clientId, iss: config.issuer });
+    const invalid = idTokenInvalid(parsed.id_token, { aud: config.clientId, iss: config.issuer }, { ignoreExp: true });
     if (invalid) {
       sessionStorage.removeItem("melody-tokens");
       $("intro-error").textContent = invalid;
@@ -261,6 +268,7 @@ async function bootSample(): Promise<void> {
     tokens = parsed;
     paintClaims(tokens.id_token, await loadUserinfo(tokens.access_token));
     showTokens();
+    if (idTokenExpired(parsed.id_token)) $("token-error").textContent = "expired, refresh";
   }
 }
 
@@ -293,6 +301,11 @@ if (refreshBtn) {
     });
     if (res.status !== 200 || !res.data || !("id_token" in res.data)) {
       $("token-error").textContent = messageOf(res.data, "Refresh failed.");
+      return;
+    }
+    const invalid = idTokenInvalid(res.data.id_token, { aud: config.clientId, iss: config.issuer });
+    if (invalid) {
+      $("token-error").textContent = invalid;
       return;
     }
     tokens = res.data;

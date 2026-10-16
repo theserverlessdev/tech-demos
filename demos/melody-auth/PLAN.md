@@ -20,7 +20,7 @@ MFA, social logins, email delivery, password reset, SAML, RBAC, organizations, a
 - **D1** — users, apps (clients + exact redirect URIs), auth codes, hosted sessions, refresh tokens.
 - **KV** — JWKS / signing-key metadata (`kid`, public JWK). Private key is `AUTH_PRIVATE_JWK` (ES256 via WebCrypto).
 - **Turnstile** — sign-up and sign-in. Site key var `TURNSTILE_SITE_KEY` (placeholder / widget key). Secret `TURNSTILE_SECRET`.
-- **Rate-limit bindings** — `7481` authorize (POST), `7482` token, `7483` admin, `7484` userinfo/logout. Unused elsewhere (`7480` is goodvibes `CONNECT_LIMIT`).
+- **Rate-limit bindings** — `7481` authorize POST, `7482` token, `7483` admin, `7484` userinfo/logout, `7485` authorize GET. Unused elsewhere (`7480` is goodvibes `CONNECT_LIMIT`).
 - **No Hono, no React, no jose.** Vanilla TS, Bun bundle, Graphite & Ember.
 
 ## Tasks

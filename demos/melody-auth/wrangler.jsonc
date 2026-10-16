@@ -24,13 +24,14 @@
       "id": "00000000000000000000000000007471"
     }
   ],
-  // 7481 authorize, 7482 token, 7483 admin, 7484 userinfo/logout.
+  // 7481 authorize POST, 7482 token, 7483 admin, 7484 userinfo/logout, 7485 authorize GET.
   // Unused elsewhere (7480 is goodvibes CONNECT_LIMIT).
   "ratelimits": [
     { "name": "AUTH_LIMIT", "namespace_id": "7481", "simple": { "limit": 8, "period": 60 } },
     { "name": "TOKEN_LIMIT", "namespace_id": "7482", "simple": { "limit": 20, "period": 60 } },
     { "name": "ADMIN_LIMIT", "namespace_id": "7483", "simple": { "limit": 60, "period": 60 } },
-    { "name": "SESSION_LIMIT", "namespace_id": "7484", "simple": { "limit": 30, "period": 60 } }
+    { "name": "SESSION_LIMIT", "namespace_id": "7484", "simple": { "limit": 30, "period": 60 } },
+    { "name": "PAGE_LIMIT", "namespace_id": "7485", "simple": { "limit": 30, "period": 60 } }
   ],
   "vars": {
     // Empty in production. .dev.vars sets "local" so the Turnstile test secret

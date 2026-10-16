@@ -32,6 +32,7 @@ export type CodeRow = {
   scope: string;
   expires_at: number;
   used_at: number | null;
+  family_id: string | null;
 };
 
 export type RefreshRow = {
@@ -77,6 +78,10 @@ export async function getUserByEmail(db: D1Database, email: string, now: number)
 
 export async function getUserById(db: D1Database, id: string, now: number): Promise<UserRow | null> {
   return db.prepare("SELECT * FROM users WHERE id = ? AND expires_at > ?").bind(id, now).first<UserRow>();
+}
+
+export async function deleteExpiredUserByEmail(db: D1Database, email: string, now: number): Promise<void> {
+  await db.prepare("DELETE FROM users WHERE email = ? AND expires_at <= ?").bind(email, now).run();
 }
 
 export async function createUser(db: D1Database, email: string, hash: string, salt: string, now: number): Promise<UserRow> {
@@ -127,7 +132,7 @@ export async function issueAuthCode(
   const codeHash = await sha256Hex(code);
   await db
     .prepare(
-      "INSERT INTO auth_codes (id, code_hash, user_id, client_id, redirect_uri, code_challenge, nonce, scope, expires_at, used_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)",
+      "INSERT INTO auth_codes (id, code_hash, user_id, client_id, redirect_uri, code_challenge, nonce, scope, expires_at, used_at, family_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)",
     )
     .bind(
       randomId("code"),
@@ -157,15 +162,16 @@ export async function claimCode(db: D1Database, code: string, now: number): Prom
     .run();
   if ((claimed.meta.changes ?? 0) !== 1) {
     const existing = await db.prepare("SELECT * FROM auth_codes WHERE code_hash = ?").bind(codeHash).first<CodeRow>();
-    if (existing) {
-      await db
-        .prepare("UPDATE refresh_tokens SET revoked_at = ? WHERE user_id = ? AND client_id = ? AND revoked_at IS NULL")
-        .bind(now, existing.user_id, existing.client_id)
-        .run();
+    if (existing?.used_at != null && existing.family_id) {
+      await revokeFamily(db, existing.family_id, now);
     }
     return null;
   }
   return db.prepare("SELECT * FROM auth_codes WHERE code_hash = ?").bind(codeHash).first<CodeRow>();
+}
+
+export async function attachCodeFamily(db: D1Database, codeId: string, familyId: string): Promise<void> {
+  await db.prepare("UPDATE auth_codes SET family_id = ? WHERE id = ?").bind(familyId, codeId).run();
 }
 
 export async function issueRefresh(
@@ -188,23 +194,28 @@ export async function lookupRefresh(db: D1Database, token: string): Promise<Refr
   return db.prepare("SELECT * FROM refresh_tokens WHERE token_hash = ?").bind(await sha256Hex(token)).first<RefreshRow>();
 }
 
-export async function claimRefresh(db: D1Database, token: string, now: number): Promise<RefreshRow | null> {
-  const tokenHash = await sha256Hex(token);
-  const row = await db.prepare("SELECT * FROM refresh_tokens WHERE token_hash = ?").bind(tokenHash).first<RefreshRow>();
-  if (!row) return null;
-  const claimed = await db
-    .prepare("UPDATE refresh_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL AND expires_at > ?")
-    .bind(now, row.id, now)
-    .run();
-  if ((claimed.meta.changes ?? 0) !== 1) {
+export async function rotateRefreshAtomic(
+  db: D1Database,
+  row: RefreshRow,
+  now: number,
+): Promise<{ token: string; id: string; familyId: string } | null> {
+  const token = toBase64Url(randomBytes(32));
+  const id = randomId("rt");
+  const results = await db.batch([
+    db
+      .prepare("UPDATE refresh_tokens SET revoked_at = ?, replaced_by = ? WHERE id = ? AND revoked_at IS NULL AND expires_at > ?")
+      .bind(now, id, row.id, now),
+    db
+      .prepare(
+        "INSERT INTO refresh_tokens (id, token_hash, family_id, user_id, client_id, scope, expires_at, revoked_at, replaced_by) SELECT ?, ?, ?, ?, ?, ?, ?, NULL, NULL WHERE EXISTS (SELECT 1 FROM refresh_tokens WHERE id = ? AND replaced_by = ?)",
+      )
+      .bind(id, await sha256Hex(token), row.family_id, row.user_id, row.client_id, row.scope, now + REFRESH_TTL_MS, row.id, id),
+  ]);
+  if ((results[0]?.meta.changes ?? 0) !== 1) {
     await revokeFamily(db, row.family_id, now);
     return null;
   }
-  return { ...row, revoked_at: now };
-}
-
-export async function setReplacedBy(db: D1Database, oldId: string, newId: string): Promise<void> {
-  await db.prepare("UPDATE refresh_tokens SET replaced_by = ? WHERE id = ?").bind(newId, oldId).run();
+  return { token, id, familyId: row.family_id };
 }
 
 export async function revokeFamily(db: D1Database, familyId: string, now: number): Promise<void> {

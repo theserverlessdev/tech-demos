@@ -199,6 +199,28 @@ if (raced.code) {
   check("concurrent code exchange yields exactly one 200", oks.length === 1, { a: a.status, b: b.status });
 }
 
+const refreshRace = await signupCode(redirectUri);
+const refreshIssued = refreshRace.code
+  ? await postForm("/token", {
+      grant_type: "authorization_code",
+      code: refreshRace.code,
+      redirect_uri: redirectUri,
+      client_id: "melody-sample",
+      code_verifier: refreshRace.verifier,
+    })
+  : { status: 0, data: {} };
+const parentRefresh = (refreshIssued.data as { refresh_token?: string }).refresh_token ?? "";
+check("refresh-race parent token issued", refreshIssued.status === 200 && Boolean(parentRefresh), refreshIssued.status);
+if (parentRefresh) {
+  const body = { grant_type: "refresh_token", refresh_token: parentRefresh, client_id: "melody-sample" };
+  const [a, b] = await Promise.all([postForm("/token", body), postForm("/token", body)]);
+  const oks = [a, b].filter((res) => res.status === 200);
+  check("parallel refresh reuse yields exactly one 200", oks.length === 1, { a: a.status, b: b.status });
+  const child = (oks[0]?.data as { refresh_token?: string } | undefined)?.refresh_token ?? "";
+  const childReplay = await postForm("/token", { grant_type: "refresh_token", refresh_token: child, client_id: "melody-sample" });
+  check("winner child is invalid_grant after parallel reuse", childReplay.status === 400 && (childReplay.data as { error?: string })?.error === "invalid_grant", childReplay.data);
+}
+
 const wrong = await postForm("/authorize", {
   ...authFields({ redirectUri, state, nonce, challenge, mode: "signin" }),
   email,

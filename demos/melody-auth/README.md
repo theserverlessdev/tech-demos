@@ -31,7 +31,7 @@ Inspired by [ValueMelody/melody-auth](https://github.com/ValueMelody/melody-auth
 
 - Signup / password / OIDC only. No MFA, no social logins, no email delivery. Emails are not verified (`email_verified` is always `false`).
 - Demo users expire after 24 hours. A cron every 15 minutes deletes them and their codes, sessions, and refresh tokens.
-- Sign-up and sign-in require Turnstile. Rate limits are authorize `7481` (8/min, POST only), token `7482` (20/min), admin `7483` (60/min), and userinfo/logout `7484` (30/min). `7480` is goodvibes `CONNECT_LIMIT`.
+- Sign-up and sign-in require Turnstile. Rate limits are authorize POST `7481` (8/min), token `7482` (20/min), admin `7483` (60/min), userinfo/logout `7484` (30/min), and authorize GET `7485` (30/min). `7480` is goodvibes `CONNECT_LIMIT`.
 - `redirect_uri` is an exact string match. Codes are 60 seconds and single-use (claim-first). A reused refresh token revokes its family.
 - Error copy is generic. A missing user and a wrong password both return “Email or password is incorrect.”
 - Sign-up hashes with PBKDF2 before the existence check. A unique-email constraint and insert-vs-conflict timing can still leak whether an address is already registered.
@@ -39,7 +39,7 @@ Inspired by [ValueMelody/melody-auth](https://github.com/ValueMelody/melody-auth
 ## What is real
 
 - D1 tables for users, apps, auth codes, hosted sessions, and refresh tokens.
-- KV holds the public JWKS document (`jwks:current`). `/.well-known/jwks.json` is served from that KV value. The ES256 private JWK is `AUTH_PRIVATE_JWK` (a Worker secret). Production rejects the committed demo key.
+- The ES256 private JWK is `AUTH_PRIVATE_JWK` (a Worker secret). `/.well-known/jwks.json` is derived from that secret and isolate-cached. KV holds a best-effort public-JWK copy (`jwks:current`). Production rejects the committed demo key.
 - `/.well-known/openid-configuration`, `/.well-known/jwks.json`, `/authorize`, `/token`, `/userinfo`, `/logout`.
 - Passwords are PBKDF2-SHA-256 (100k iterations) with a per-user salt, via WebCrypto.
 - Admin is read-only. Emails are masked. There are no delete or edit actions.
@@ -81,12 +81,12 @@ Generate `AUTH_PRIVATE_JWK` as an ES256 (P-256) JWK with `kid`, `d`, `x`, and `y
 
 | Resource | Name | Status |
 | --- | --- | --- |
-| D1 database | `tech-demos-melody-auth` | **Create.** `wrangler d1 create tech-demos-melody-auth`, then paste `database_id` over `00000000-0000-4000-8000-000000007471` in `wrangler.jsonc`. Apply `migrations/0001_init.sql`. |
+| D1 database | `tech-demos-melody-auth` | **Create.** `wrangler d1 create tech-demos-melody-auth`, then paste `database_id` over `00000000-0000-4000-8000-000000007471` in `wrangler.jsonc`. Apply all migrations. |
 | KV namespace | `tech-demos-melody-auth-keys` | **Create.** `wrangler kv namespace create tech-demos-melody-auth-keys`, then paste `id` over `00000000000000000000000000007471`. |
 | Secret | `TURNSTILE_SECRET` | **Create.** `wrangler secret put TURNSTILE_SECRET`. Do not commit it. |
 | Secret | `AUTH_PRIVATE_JWK` | **Create.** ES256 private JWK JSON. Public JWKS is derived and stored in KV. |
 | Turnstile widget | `tech-demos-melody-auth` | **Create.** Mint a dedicated widget for `melody-auth.tech-demos.theserverless.dev`. Site key var is `TURNSTILE_SITE_KEY` (placeholder `REPLACE_ME_MINT_A_DEDICATED_WIDGET`). Action `melody-auth`. |
-| Rate-limit namespaces | `7481` authorize, `7482` token, `7483` admin, `7484` userinfo/logout | Created on deploy. Unused elsewhere in this repo (`7480` is goodvibes `CONNECT_LIMIT`). |
+| Rate-limit namespaces | `7481` authorize POST, `7482` token, `7483` admin, `7484` userinfo/logout, `7485` authorize GET | Created on deploy. Unused elsewhere in this repo (`7480` is goodvibes `CONNECT_LIMIT`). |
 | Cron | `*/15 * * * *` | Applied on deploy. Deletes users with `expires_at` in the past (24 hours after creation) and their codes, sessions, and refresh tokens. |
 | Routes | `tech-demos.theserverless.dev/demos/melody-auth*` and `melody-auth.tech-demos.theserverless.dev/*` | Applied on deploy. The zone is `theserverless.dev`. |
 
