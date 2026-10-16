@@ -32,15 +32,29 @@ function err(message: string): void {
   $("play-error").textContent = message;
 }
 
-type TurnstileApi = { render: (el: HTMLElement, opts: { sitekey: string; callback?: (token: string) => void }) => string };
+type TurnstileApi = { render: (el: HTMLElement, opts: { sitekey: string; callback?: (token: string) => void }) => string; reset: (id?: string) => void };
 function turnstileApi(): TurnstileApi | undefined {
   return (window as Window & { turnstile?: TurnstileApi }).turnstile;
 }
 
 let config: AppConfig | null = null;
 let lastTokens: TokenResponse | null = null;
-let confidential: { client_id: string; client_secret?: string } | null = null;
 let device: { device_code: string; user_code: string; interval: number } | null = null;
+let turnstileWidget = "";
+
+function rememberTokens(status: number, data: unknown): void {
+  if (status !== 200 || !data || typeof data !== "object" || !("access_token" in data)) return;
+  const next = data as TokenResponse;
+  if (!next.access_token) return;
+  lastTokens = { ...lastTokens, ...next, refresh_token: next.refresh_token || lastTokens?.refresh_token };
+  sessionStorage.setItem("melody-play-tokens", JSON.stringify(lastTokens));
+}
+
+function machineCreds(): { id: string; secret: string } {
+  const id = (document.getElementById("cc-id") as HTMLInputElement | null)?.value.trim() ?? "";
+  const secret = (document.getElementById("cc-secret") as HTMLInputElement | null)?.value ?? "";
+  return { id, secret };
+}
 
 async function post(path: string, body: Record<string, string>, extra: HeadersInit = {}): Promise<{ status: number; data: unknown }> {
   const res = await fetch(`${apiRoot()}${path}`, {
@@ -63,6 +77,11 @@ document.querySelectorAll<HTMLButtonElement>("[data-flow]").forEach((btn) => {
   btn.addEventListener("click", () => switchFlow(btn.dataset.flow ?? "pkce"));
 });
 
+if (location.hostname === "127.0.0.1" || location.hostname === "localhost") {
+  const note = document.getElementById("cc-local");
+  if (note) note.hidden = false;
+}
+
 const configRes = await fetch(`${apiRoot()}/api/config`);
 const loaded = (await configRes.json()) as AppConfig;
 config = loaded;
@@ -74,7 +93,7 @@ const wait = async (): Promise<void> => {
   const api = turnstileApi();
   const tokenEl = document.getElementById("turnstile-token") as HTMLInputElement | null;
   if (api && host && loaded.turnstileSiteKey && !loaded.turnstileSiteKey.startsWith("REPLACE_ME")) {
-    api.render(host, {
+    turnstileWidget = api.render(host, {
       sitekey: loaded.turnstileSiteKey,
       callback: (token) => {
         if (tokenEl) tokenEl.value = token;
@@ -106,6 +125,12 @@ document.getElementById("pkce-start")?.addEventListener("click", async () => {
 async function finishPkce(): Promise<void> {
   if (!config) return;
   const params = new URLSearchParams(location.search);
+  const error = params.get("error");
+  if (error) {
+    err(params.get("error_description") || error);
+    history.replaceState({}, "", `${apiRoot()}/playground.html`);
+    return;
+  }
   const code = params.get("code");
   const state = params.get("state");
   if (!code || !state) return;
@@ -115,7 +140,7 @@ async function finishPkce(): Promise<void> {
     err("This tab lost the PKCE verifier.");
     return;
   }
-  const stored = JSON.parse(raw) as { verifier: string; state: string };
+  const stored = JSON.parse(raw) as { verifier: string; state: string; nonce?: string };
   if (stored.state !== state) {
     err("State did not match.");
     return;
@@ -129,9 +154,22 @@ async function finishPkce(): Promise<void> {
     code_verifier: stored.verifier,
   };
   const res = await post("/token", body);
-  lastTokens = res.data as TokenResponse;
-  sessionStorage.setItem("melody-play-tokens", JSON.stringify(lastTokens));
   history.replaceState({}, "", `${apiRoot()}/playground.html`);
+  if (res.status === 200 && stored.nonce && res.data && typeof res.data === "object" && "id_token" in res.data) {
+    const part = String((res.data as TokenResponse).id_token ?? "").split(".")[1] ?? "";
+    try {
+      const padded = part.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(part.length / 4) * 4, "=");
+      const claims = JSON.parse(atob(padded)) as { nonce?: string };
+      if (claims.nonce !== stored.nonce) {
+        err("Nonce did not match.");
+        return;
+      }
+    } catch {
+      err("The ID token could not be read.");
+      return;
+    }
+  }
+  rememberTokens(res.status, res.data);
   show({ request: body, status: res.status, response: res.data }, res.data, "POST /token grant_type=authorization_code");
 }
 
@@ -142,43 +180,26 @@ document.getElementById("pkce-refresh")?.addEventListener("click", async () => {
   }
   const body = { grant_type: "refresh_token", refresh_token: lastTokens.refresh_token, client_id: config.clientId };
   const res = await post("/token", body);
-  lastTokens = res.data as TokenResponse;
+  rememberTokens(res.status, res.data);
   show({ request: body, status: res.status, response: res.data }, res.data, "POST /token grant_type=refresh_token");
 });
 
-document.getElementById("cc-register")?.addEventListener("click", async () => {
-  const token = (document.getElementById("turnstile-token") as HTMLInputElement | null)?.value ?? "";
-  const body = {
-    client_name: "Playground machine",
-    grant_types: "client_credentials",
-    token_endpoint_auth_method: "client_secret_post",
-    scope: "api",
-    turnstileToken: token,
-  };
-  const res = await fetch(`${apiRoot()}/register`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = (await res.json()) as { client_id?: string; client_secret?: string; error?: string; error_description?: string };
-  if (data.client_id) confidential = { client_id: data.client_id, client_secret: data.client_secret };
-  show({ request: body, status: res.status, response: data }, data, "POST /register (RFC 7591)");
-});
-
 document.getElementById("cc-token")?.addEventListener("click", async () => {
-  if (!confidential?.client_secret) {
-    err("Register a confidential client first.");
+  const creds = machineCreds();
+  if (!creds.id || !creds.secret) {
+    err("Enter the machine client id and secret.");
     return;
   }
   const body = {
     grant_type: "client_credentials",
-    client_id: confidential.client_id,
-    client_secret: confidential.client_secret,
+    client_id: creds.id,
+    client_secret: creds.secret,
     scope: "api",
   };
   const res = await post("/token", body);
-  lastTokens = res.data as TokenResponse;
+  rememberTokens(res.status, res.data);
   show({ request: { ...body, client_secret: "***" }, status: res.status, response: res.data }, res.data, "POST /token grant_type=client_credentials");
+  if (turnstileWidget) turnstileApi()?.reset(turnstileWidget);
 });
 
 document.getElementById("device-start")?.addEventListener("click", async () => {
@@ -206,26 +227,28 @@ document.getElementById("device-poll")?.addEventListener("click", async () => {
     client_id: config.clientId,
   };
   const res = await post("/token", body);
-  if (res.status === 200) lastTokens = res.data as TokenResponse;
+  rememberTokens(res.status, res.data);
   show({ request: body, status: res.status, response: res.data }, res.data, "POST /token device_code poll");
 });
 
 document.getElementById("ops-introspect")?.addEventListener("click", async () => {
-  if (!config || !lastTokens?.access_token) {
-    err("Mint a token first.");
+  const creds = machineCreds();
+  if (!lastTokens?.access_token || !creds.id || !creds.secret) {
+    err("Mint a token, then enter a confidential client id and secret.");
     return;
   }
-  const body = { token: lastTokens.access_token, client_id: config.clientId };
+  const body = { token: lastTokens.access_token, client_id: creds.id, client_secret: creds.secret };
   const res = await post("/introspect", body);
-  show({ request: { token: "<access_token>", client_id: config.clientId }, status: res.status, response: res.data }, res.data, "POST /introspect");
+  show({ request: { token: "<access_token>", client_id: creds.id }, status: res.status, response: res.data }, res.data, "POST /introspect");
 });
 
 document.getElementById("ops-revoke")?.addEventListener("click", async () => {
-  if (!config || !lastTokens?.access_token) {
-    err("Mint a token first.");
+  const creds = machineCreds();
+  if (!lastTokens?.access_token || !creds.id || !creds.secret) {
+    err("Mint a token, then enter a confidential client id and secret.");
     return;
   }
-  const body = { token: lastTokens.access_token, client_id: config.clientId };
+  const body = { token: lastTokens.access_token, client_id: creds.id, client_secret: creds.secret };
   const res = await fetch(`${apiRoot()}/revoke`, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },

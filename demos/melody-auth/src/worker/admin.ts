@@ -6,7 +6,8 @@ import { randomBytes, toBase64Url } from "./encoding";
 import { HttpError } from "./errors";
 import { json } from "./headers";
 import { clientKey } from "./ip";
-import { hashPassword, maskEmail } from "./password";
+import { maskEmail } from "./password";
+import { hashClientSecret } from "./secret";
 import { parseRedirectUris } from "./redirect";
 import { deleteApp, getFullApp, insertApp, listFullApps, parseJsonList, updateApp } from "./store";
 
@@ -41,7 +42,7 @@ export async function handleAdminApi(request: Request, env: Env, path: string): 
   if (request.method === "POST" && path === "/api/admin/apps") {
     const body = await readAdminBody(request);
     const secret = toBase64Url(randomBytes(24));
-    const hashed = await hashPassword(secret);
+    const hashed = await hashClientSecret(secret);
     const clientId = typeof body.client_id === "string" && body.client_id.trim() ? body.client_id.trim() : `cid_${toBase64Url(randomBytes(8))}`;
     const clientType = body.client_type === "confidential" ? "confidential" : "public";
     await insertApp(env.DB, {
@@ -52,8 +53,8 @@ export async function handleAdminApi(request: Request, env: Env, path: string): 
       scopes: String(body.scopes ?? "openid profile email offline_access"),
       authMethod: String(body.auth_method ?? (clientType === "public" ? "none" : "client_secret_post")),
       clientType,
-      secretHash: clientType === "confidential" ? hashed.hash : undefined,
-      secretSalt: clientType === "confidential" ? hashed.salt : undefined,
+      secretHash: clientType === "confidential" ? hashed : undefined,
+      secretSalt: clientType === "confidential" ? "" : undefined,
       now,
       requirePkce: clientType === "public",
     });

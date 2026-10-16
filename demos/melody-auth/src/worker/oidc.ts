@@ -27,7 +27,8 @@ import { emailShape, hashPassword, normalizeEmail, passwordShape, verifyPassword
 import { challengeShape } from "./pkce";
 import { redirectUriAllowed } from "./redirect";
 import { clearSessionCookie, sessionCookie, sessionFrom } from "./session";
-import { appScopes, consentFor, getFullApp, loadPar, parseJsonList, rememberConsent, scopesCovered, sessionAuthTime, type FullApp } from "./store";
+import { audienceAllowed, isAccessJwt, isDcrClient, mayPostLogoutRedirect } from "./policy";
+import { appScopes, consentFor, getFullApp, isJtiRevoked, loadPar, parseJsonList, rememberConsent, scopesCovered, sessionAuthTime, type FullApp } from "./store";
 import { turnstileConfigured, verifyTurnstile } from "./turnstile";
 
 const GENERIC_SIGNIN = "Email or password is incorrect.";
@@ -129,27 +130,42 @@ export async function validateAuthorize(
   }
   fields.scope = filterScopes(fields.scope, appScopes(app));
   if (!fields.scope.split(/\s+/).includes("openid")) return { ok: false, safe: true, message: "The openid scope is required." };
+  if (fields.resource && !audienceAllowed(fields.resource, app.resources, app.client_id)) {
+    return { ok: false, safe: true, message: "The resource is not allowed for this client." };
+  }
   return { ok: true, app };
 }
 
-export function failRedirect(fields: AuthorizeFields, error: string, description: string): Response {
+export function failRedirect(fields: AuthorizeFields, error: string, description: string, issuer = ""): Response {
   if (fields.responseMode === "form_post") {
-    return html(formPostPage(fields.redirectUri, { error, error_description: description, state: fields.state }), 200, undefined, formActionOrigin(fields.redirectUri));
+    return html(
+      formPostPage(fields.redirectUri, { error, error_description: description, state: fields.state, ...(issuer ? { iss: issuer } : {}) }),
+      200,
+      undefined,
+      formActionOrigin(fields.redirectUri),
+    );
   }
   const target = new URL(fields.redirectUri);
   target.searchParams.set("error", error);
   target.searchParams.set("error_description", description);
   target.searchParams.set("state", fields.state);
+  if (issuer) target.searchParams.set("iss", issuer);
   return Response.redirect(target.toString(), 302);
 }
 
-export function codeRedirect(fields: AuthorizeFields, code: string): Response {
+export function codeRedirect(fields: AuthorizeFields, code: string, issuer = ""): Response {
   if (fields.responseMode === "form_post") {
-    return html(formPostPage(fields.redirectUri, { code, state: fields.state }), 200, undefined, formActionOrigin(fields.redirectUri));
+    return html(
+      formPostPage(fields.redirectUri, { code, state: fields.state, ...(issuer ? { iss: issuer } : {}) }),
+      200,
+      undefined,
+      formActionOrigin(fields.redirectUri),
+    );
   }
   const target = new URL(fields.redirectUri);
   target.searchParams.set("code", code);
   target.searchParams.set("state", fields.state);
+  if (issuer) target.searchParams.set("iss", issuer);
   return Response.redirect(target.toString(), 302);
 }
 
@@ -187,8 +203,8 @@ export function discoveryDocument(issuer: string): Record<string, unknown> {
     require_request_uri_registration: false,
     authorization_response_iss_parameter_supported: true,
     prompt_values_supported: ["none", "login", "consent"],
-    introspection_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post", "private_key_jwt", "none"],
-    revocation_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post", "private_key_jwt", "none"],
+    introspection_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post", "private_key_jwt"],
+    revocation_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post", "private_key_jwt"],
   };
 }
 
@@ -251,11 +267,18 @@ export async function completeAuthorize(
 ): Promise<Response> {
   const forceConsent = fields.prompt.split(/\s+/).includes("consent");
   const consentNeeded = await needsConsent(env, user.id, fields, now, forceConsent);
+  const { issuer } = publicBase(request, env);
   if (fields.prompt.split(/\s+/).includes("none")) {
-    if (consentNeeded) return failRedirect(fields, "consent_required", "Consent is required.");
+    if (consentNeeded) return failRedirect(fields, "consent_required", "Consent is required.", issuer);
   }
   if (consentNeeded && !fields.prompt.split(/\s+/).includes("none")) {
     const app = await getFullApp(env.DB, fields.clientId);
+    let redirectHost = "";
+    try {
+      redirectHost = new URL(fields.redirectUri).host;
+    } catch {
+      redirectHost = "";
+    }
     const page = formHtml(
       consentPage({
         basePath: onHub ? "/demos/melody-auth" : "",
@@ -263,6 +286,8 @@ export async function completeAuthorize(
         clientName: app?.name ?? fields.clientId,
         email: user.email,
         scopes: fields.scope.split(/\s+/).filter(Boolean),
+        redirectHost,
+        unverified: isDcrClient(fields.clientId, app?.registration_access_hash),
       }),
       fields,
     );
@@ -282,7 +307,7 @@ export async function completeAuthorize(
     resource: fields.resource || undefined,
     authTime,
   });
-  const redirect = codeRedirect(fields, code);
+  const redirect = codeRedirect(fields, code, issuer);
   if (!sessionId) return redirect;
   const headers = new Headers(redirect.headers);
   if (redirect.status === 200) {
@@ -306,7 +331,7 @@ export async function handleAuthorizeGet(request: Request, env: Env, onHub: bool
   const maxAge = Number(fields.maxAge);
   const tooOld = session && Number.isFinite(maxAge) && fields.maxAge !== "" && now / 1000 - session.authTime > maxAge;
   if (fields.prompt.split(/\s+/).includes("none")) {
-    if (!session || tooOld) return failRedirect(fields, "login_required", "Sign-in is required.");
+    if (!session || tooOld) return failRedirect(fields, "login_required", "Sign-in is required.", publicBase(request, env).issuer);
     return completeAuthorize(env, request, onHub, fields, session.user, session.authTime, now);
   }
   const user = tooOld ? null : session?.user ?? null;
@@ -359,7 +384,7 @@ export async function handleAuthorizePost(request: Request, env: Env, onHub: boo
   const checked = await validateAuthorize(env, fields);
   if (!checked.ok) {
     if (!checked.safe) return html(errorPage(basePath, "Cannot continue", checked.message), 400);
-    return failRedirect(fields, "invalid_request", checked.message);
+    return failRedirect(fields, "invalid_request", checked.message, publicBase(request, env).issuer);
   }
 
   try {
@@ -423,11 +448,11 @@ export async function handleConsentPost(request: Request, env: Env, onHub: boole
   const checked = await validateAuthorize(env, fields);
   if (!checked.ok) {
     if (!checked.safe) return html(errorPage(basePath, "Cannot continue", checked.message), 400);
-    return failRedirect(fields, "invalid_request", checked.message);
+    return failRedirect(fields, "invalid_request", checked.message, publicBase(request, env).issuer);
   }
   const session = await sessionAuthTime(env.DB, sessionFrom(request) ?? "", now);
   if (!session) return html(errorPage(basePath, "Cannot continue", "Sign in first."), 401);
-  if (form.decision !== "allow") return failRedirect(fields, "access_denied", "The user denied the request.");
+  if (form.decision !== "allow") return failRedirect(fields, "access_denied", "The user denied the request.", publicBase(request, env).issuer);
   await rememberConsent(env.DB, session.user.id, fields.clientId, fields.scope, now);
   const code = await issueAuthCode(env.DB, {
     userId: session.user.id,
@@ -440,7 +465,7 @@ export async function handleConsentPost(request: Request, env: Env, onHub: boole
     resource: fields.resource || undefined,
     authTime: session.authTime,
   });
-  return codeRedirect(fields, code);
+  return codeRedirect(fields, code, publicBase(request, env).issuer);
 }
 
 export async function handleUserinfo(request: Request, env: Env): Promise<Response> {
@@ -448,18 +473,25 @@ export async function handleUserinfo(request: Request, env: Env): Promise<Respon
   const match = /^Bearer\s+(\S+)\s*$/i.exec(header);
   if (!match?.[1]) throw new HttpError(401, "unauthorized", "A bearer token is required.");
   const { issuer } = publicBase(request, env);
+  const decoded = decodeJwt(match[1]);
   const claims = await verifyJwtWithKeys(match[1], await verificationKeys(env));
-  if (!claims || claims.iss !== issuer || claims.token_use !== "access") {
+  if (!decoded || !claims || claims.iss !== issuer || !isAccessJwt(decoded.header.typ, claims.token_use)) {
     throw new HttpError(401, "unauthorized", "A bearer token is required.");
   }
-  const user = await getUserById(env.DB, claims.sub, Date.now());
+  const now = Date.now();
+  if (claims.jti && (await isJtiRevoked(env.DB, claims.jti, now))) {
+    throw new HttpError(401, "unauthorized", "A bearer token is required.");
+  }
+  const scopes = new Set((claims.scope ?? "").split(/\s+/).filter(Boolean));
+  if (!scopes.has("openid")) throw new HttpError(403, "insufficient_scope", "The openid scope is required.");
+  const user = await getUserById(env.DB, claims.sub, now);
   if (!user) throw new HttpError(401, "unauthorized", "A bearer token is required.");
-  const info: UserInfo = {
-    sub: user.id,
-    email: user.email,
-    email_verified: user.email_verified === 1,
-    name: user.email.split("@")[0],
-  };
+  const info: UserInfo = { sub: user.id };
+  if (scopes.has("email")) {
+    info.email = user.email;
+    info.email_verified = user.email_verified === 1;
+  }
+  if (scopes.has("profile")) info.name = user.email.split("@")[0];
   return corsJson(request, info);
 }
 
@@ -468,19 +500,20 @@ export async function handleLogout(request: Request, env: Env, onHub: boolean): 
   const sessionId = sessionFrom(request);
   if (sessionId) await deleteSession(env.DB, sessionId);
   let target = url.searchParams.get("post_logout_redirect_uri") ?? "";
-  let clientId = url.searchParams.get("client_id") ?? SAMPLE_CLIENT_ID;
+  let clientId = url.searchParams.get("client_id") ?? "";
   const hint = url.searchParams.get("id_token_hint") ?? "";
   if (hint) {
-    const decoded = decodeJwt(hint);
-    const aud = decoded?.claims.aud;
+    const claims = await verifyJwtWithKeys(hint, await verificationKeys(env), Math.floor(Date.now() / 1000), { ignoreExp: true });
+    const aud = claims?.aud;
     const fromAud = Array.isArray(aud) ? aud[0] : aud;
     if (fromAud) clientId = fromAud;
   }
   const headers = new Headers();
   headers.append("set-cookie", clearSessionCookie(request, onHub));
-  if (target) {
-    const allowed = await appRedirects(env.DB, clientId);
-    if (redirectUriAllowed(target, allowed)) {
+  const app = clientId ? await getFullApp(env.DB, clientId) : null;
+  if (target && app && mayPostLogoutRedirect(app.client_id, app.registration_access_hash)) {
+    const allowed = parseJsonList(app.post_logout_redirect_uris, []);
+    if (allowed.length && redirectUriAllowed(target, allowed)) {
       headers.set("location", target);
       return new Response(null, { status: 302, headers });
     }

@@ -82,6 +82,8 @@ export async function mintTokens(
           scope: input.scope,
           familyId: input.familyId,
           now: input.now,
+          resource: input.resource,
+          authTime: input.authTime,
         })
       ).token;
   }
@@ -112,6 +114,8 @@ export async function mintForUser(
       clientId: input.clientId,
       scope: input.scope,
       now: input.now,
+      resource: input.resource,
+      authTime: input.authTime,
     });
     refreshToken = issued.token;
     familyId = issued.familyId;

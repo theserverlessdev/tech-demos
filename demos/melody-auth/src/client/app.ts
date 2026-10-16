@@ -124,16 +124,20 @@ async function wireAuthorizeForm(): Promise<void> {
     if (submit && token) submit.disabled = false;
   };
   const api = await waitForTurnstile();
+  let widgetId = "";
   if (api && sitekey && !sitekey.startsWith("REPLACE_ME")) {
-    api.render(host, {
+    widgetId = api.render(host, {
       sitekey,
       action: "melody-auth",
       callback: ready,
     });
   }
   form.addEventListener("submit", (event) => {
-    if (!hidden.value) hidden.value = turnstileApi()?.getResponse() || "";
-    if (!hidden.value) event.preventDefault();
+    if (!hidden.value) hidden.value = turnstileApi()?.getResponse(widgetId) || "";
+    if (!hidden.value) {
+      event.preventDefault();
+      if (widgetId) turnstileApi()?.reset(widgetId);
+    }
   });
 }
 
@@ -204,6 +208,12 @@ async function startPkce(mode: "signin" | "signup"): Promise<void> {
 
 async function finishPkce(): Promise<boolean> {
   const params = new URLSearchParams(location.search);
+  const oauthError = params.get("error");
+  if (oauthError) {
+    $("intro-error").textContent = params.get("error_description") || oauthError;
+    history.replaceState({}, "", `${apiRoot()}/`);
+    return true;
+  }
   const code = params.get("code");
   const state = params.get("state");
   if (!code || !state || !config) return false;

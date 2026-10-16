@@ -33,7 +33,12 @@ function overflowOk() {
 
 await page.goto(`${base}/playground.html`, { waitUntil: "domcontentloaded" });
 await page.waitForSelector("#pkce-start", { timeout: 15_000 });
-await page.waitForTimeout(500);
+await page.locator("[data-flow=cc]").click();
+await page.locator("#cc-id").fill("melody-machine");
+await page.locator("#cc-secret").fill("melody-machine-secret");
+await page.locator("#cc-token").click();
+await page.waitForFunction(() => (document.getElementById("viewer")?.textContent ?? "").includes("access_token"), undefined, { timeout: 20_000 });
+await page.waitForTimeout(400);
 await page.screenshot({ path: resolve(outDir, "playground-390.png"), fullPage: true });
 
 await page.goto(base, { waitUntil: "domcontentloaded" });

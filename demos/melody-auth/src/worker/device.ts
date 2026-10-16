@@ -4,9 +4,11 @@ import { HttpError } from "./errors";
 import { corsJson, html } from "./headers";
 import { originAllowed, publicBase } from "./origin";
 import { devicePage, errorPage } from "./pages";
-import { limit } from "./oidc";
+import { filterScopes, limit } from "./oidc";
+import { audienceAllowed, isDcrClient } from "./policy";
 import { sessionFrom } from "./session";
 import {
+  appScopes,
   approveDevice,
   createDeviceGrant,
   denyDevice,
@@ -20,18 +22,29 @@ export async function handleDeviceAuthorization(request: Request, env: Env): Pro
   await limit(env.DEVICE_LIMIT, request);
   const type = (request.headers.get("content-type") ?? "").toLowerCase();
   const text = await readBounded(request, 8_000);
-  const body = type.includes("application/json")
-    ? (JSON.parse(text) as Record<string, string>)
-    : Object.fromEntries(new URLSearchParams(text));
+  let body: Record<string, string>;
+  try {
+    body = type.includes("application/json")
+      ? (JSON.parse(text) as Record<string, string>)
+      : Object.fromEntries(new URLSearchParams(text));
+  } catch {
+    throw new HttpError(400, "invalid_request", "The request body is not valid JSON.");
+  }
   const now = Date.now();
   const app = await authenticateClient(env, request, body, now);
   if (!clientAllowsGrant(app, "urn:ietf:params:oauth:grant-type:device_code")) {
     throw new HttpError(400, "unauthorized_client", "This client cannot use that grant.");
   }
+  const scope = filterScopes(typeof body.scope === "string" && body.scope ? body.scope : "openid profile email offline_access", appScopes(app));
+  if (!scope) throw new HttpError(400, "invalid_scope", "The requested scope is not allowed.");
+  const audience = typeof body.resource === "string" ? body.resource : "";
+  if (audience && !audienceAllowed(audience, app.resources, app.client_id)) {
+    throw new HttpError(400, "invalid_target", "The requested audience is not allowed.");
+  }
   const issued = await createDeviceGrant(env.DB, {
     clientId: app.client_id,
-    scope: typeof body.scope === "string" && body.scope ? body.scope : "openid profile email offline_access",
-    audience: typeof body.resource === "string" ? body.resource : undefined,
+    scope,
+    audience: audience || undefined,
     now,
   });
   const { issuer } = publicBase(request, env);
@@ -61,14 +74,27 @@ export async function handleDevicePage(request: Request, env: Env, onHub: boolea
     if (!row || row.expires_at <= now) {
       return html(devicePage({ basePath, siteKey: env.TURNSTILE_SITE_KEY, userCode, sessionEmail: session?.user.email ?? null, error: "That code is unknown or expired." }), 400);
     }
+    const app = await getFullApp(env.DB, row.client_id);
+    const pending = {
+      pendingName: app?.name ?? row.client_id,
+      scopes: row.scope.split(/\s+/).filter(Boolean),
+      resource: row.audience ?? "",
+      unverified: isDcrClient(row.client_id, app?.registration_access_hash),
+    };
     if (!session) {
-      const next = `${basePath}/device?user_code=${encodeURIComponent(row.user_code)}`;
       return html(
-        errorPage(basePath, "Sign in first", `Open the sample app, sign in, then return to ${next}.`),
+        devicePage({
+          basePath,
+          siteKey: env.TURNSTILE_SITE_KEY,
+          userCode: row.user_code,
+          sessionEmail: null,
+          error: "",
+          signInHref: `${basePath}/`,
+          ...pending,
+        }),
         401,
       );
     }
-    const app = await getFullApp(env.DB, row.client_id);
     return html(
       devicePage({
         basePath,
@@ -76,7 +102,7 @@ export async function handleDevicePage(request: Request, env: Env, onHub: boolea
         userCode: row.user_code,
         sessionEmail: session.user.email,
         error: "",
-        pendingName: app?.name ?? row.client_id,
+        ...pending,
       }),
     );
   }

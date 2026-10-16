@@ -74,10 +74,27 @@ async function serveAsset(request: Request, env: Env, path: string): Promise<Res
 
 async function seed(env: Env): Promise<void> {
   const now = Date.now();
-  if (isLocalEnv(env)) await ensureLocalApp(env.DB, now);
-  await ensureSampleMeta(env.DB, now, isLocalEnv(env));
   const machineSecret = envSecret(env, "MACHINE_CLIENT_SECRET") || (isLocalEnv(env) ? "melody-machine-secret" : "");
-  if (machineSecret) await ensureMachineApp(env.DB, now, machineSecret);
+  const steps: Array<() => Promise<void>> = [
+    async () => {
+      if (isLocalEnv(env)) await ensureLocalApp(env.DB, now);
+    },
+    async () => {
+      if (machineSecret) await ensureMachineApp(env.DB, now, machineSecret);
+    },
+    async () => {
+      await ensureSampleMeta(env.DB, now, isLocalEnv(env));
+    },
+  ];
+  const failures: string[] = [];
+  for (const step of steps) {
+    try {
+      await step();
+    } catch (err) {
+      failures.push(err instanceof Error ? err.name : "error");
+    }
+  }
+  if (failures.length) throw new Error("seed");
 }
 
 async function handle(request: Request, env: Env): Promise<Response> {
@@ -85,8 +102,12 @@ async function handle(request: Request, env: Env): Promise<Response> {
   const { path, onHub } = stripBase(url.pathname);
 
   if (!localSeeded) {
-    await seed(env);
-    localSeeded = true;
+    try {
+      await seed(env);
+      localSeeded = true;
+    } catch (err) {
+      console.error(JSON.stringify({ event: "seed_failed", name: err instanceof Error ? err.name : "error" }));
+    }
   }
 
   if (onHub && !isLocalEnv(env)) {

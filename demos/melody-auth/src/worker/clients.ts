@@ -1,9 +1,18 @@
 import { verifyJwtWithKeys, type PublicJwk } from "./jwt";
 import { OauthError } from "./errors";
 import { publicBase } from "./origin";
-import { verifyPassword } from "./password";
 import { timingSafeEqual } from "./encoding";
-import { appGrants, getFullApp, type FullApp } from "./store";
+import { assertionLifetimeOk } from "./policy";
+import { clientSecretMatches } from "./secret";
+import { appGrants, getFullApp, rememberClientAssertion, type FullApp } from "./store";
+
+function formDecode(value: string): string {
+  try {
+    return decodeURIComponent(value.replace(/\+/g, " "));
+  } catch {
+    return value;
+  }
+}
 
 function basicPair(header: string | null): { id: string; secret: string } | null {
   const match = /^Basic\s+(\S+)$/i.exec(header ?? "");
@@ -12,7 +21,7 @@ function basicPair(header: string | null): { id: string; secret: string } | null
     const decoded = atob(match[1]);
     const idx = decoded.indexOf(":");
     if (idx < 1) return null;
-    return { id: decoded.slice(0, idx), secret: decoded.slice(idx + 1) };
+    return { id: formDecode(decoded.slice(0, idx)), secret: formDecode(decoded.slice(idx + 1)) };
   } catch {
     return null;
   }
@@ -38,28 +47,38 @@ export async function authenticateClient(
   }
   if (method === "client_secret_basic" || method === "client_secret_post") {
     const secret = method === "client_secret_basic" ? basic?.secret ?? "" : body.client_secret ?? basic?.secret ?? "";
-    if (!app.client_secret_hash || !app.client_secret_salt) throw new OauthError(401, "invalid_client", "Client authentication failed.");
-    const ok = await verifyPassword(secret, app.client_secret_hash, app.client_secret_salt);
+    if (!app.client_secret_hash) throw new OauthError(401, "invalid_client", "Client authentication failed.");
+    const ok = await clientSecretMatches(secret, app.client_secret_hash);
     if (!ok) throw new OauthError(401, "invalid_client", "Client authentication failed.");
     return app;
   }
   if (method === "private_key_jwt") {
-    if (body.client_assertion_type !== "urn:ietf:params:oauth:client-assertion-type:jwt-bearer" || !body.client_assertion) {
+    try {
+      if (body.client_assertion_type !== "urn:ietf:params:oauth:client-assertion-type:jwt-bearer" || !body.client_assertion) {
+        throw new OauthError(401, "invalid_client", "Client authentication failed.");
+      }
+      let keys: PublicJwk[] = [];
+      try {
+        const parsed = JSON.parse(app.jwks || "{}") as { keys?: PublicJwk[] };
+        keys = parsed.keys ?? [];
+      } catch {
+        keys = [];
+      }
+      const nowSec = Math.floor(now / 1000);
+      const claims = await verifyJwtWithKeys(body.client_assertion, keys, nowSec);
+      if (!claims || claims.sub !== clientId || claims.iss !== clientId || !assertionLifetimeOk(claims, nowSec)) {
+        throw new OauthError(401, "invalid_client", "Client authentication failed.");
+      }
+      const aud = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
+      const issuer = publicBase(request, env).issuer;
+      if (!aud.includes(issuer) && !aud.includes(`${issuer}/token`)) throw new OauthError(401, "invalid_client", "Client authentication failed.");
+      const fresh = await rememberClientAssertion(env.DB, clientId, claims.jti ?? "", (claims.exp ?? nowSec) * 1000);
+      if (!fresh) throw new OauthError(401, "invalid_client", "Client authentication failed.");
+      return app;
+    } catch (err) {
+      if (err instanceof OauthError) throw err;
       throw new OauthError(401, "invalid_client", "Client authentication failed.");
     }
-    let keys: PublicJwk[] = [];
-    try {
-      const parsed = JSON.parse(app.jwks || "{}") as { keys?: PublicJwk[] };
-      keys = parsed.keys ?? [];
-    } catch {
-      keys = [];
-    }
-    const claims = await verifyJwtWithKeys(body.client_assertion, keys);
-    if (!claims || claims.sub !== clientId || claims.iss !== clientId) throw new OauthError(401, "invalid_client", "Client authentication failed.");
-    const aud = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
-    const issuer = publicBase(request, env).issuer;
-    if (!aud.includes(issuer) && !aud.includes(`${issuer}/token`)) throw new OauthError(401, "invalid_client", "Client authentication failed.");
-    return app;
   }
   throw new OauthError(401, "invalid_client", "Client authentication failed.");
 }
@@ -78,4 +97,10 @@ export function adminTokenOk(env: Env, request: Request): boolean {
 
 export function envSecret(env: Env, name: string): string {
   return String((env as unknown as Record<string, string | undefined>)[name] ?? "").trim();
+}
+
+export async function requireConfidential(app: FullApp): Promise<void> {
+  if (app.client_type !== "confidential" || app.token_endpoint_auth_method === "none") {
+    throw new OauthError(401, "invalid_client", "Client authentication failed.");
+  }
 }

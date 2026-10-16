@@ -44,4 +44,6 @@ Polish: refresh claim+child insert is one D1 batch; code reuse revokes only the 
 
 Review pass: `email_verified` is false; claim-first codes and refresh rotation; Origin `null` and `sec-fetch-site: cross-site` rejected; sole issuer `melody-auth.tech-demos.theserverless.dev`; `__Host-ma_session` only on the subdomain; demo signing key `503`s outside local; prod seed drops loopback / hub / docs clients; authorize validates `response_type`, scopes, and state/nonce length; sample app checks nonce/aud/iss/exp.
 
+Second review: token exchange and client-credentials are confined to the caller's grant, scopes, and `resources`; DCR strips privileged grants; device codes are client-bound; federation rotates an unverified local password and checks the ID token plus a state cookie; the key ring wraps `d` with `AUTH_KEK`, republishes on a 60s read, and stages the next `kid` for one JWKS cache period; `private_key_jwt` is single-use; ID tokens are not access tokens. Migration `0005_review_fixes.sql` is additive.
+
 First slice: hosted authorize, sample-app PKCE client, token inspector, admin list, 24-hour cron purge, Turnstile, rate limits `7481` / `7482` / `7483` / `7484`. Phone layout uses 16px fields and 44px controls.

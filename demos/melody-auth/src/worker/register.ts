@@ -5,19 +5,19 @@ import { randomBytes, randomId, sha256Hex, toBase64Url, timingSafeEqual } from "
 import { HttpError, OauthError } from "./errors";
 import { corsJson } from "./headers";
 import { publicBase } from "./origin";
-import { hashPassword } from "./password";
 import { limit } from "./oidc";
-import { deleteApp, getFullApp, insertApp, parseJsonList, updateApp } from "./store";
+import {
+  DCR_CLIENT_CAP,
+  filterDcrGrants,
+  normalizeClientJwks,
+  standardScope,
+  validateRedirectList,
+} from "./policy";
+import { hashClientSecret } from "./secret";
+import { countDcrClients, deleteApp, getFullApp, insertApp, parseJsonList, updateApp } from "./store";
 import { verifyTurnstile } from "./turnstile";
 
 const AUTH_METHODS = new Set(["none", "client_secret_basic", "client_secret_post", "private_key_jwt"]);
-const GRANTS = new Set([
-  "authorization_code",
-  "refresh_token",
-  "client_credentials",
-  "urn:ietf:params:oauth:grant-type:device_code",
-  "urn:ietf:params:oauth:grant-type:token-exchange",
-]);
 
 async function readBody(request: Request): Promise<Record<string, unknown>> {
   const type = (request.headers.get("content-type") ?? "").toLowerCase();
@@ -39,6 +39,40 @@ async function gateRegister(env: Env, request: Request, body: Record<string, unk
   throw new HttpError(401, "unauthorized", "Turnstile or an admin token is required to register a client.");
 }
 
+function clientMetadata(
+  body: Record<string, unknown>,
+  admin: boolean,
+  fallbackRedirects: string[],
+): { redirects: string[]; grants: string[]; authMethod: string; clientType: string; scopes: string; jwks: string | null; name: string } {
+  const redirects = asStringList(body.redirect_uris, fallbackRedirects);
+  const checked = validateRedirectList(redirects);
+  if (!checked.ok) throw new OauthError(400, "invalid_client_metadata", checked.error);
+  const requested = asStringList(body.grant_types, ["authorization_code", "refresh_token"]);
+  const grants = filterDcrGrants(requested, admin);
+  if (!grants.length) throw new OauthError(400, "invalid_client_metadata", "At least one grant type is required.");
+  const authMethod = typeof body.token_endpoint_auth_method === "string" && AUTH_METHODS.has(body.token_endpoint_auth_method)
+    ? body.token_endpoint_auth_method
+    : redirects.length
+      ? "none"
+      : "client_secret_post";
+  const clientType = authMethod === "none" ? "public" : "confidential";
+  if (clientType === "public" && grants.includes("client_credentials")) {
+    throw new OauthError(400, "invalid_client_metadata", "Public clients cannot use client_credentials.");
+  }
+  const jwksResult = normalizeClientJwks(body.jwks);
+  if (!jwksResult.ok) throw new OauthError(400, "invalid_client_metadata", jwksResult.error);
+  const name = typeof body.client_name === "string" && body.client_name.trim() ? body.client_name.trim().slice(0, 80) : "Registered app";
+  return {
+    redirects: checked.uris,
+    grants,
+    authMethod,
+    clientType,
+    scopes: standardScope(typeof body.scope === "string" ? body.scope : undefined),
+    jwks: jwksResult.jwks,
+    name,
+  };
+}
+
 export async function handleRegister(request: Request, env: Env): Promise<Response> {
   await limit(env.REG_LIMIT, request);
   const now = Date.now();
@@ -46,53 +80,38 @@ export async function handleRegister(request: Request, env: Env): Promise<Respon
   const parts = url.pathname.replace(/\/+$/, "").split("/");
   const maybeId = parts[parts.length - 1] === "register" ? "" : parts[parts.length - 1] ?? "";
   const clientId = maybeId.startsWith("app_") || maybeId.startsWith("cid_") || maybeId.length > 8 ? decodeURIComponent(maybeId) : "";
+  const admin = adminTokenOk(env, request);
 
   if (request.method === "POST" && !clientId) {
     const body = await readBody(request);
     await gateRegister(env, request, body);
-    const redirects = asStringList(body.redirect_uris, []);
-    const grants = asStringList(body.grant_types, ["authorization_code", "refresh_token"]).filter((g) => GRANTS.has(g));
-    const authMethod = typeof body.token_endpoint_auth_method === "string" && AUTH_METHODS.has(body.token_endpoint_auth_method)
-      ? body.token_endpoint_auth_method
-      : redirects.length
-        ? "none"
-        : "client_secret_post";
-    const clientType = authMethod === "none" ? "public" : "confidential";
-    if (clientType === "public" && grants.includes("client_credentials")) {
-      throw new OauthError(400, "invalid_client_metadata", "Public clients cannot use client_credentials.");
+    if ((await countDcrClients(env.DB)) >= DCR_CLIENT_CAP) {
+      throw new OauthError(400, "invalid_client_metadata", "Registration is temporarily unavailable.");
     }
-    if ((grants.includes("authorization_code") || grants.includes("urn:ietf:params:oauth:grant-type:device_code")) === false && !grants.includes("client_credentials") && !grants.includes("urn:ietf:params:oauth:grant-type:token-exchange")) {
-      throw new OauthError(400, "invalid_client_metadata", "At least one grant type is required.");
-    }
-    const name = typeof body.client_name === "string" && body.client_name.trim() ? body.client_name.trim().slice(0, 80) : "Registered app";
-    const scopes = typeof body.scope === "string" && body.scope.trim() ? body.scope : "openid profile email offline_access api";
+    const meta = clientMetadata(body, admin, []);
     const newId = randomId("cid");
     const registration = toBase64Url(randomBytes(32));
     let secret: string | undefined;
     let secretHash: string | undefined;
-    let secretSalt: string | undefined;
-    if (clientType === "confidential" && authMethod !== "private_key_jwt") {
+    if (meta.clientType === "confidential" && meta.authMethod !== "private_key_jwt") {
       secret = toBase64Url(randomBytes(24));
-      const hashed = await hashPassword(secret);
-      secretHash = hashed.hash;
-      secretSalt = hashed.salt;
+      secretHash = await hashClientSecret(secret);
     }
-    const jwks = body.jwks && typeof body.jwks === "object" ? JSON.stringify(body.jwks) : typeof body.jwks === "string" ? body.jwks : undefined;
     await insertApp(env.DB, {
       clientId: newId,
-      name,
-      redirectUris: redirects,
-      grantTypes: grants.length ? grants : ["authorization_code", "refresh_token"],
-      scopes,
-      authMethod,
-      clientType,
+      name: meta.name,
+      redirectUris: meta.redirects,
+      grantTypes: meta.grants,
+      scopes: meta.scopes,
+      authMethod: meta.authMethod,
+      clientType: meta.clientType,
       secretHash,
-      secretSalt,
-      jwks,
+      secretSalt: secretHash ? "" : undefined,
+      jwks: meta.jwks ?? undefined,
       registrationHash: await sha256Hex(registration),
       now,
       expiresAt: now + CLIENT_TTL_MS,
-      requirePkce: clientType === "public",
+      requirePkce: meta.clientType === "public",
     });
     const { issuer } = publicBase(request, env);
     return corsJson(
@@ -104,11 +123,11 @@ export async function handleRegister(request: Request, env: Env): Promise<Respon
         client_secret_expires_at: Math.floor((now + CLIENT_TTL_MS) / 1000),
         registration_access_token: registration,
         registration_client_uri: `${issuer}/register/${encodeURIComponent(newId)}`,
-        token_endpoint_auth_method: authMethod,
-        grant_types: grants.length ? grants : ["authorization_code", "refresh_token"],
-        redirect_uris: redirects,
-        client_name: name,
-        scope: scopes,
+        token_endpoint_auth_method: meta.authMethod,
+        grant_types: meta.grants,
+        redirect_uris: meta.redirects,
+        client_name: meta.name,
+        scope: meta.scopes,
       },
       201,
     );
@@ -122,7 +141,7 @@ export async function handleRegister(request: Request, env: Env): Promise<Respon
   const presented = match?.[1] ?? "";
   const expected = app.registration_access_hash ?? "";
   if (!presented || !expected || !timingSafeEqual(await sha256Hex(presented), expected)) {
-    if (!adminTokenOk(env, request)) throw new HttpError(401, "invalid_token", "Invalid registration access token.");
+    if (!admin) throw new HttpError(401, "invalid_token", "Invalid registration access token.");
   }
 
   if (request.method === "GET") {
@@ -139,13 +158,29 @@ export async function handleRegister(request: Request, env: Env): Promise<Respon
   }
   if (request.method === "PUT") {
     const body = await readBody(request);
+    const meta = clientMetadata(
+      {
+        ...body,
+        redirect_uris: body.redirect_uris ?? parseJsonList(app.redirect_uris, []),
+        grant_types: body.grant_types ?? parseJsonList(app.grant_types, []),
+        token_endpoint_auth_method: body.token_endpoint_auth_method ?? app.token_endpoint_auth_method,
+        scope: body.scope ?? app.scopes,
+        client_name: body.client_name ?? app.name,
+        jwks: body.jwks ?? app.jwks,
+      },
+      admin,
+      parseJsonList(app.redirect_uris, []),
+    );
     await updateApp(env.DB, clientId, {
-      name: typeof body.client_name === "string" ? body.client_name : undefined,
-      redirectUris: Array.isArray(body.redirect_uris) ? asStringList(body.redirect_uris, []) : undefined,
-      grantTypes: body.grant_types ? asStringList(body.grant_types, []) : undefined,
-      scopes: typeof body.scope === "string" ? body.scope : undefined,
+      name: meta.name,
+      redirectUris: meta.redirects,
+      grantTypes: meta.grants,
+      scopes: meta.scopes,
     });
-    return corsJson(request, { client_id: clientId, client_name: body.client_name ?? app.name });
+    if (meta.jwks !== undefined) {
+      await env.DB.prepare("UPDATE apps SET jwks = ? WHERE client_id = ?").bind(meta.jwks, clientId).run();
+    }
+    return corsJson(request, { client_id: clientId, client_name: meta.name, grant_types: meta.grants, redirect_uris: meta.redirects, scope: meta.scopes });
   }
   if (request.method === "DELETE") {
     await deleteApp(env.DB, clientId);

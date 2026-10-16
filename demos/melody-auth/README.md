@@ -139,8 +139,8 @@ Sign-in buttons stay hidden until the matching vars/secrets exist.
 | --- | --- | --- | --- |
 | Google | `GOOGLE_CLIENT_ID` | `GOOGLE_CLIENT_SECRET` | Redirect `https://melody-auth.tech-demos.theserverless.dev/fed/google/callback` |
 | GitHub | `GITHUB_CLIENT_ID` | `GITHUB_CLIENT_SECRET` | Scopes `read:user user:email`. Only **verified** emails link. |
-| Microsoft | `MICROSOFT_CLIENT_ID` | `MICROSOFT_CLIENT_SECRET` | Common tenant `/common`. |
-| Generic OIDC | `OIDC_ISSUER`, `OIDC_CLIENT_ID` | `OIDC_CLIENT_SECRET` | Discovery-based. Requires `email_verified`. |
+| Microsoft | `MICROSOFT_CLIENT_ID` | `MICROSOFT_CLIENT_SECRET` | Common tenant `/common`. Tokens often omit `email_verified`; a verified email is accepted when `xms_edov` is true. Otherwise linking fails closed. |
+| Generic OIDC | `OIDC_ISSUER`, `OIDC_CLIENT_ID` | `OIDC_CLIENT_SECRET` | HTTPS discovery only. The document `issuer` must match `OIDC_ISSUER`. Requires a verified email. |
 
 ## Run locally
 
@@ -173,9 +173,10 @@ env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3
 | `TURNSTILE_SECRET` / `AUTH_PRIVATE_JWK` | yes | Existing |
 | `ADMIN_TOKEN` | no | Admin mutations + DCR bypass |
 | `MACHINE_CLIENT_SECRET` | no | Seeds `melody-machine` for client-credentials demos |
-| `GOOGLE_*` / `GITHUB_*` / `MICROSOFT_*` / `OIDC_*` | no | Federation RP |
+| `GOOGLE_*` / `GITHUB_*` / `MICROSOFT_*` / `OIDC_*` | no | Federation RP, when configured |
+| `AUTH_KEK` | no | 32-byte AES-GCM key (base64url or 64 hex chars) that wraps signing-key `d` in KV. Rotation no-ops until this is set. Not in `secrets.required`, so deploy is not blocked. `wrangler secret put AUTH_KEK` |
 
-Migration `0004_oidc_full.sql` is additive only (ALTER + new tables). Never drop data.
+Migrations `0004_oidc_full.sql` and `0005_review_fixes.sql` are additive only (ALTER + new tables). Bookmark D1 Time Travel before applying them. Never drop data. Client secrets are SHA-256; user passwords stay PBKDF2. Dynamic registration does not grant `client_credentials` or token exchange unless the caller presents `ADMIN_TOKEN`. The SDK's code exchange is not RFC 8693 token exchange.
 
 After deploy, redeploy `apps/hub` so the gallery card picks up the new copy.
 
@@ -187,5 +188,5 @@ src/client/   sample app, playground, admin
 sdk/          zero-dep client + bearerAuth
 public/       Graphite & Ember pages
 migrations/   additive D1
-test/         grants, discovery, device slow_down, keys, PKCE
+test/         grants, discovery, device binding, token exchange, DCR, key ring, PKCE, SDK
 ```

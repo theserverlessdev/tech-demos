@@ -68,12 +68,16 @@
     <section class="card" id="flow-cc" hidden>
       <p class="eyebrow">client_credentials</p>
       <h2>Machine-to-machine</h2>
-      <p class="lede">DCR a confidential client, then POST <span class="mono">grant_type=client_credentials</span> with <span class="mono">client_secret_post</span>. The access token is <span class="mono">at+jwt</span> (RFC 9068).</p>
-      <div id="turnstile" class="turnstile" data-sitekey=""></div>
-      <input type="hidden" id="turnstile-token" />
+      <p class="lede">POST <span class="mono">grant_type=client_credentials</span> with the seeded machine client. Public dynamic registration cannot mint this grant. The access token is <span class="mono">at+jwt</span> (RFC 9068).</p>
+      <p class="fine" id="cc-local" hidden>Local only: client id <span class="mono">melody-machine</span>, secret <span class="mono">melody-machine-secret</span> from <span class="mono">.dev.vars</span>.</p>
+      <label>Client id
+        <input id="cc-id" value="melody-machine" autocomplete="off" />
+      </label>
+      <label>Client secret
+        <input id="cc-secret" type="password" autocomplete="off" />
+      </label>
       <div class="actions">
-        <button class="btn btn-primary" id="cc-register" type="button">Register confidential client</button>
-        <button class="btn" id="cc-token" type="button">Request token</button>
+        <button class="btn btn-primary" id="cc-token" type="button">Request token</button>
       </div>
     </section>
 
@@ -92,7 +96,7 @@
     <section class="card" id="flow-ops" hidden>
       <p class="eyebrow">RFC 7662 / 7009</p>
       <h2>Introspect and revoke</h2>
-      <p class="lede">Introspection verifies the JWT (or refresh hash) and the revocation list. Revoke adds the access-token <span class="mono">jti</span> or kills the refresh family.</p>
+      <p class="lede">Introspection and revocation require a confidential client. Use the machine client id and secret from the client-credentials panel. An ID token is not an access token.</p>
       <div class="actions">
         <button class="btn btn-primary" id="ops-introspect" type="button">Introspect last token</button>
         <button class="btn" id="ops-revoke" type="button">Revoke last token</button>
@@ -111,7 +115,6 @@
   <footer class="foot">
     <p>Implicit and password grants are not implemented — they were removed in OAuth 2.1. Use authorization code + PKCE instead.</p>
   </footer>
-  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
   <script type="module" src="./assets/playground.js"></script>
 </body>
 </html>

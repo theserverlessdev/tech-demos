@@ -101,7 +101,7 @@ export const demos: DemoEntry[] = [
     title: "Melody Auth",
     description: "Full OAuth 2.1 / OpenID Connect server and client at the edge. PKCE, device code, client credentials, playground, plug into any OIDC app.",
     demonstrates:
-      "You can run a standards-compliant OpenID Provider on Workers + D1 + KV and also broker Google / GitHub / Microsoft logins — then plug the issuer into Auth.js, Grafana, oauth2-proxy, or Cloudflare Access.",
+      "You can run a standards-compliant OpenID Provider on Workers + D1 + KV and, when configured, broker Google / GitHub / Microsoft logins — then plug the issuer into Auth.js, Grafana, oauth2-proxy, or Cloudflare Access.",
     capabilities: [
       "Authorization code + PKCE, client credentials, device code, token exchange",
       "RFC 9068 JWT access tokens, introspection, revocation, PAR, consent",
@@ -111,7 +111,7 @@ export const demos: DemoEntry[] = [
     ],
     useCases: [
       "IdP for any app that already speaks OAuth/OIDC",
-      "Broker Google/GitHub/Microsoft into your own tokens",
+      "Broker Google/GitHub/Microsoft into your own tokens when those providers are configured",
       "A standards-compliant login box you host at the edge",
     ],
     tags: ["oauth", "oidc", "pkce", "d1", "kv", "turnstile", "rfc8628"],

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { KEY_ROTATE_MS } from "../src/shared/types";
+import { JWKS_CACHE_MS } from "../src/worker/policy";
 import { decodeJwt, generateEs256, importSigningKey, publicJwkFromPrivate, signJwt, verifyJwtWithKeys } from "../src/worker/jwt";
 import { jwksDocument, resetRingForTests, rotateSigningKeys } from "../src/worker/jwks";
 
@@ -19,6 +20,7 @@ function mockEnv(jwk = JSON.stringify(DEMO)): Env {
   return {
     ENVIRONMENT: "local",
     AUTH_PRIVATE_JWK: jwk,
+    AUTH_KEK: "11".repeat(32),
     KEYS: {
       async get(key: string, type?: string) {
         const raw = store.get(String(key));
@@ -45,18 +47,24 @@ test("at+jwt access tokens decode", async () => {
   expect(claims?.jti).toBe("jti_1");
 });
 
-test("rotateSigningKeys keeps the previous kid for verification", async () => {
+test("rotateSigningKeys publishes the next kid for one JWKS period before it signs", async () => {
   resetRingForTests();
   const env = mockEnv();
-  const first = await rotateSigningKeys(env, Date.now());
+  const started = Date.now();
+  const first = await rotateSigningKeys(env, started);
   expect(first.rotated).toBeFalse();
-  const rotated = await rotateSigningKeys(env, Date.now() + KEY_ROTATE_MS + 1);
-  expect(rotated.rotated).toBeTrue();
-  expect(rotated.kid).not.toBe("melody-demo-1");
+  expect(first.kid).toBe("melody-demo-1");
+  const published = await rotateSigningKeys(env, started + KEY_ROTATE_MS + 1);
+  expect(published.rotated).toBeFalse();
+  expect(published.kid).toBe("melody-demo-1");
+  const staged = await jwksDocument(env);
+  expect(staged.keys.length).toBeGreaterThanOrEqual(2);
+  const promoted = await rotateSigningKeys(env, started + KEY_ROTATE_MS + 1 + JWKS_CACHE_MS);
+  expect(promoted.rotated).toBeTrue();
+  expect(promoted.kid).not.toBe("melody-demo-1");
   const doc = await jwksDocument(env);
-  expect(doc.keys.length).toBeGreaterThanOrEqual(2);
   expect(doc.keys.some((key) => key.kid === "melody-demo-1")).toBeTrue();
-  expect(doc.keys.some((key) => key.kid === rotated.kid)).toBeTrue();
+  expect(doc.keys.some((key) => key.kid === promoted.kid)).toBeTrue();
   resetRingForTests();
 });
 

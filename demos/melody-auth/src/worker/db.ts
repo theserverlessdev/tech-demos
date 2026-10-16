@@ -48,6 +48,8 @@ export type RefreshRow = {
   expires_at: number;
   revoked_at: number | null;
   replaced_by: string | null;
+  resource: string | null;
+  auth_time: number | null;
 };
 
 export async function getApp(db: D1Database, clientId: string): Promise<AppRow | null> {
@@ -199,16 +201,26 @@ export async function attachCodeFamily(db: D1Database, codeId: string, familyId:
 
 export async function issueRefresh(
   db: D1Database,
-  input: { userId: string; clientId: string; scope: string; familyId?: string; now: number },
+  input: { userId: string; clientId: string; scope: string; familyId?: string; now: number; resource?: string | null; authTime?: number | null },
 ): Promise<{ token: string; id: string; familyId: string }> {
   const token = toBase64Url(randomBytes(32));
   const id = randomId("rt");
   const familyId = input.familyId ?? randomId("fam");
   await db
     .prepare(
-      "INSERT INTO refresh_tokens (id, token_hash, family_id, user_id, client_id, scope, expires_at, revoked_at, replaced_by) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL)",
+      "INSERT INTO refresh_tokens (id, token_hash, family_id, user_id, client_id, scope, expires_at, revoked_at, replaced_by, resource, auth_time) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)",
     )
-    .bind(id, await sha256Hex(token), familyId, input.userId, input.clientId, input.scope, input.now + REFRESH_TTL_MS)
+    .bind(
+      id,
+      await sha256Hex(token),
+      familyId,
+      input.userId,
+      input.clientId,
+      input.scope,
+      input.now + REFRESH_TTL_MS,
+      input.resource ?? null,
+      input.authTime ?? null,
+    )
     .run();
   return { token, id, familyId };
 }
@@ -230,9 +242,21 @@ export async function rotateRefreshAtomic(
       .bind(now, id, row.id, now),
     db
       .prepare(
-        "INSERT INTO refresh_tokens (id, token_hash, family_id, user_id, client_id, scope, expires_at, revoked_at, replaced_by) SELECT ?, ?, ?, ?, ?, ?, ?, NULL, NULL WHERE EXISTS (SELECT 1 FROM refresh_tokens WHERE id = ? AND replaced_by = ?)",
+        "INSERT INTO refresh_tokens (id, token_hash, family_id, user_id, client_id, scope, expires_at, revoked_at, replaced_by, resource, auth_time) SELECT ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ? WHERE EXISTS (SELECT 1 FROM refresh_tokens WHERE id = ? AND replaced_by = ?)",
       )
-      .bind(id, await sha256Hex(token), row.family_id, row.user_id, row.client_id, row.scope, now + REFRESH_TTL_MS, row.id, id),
+      .bind(
+        id,
+        await sha256Hex(token),
+        row.family_id,
+        row.user_id,
+        row.client_id,
+        row.scope,
+        now + REFRESH_TTL_MS,
+        row.resource ?? null,
+        row.auth_time ?? null,
+        row.id,
+        id,
+      ),
   ]);
   if ((results[0]?.meta.changes ?? 0) !== 1) {
     await revokeFamily(db, row.family_id, now);
@@ -275,6 +299,7 @@ export async function purgeExpired(
     db.prepare("DELETE FROM revoked_jtis WHERE expires_at < ?").bind(now),
     db.prepare("DELETE FROM consents WHERE expires_at < ?").bind(now),
     db.prepare("DELETE FROM apps WHERE expires_at IS NOT NULL AND expires_at < ? AND client_id NOT IN ('melody-sample', 'melody-machine')").bind(now),
+    db.prepare("DELETE FROM fed_states WHERE expires_at < ?").bind(now),
   ]);
   return {
     codes: (results[0]?.meta.changes ?? 0) + (results[3]?.meta.changes ?? 0),
@@ -286,7 +311,8 @@ export async function purgeExpired(
       (results[8]?.meta.changes ?? 0) +
       (results[9]?.meta.changes ?? 0) +
       (results[10]?.meta.changes ?? 0) +
-      (results[11]?.meta.changes ?? 0),
+      (results[11]?.meta.changes ?? 0) +
+      (results[12]?.meta.changes ?? 0),
   };
 }
 

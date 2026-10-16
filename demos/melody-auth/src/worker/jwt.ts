@@ -17,8 +17,12 @@ export type JwtClaims = {
   jti?: string;
   azp?: string;
   auth_time?: number;
-  act?: { sub: string };
+  act?: ActClaim;
 };
+
+export type ActClaim = { sub: string; act?: ActClaim };
+
+export type VerifyOptions = { ignoreExp?: boolean };
 
 export type PublicJwk = {
   kty: "EC";
@@ -108,7 +112,12 @@ export function decodeJwt(token: string): { header: JwtHeader; claims: JwtClaims
   }
 }
 
-export async function verifyJwt(token: string, key: CryptoKey, now = Math.floor(Date.now() / 1000)): Promise<JwtClaims | null> {
+export async function verifyJwt(
+  token: string,
+  key: CryptoKey,
+  now = Math.floor(Date.now() / 1000),
+  options?: VerifyOptions,
+): Promise<JwtClaims | null> {
   const parts = token.split(".");
   if (parts.length !== 3 || !parts[0] || !parts[1] || !parts[2]) return null;
   const decoded = decodeJwt(token);
@@ -121,7 +130,7 @@ export async function verifyJwt(token: string, key: CryptoKey, now = Math.floor(
   );
   if (!ok) return null;
   if (typeof decoded.claims.exp !== "number" || !Number.isFinite(decoded.claims.exp)) return null;
-  if (decoded.claims.exp <= now || (decoded.claims.nbf ?? 0) > now) return null;
+  if (!options?.ignoreExp && (decoded.claims.exp <= now || (decoded.claims.nbf ?? 0) > now)) return null;
   return decoded.claims;
 }
 
@@ -146,14 +155,19 @@ export async function verifyJwtWithKeys(
   token: string,
   keys: PublicJwk[],
   now = Math.floor(Date.now() / 1000),
+  options?: VerifyOptions,
 ): Promise<JwtClaims | null> {
   const decoded = decodeJwt(token);
   if (!decoded) return null;
   const match = keys.filter((key) => !decoded.header.kid || key.kid === decoded.header.kid);
   const list = match.length ? match : keys;
   for (const jwk of list) {
-    const claims = await verifyJwt(token, await importVerifyKey(jwk), now);
-    if (claims) return claims;
+    try {
+      const claims = await verifyJwt(token, await importVerifyKey(jwk), now, options);
+      if (claims) return claims;
+    } catch {
+      // a bad client JWK must not become a 500
+    }
   }
   return null;
 }

@@ -67,6 +67,7 @@ form?.addEventListener("submit", async (event) => {
   const name = (document.getElementById("app-name") as HTMLInputElement).value.trim();
   const redirects = (document.getElementById("app-redirects") as HTMLInputElement).value.trim();
   const clientType = (document.getElementById("app-type") as HTMLSelectElement).value;
+  const grantChoice = (document.getElementById("app-grants") as HTMLSelectElement | null)?.value ?? "authorization_code";
   const created = document.getElementById("created-secret");
   const result = await fetch(`${apiRoot()}/api/admin/apps`, {
     method: "POST",
@@ -78,7 +79,10 @@ form?.addEventListener("submit", async (event) => {
       name,
       redirect_uris: redirects.split(",").map((item) => item.trim()).filter(Boolean),
       client_type: clientType,
-      grant_types: clientType === "confidential" ? ["client_credentials"] : ["authorization_code", "refresh_token"],
+      grant_types:
+        clientType === "confidential" && grantChoice === "client_credentials"
+          ? ["client_credentials"]
+          : ["authorization_code", "refresh_token"],
     }),
   });
   const payload = (await result.json().catch(() => null)) as { clientId?: string; clientSecret?: string; error?: { message?: string } } | null;

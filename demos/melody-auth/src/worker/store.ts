@@ -1,9 +1,11 @@
 import { CLIENT_TTL_MS, DEVICE_TTL_MS, MACHINE_CLIENT_ID, PAR_TTL_MS, SAMPLE_CLIENT_ID, USER_TTL_MS } from "../shared/types";
 import { randomBytes, randomId, sha256Hex, toBase64Url } from "./encoding";
 import { hashPassword } from "./password";
+import { hashClientSecret } from "./secret";
+import { FED_CLAIM_SQL, PAR_CLAIM_SQL } from "./policy";
 import { parseRedirectUris } from "./redirect";
 import type { AppRow, UserRow } from "./db";
-import { createUser, getApp, getUserByEmail } from "./db";
+import { createUser, getApp, getUserByEmail, getUserById } from "./db";
 
 export type FullApp = AppRow & {
   client_secret_hash: string | null;
@@ -18,6 +20,7 @@ export type FullApp = AppRow & {
   expires_at: number | null;
   require_pkce: number;
   response_types: string;
+  post_logout_redirect_uris?: string | null;
 };
 
 export type DeviceRow = {
@@ -101,7 +104,7 @@ export async function insertApp(
       input.jwks ?? null,
       input.clientType,
       input.registrationHash ?? null,
-      input.expiresAt ?? input.now + CLIENT_TTL_MS,
+      input.expiresAt === undefined ? input.now + CLIENT_TTL_MS : input.expiresAt,
       input.requirePkce === false ? 0 : 1,
     )
     .run();
@@ -135,8 +138,14 @@ export async function deleteApp(db: D1Database, clientId: string): Promise<void>
 }
 
 export async function ensureMachineApp(db: D1Database, now: number, secret: string): Promise<void> {
-  if (await getApp(db, MACHINE_CLIENT_ID)) return;
-  const hashed = await hashPassword(secret);
+  const hashed = await hashClientSecret(secret);
+  if (await getApp(db, MACHINE_CLIENT_ID)) {
+    await db
+      .prepare("UPDATE apps SET client_secret_hash = ?, client_secret_salt = '', expires_at = NULL, client_type = 'confidential', token_endpoint_auth_method = 'client_secret_post' WHERE client_id = ?")
+      .bind(hashed, MACHINE_CLIENT_ID)
+      .run();
+    return;
+  }
   await insertApp(db, {
     clientId: MACHINE_CLIENT_ID,
     name: "Machine client",
@@ -145,9 +154,10 @@ export async function ensureMachineApp(db: D1Database, now: number, secret: stri
     scopes: "api",
     authMethod: "client_secret_post",
     clientType: "confidential",
-    secretHash: hashed.hash,
-    secretSalt: hashed.salt,
+    secretHash: hashed,
+    secretSalt: "",
     now,
+    expiresAt: null,
     requirePkce: false,
   });
 }
@@ -236,12 +246,8 @@ export async function savePar(db: D1Database, clientId: string, payload: Record<
 }
 
 export async function loadPar(db: D1Database, requestUri: string, clientId: string, now: number): Promise<Record<string, string> | null> {
-  const row = await db
-    .prepare("SELECT * FROM par_requests WHERE request_uri = ? AND client_id = ? AND expires_at > ?")
-    .bind(requestUri, clientId, now)
-    .first<{ payload: string }>();
+  const row = await db.prepare(PAR_CLAIM_SQL).bind(requestUri, clientId, now).first<{ payload: string }>();
   if (!row) return null;
-  await db.prepare("DELETE FROM par_requests WHERE request_uri = ?").bind(requestUri).run();
   try {
     return JSON.parse(row.payload) as Record<string, string>;
   } catch {
@@ -269,17 +275,51 @@ export async function linkFederated(db: D1Database, provider: string, sub: strin
     .run();
 }
 
-export async function userForVerifiedEmail(db: D1Database, email: string, now: number): Promise<UserRow> {
+export async function userForFederation(db: D1Database, email: string, now: number, linkedUserId: string | null): Promise<UserRow | null> {
+  if (linkedUserId) return getUserById(db, linkedUserId, now);
   const existing = await getUserByEmail(db, email, now);
   if (existing) {
     if (!existing.email_verified) {
-      await db.prepare("UPDATE users SET email_verified = 1 WHERE id = ?").bind(existing.id).run();
+      const hashed = await hashPassword(toBase64Url(randomBytes(18)));
+      await db
+        .prepare("UPDATE users SET email_verified = 1, password_hash = ?, salt = ? WHERE id = ?")
+        .bind(hashed.hash, hashed.salt, existing.id)
+        .run();
+      await db.batch([
+        db.prepare("DELETE FROM sessions WHERE user_id = ?").bind(existing.id),
+        db.prepare("DELETE FROM refresh_tokens WHERE user_id = ?").bind(existing.id),
+        db.prepare("DELETE FROM consents WHERE user_id = ?").bind(existing.id),
+      ]);
       existing.email_verified = 1;
+      existing.password_hash = hashed.hash;
+      existing.salt = hashed.salt;
     }
     return existing;
   }
   const hashed = await hashPassword(toBase64Url(randomBytes(18)));
   return createUser(db, email, hashed.hash, hashed.salt, now, true);
+}
+
+export async function countDcrClients(db: D1Database): Promise<number> {
+  const row = await db.prepare("SELECT COUNT(*) AS n FROM apps WHERE registration_access_hash IS NOT NULL").first<{ n: number }>();
+  return Number(row?.n ?? 0);
+}
+
+export async function rememberClientAssertion(db: D1Database, clientId: string, jti: string, expMs: number): Promise<boolean> {
+  const result = await db
+    .prepare("INSERT OR IGNORE INTO revoked_jtis (jti, expires_at) VALUES (?, ?)")
+    .bind(`ca:${clientId}:${jti}`, expMs)
+    .run();
+  return (result.meta.changes ?? 0) === 1;
+}
+
+export async function saveFedState(db: D1Database, state: string, payload: string, now: number): Promise<void> {
+  await db.prepare("INSERT INTO fed_states (state, payload, expires_at) VALUES (?, ?, ?)").bind(state, payload, now + 600_000).run();
+}
+
+export async function claimFedState(db: D1Database, state: string, now: number): Promise<string | null> {
+  const row = await db.prepare(FED_CLAIM_SQL).bind(state, now).first<{ payload: string }>();
+  return row?.payload ?? null;
 }
 
 export async function consumeDevice(db: D1Database, id: string, now: number): Promise<DeviceRow | null> {
@@ -310,8 +350,14 @@ export async function ensureSampleMeta(db: D1Database, now: number, local: boole
   const grants = appGrants(app);
   const nextGrants = [...new Set([...grants, "urn:ietf:params:oauth:grant-type:device_code"])];
   await db
-    .prepare("UPDATE apps SET redirect_uris = ?, grant_types = ?, scopes = ? WHERE client_id = ?")
-    .bind(JSON.stringify(merged), JSON.stringify(nextGrants), app.scopes || "openid profile email offline_access api", SAMPLE_CLIENT_ID)
+    .prepare("UPDATE apps SET redirect_uris = ?, grant_types = ?, scopes = ?, post_logout_redirect_uris = ? WHERE client_id = ?")
+    .bind(
+      JSON.stringify(merged),
+      JSON.stringify(nextGrants),
+      app.scopes || "openid profile email offline_access api",
+      JSON.stringify(merged),
+      SAMPLE_CLIENT_ID,
+    )
     .run();
   void now;
 }

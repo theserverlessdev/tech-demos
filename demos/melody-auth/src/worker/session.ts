@@ -27,3 +27,23 @@ export function sessionCookie(token: string, request: Request, onHub: boolean, m
 export function clearSessionCookie(request: Request, onHub: boolean): string {
   return sessionCookie("deleted", request, onHub, 0);
 }
+
+export function fedCookieName(request: Request): string {
+  return sessionCookieName(request) === HOST_SESSION_COOKIE ? "__Host-ma_fed" : "ma_fed";
+}
+
+export function fedStateFrom(request: Request): string | null {
+  return readCookie(request.headers.get("cookie"), fedCookieName(request));
+}
+
+export function fedStateCookie(state: string, request: Request, onHub: boolean): string {
+  const name = fedCookieName(request);
+  const hostCookie = name.startsWith("__Host-");
+  const path = hostCookie ? "/" : onHub ? "/demos/melody-auth" : "/";
+  const secure = hostCookie || new URL(request.url).protocol === "https:" ? "; Secure" : "";
+  return `${name}=${encodeURIComponent(state)}; HttpOnly; SameSite=Lax; Path=${path}; Max-Age=600${secure}`;
+}
+
+export function clearFedCookie(request: Request, onHub: boolean): string {
+  return fedStateCookie("deleted", request, onHub).replace("Max-Age=600", "Max-Age=0");
+}

@@ -176,6 +176,7 @@ textarea, select {
   font-size: 0.78rem;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  word-break: break-all;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 8px;

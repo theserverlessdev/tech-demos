@@ -35,7 +35,7 @@
 
   <div class="strip" role="status">
     <span class="strip__dot"></span>
-    <span class="strip__copy"><strong>What it proves</strong> Clients are hashed at rest; secrets are shown once. <strong>What to try</strong> Paste ADMIN_TOKEN to create a client. <strong>What you could build</strong> An internal IdP catalog for your apps.</span>
+    <span class="strip__copy"><strong>What it proves</strong> Client secrets are hashed at rest; secrets are shown once. <strong>What to try</strong> Paste ADMIN_TOKEN to create a client. <strong>What you could build</strong> An internal IdP catalog for your apps.</span>
   </div>
 
   <main>
@@ -64,6 +64,12 @@
           <select id="app-type">
             <option value="public">public (PKCE)</option>
             <option value="confidential">confidential</option>
+          </select>
+        </label>
+        <label>Grants
+          <select id="app-grants">
+            <option value="authorization_code">authorization code + refresh</option>
+            <option value="client_credentials">client credentials (confidential)</option>
           </select>
         </label>
         <button class="btn btn-primary" type="submit">Create client</button>

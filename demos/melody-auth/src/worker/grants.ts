@@ -11,14 +11,25 @@ import {
 } from "./db";
 import { HttpError, OauthError } from "./errors";
 import { corsJson, corsOauth } from "./headers";
-import { signJwt, verifyJwtWithKeys, type JwtClaims } from "./jwt";
+import { decodeJwt, signJwt, verifyJwtWithKeys, type JwtClaims } from "./jwt";
 import { signingContext, verificationKeys } from "./jwks";
 import { publicBase } from "./origin";
 import { verifyS256 } from "./pkce";
 import {
+  actClaim,
+  audienceAllowed,
+  deviceCodeForeign,
+  exchangeExp,
+  scopeSubset,
+  subjectBoundToClient,
+  tokenExchangeDenied,
+} from "./policy";
+import {
+  appScopes,
   bumpDeviceInterval,
   consumeDevice,
   devicePollStatus,
+  isJtiRevoked,
   lookupDeviceByCode,
   touchDevicePoll,
 } from "./store";
@@ -64,8 +75,11 @@ export async function handleToken(request: Request, env: Env): Promise<Response>
     if (row.client_id !== app.client_id || row.redirect_uri !== redirectUri) {
       return corsOauth(request,"invalid_grant", "The authorization request failed.");
     }
-    if (app.require_pkce !== 0 && !(await verifyS256(verifier, row.code_challenge))) {
-      return corsOauth(request,"invalid_grant", "The authorization request failed.");
+    const challenge = row.code_challenge ?? "";
+    if (challenge) {
+      if (!(await verifyS256(verifier, challenge))) return corsOauth(request, "invalid_grant", "The authorization request failed.");
+    } else if (verifier) {
+      return corsOauth(request, "invalid_grant", "The authorization request failed.");
     }
     const user = await getUserById(env.DB, row.user_id, now);
     if (!user) return corsOauth(request, "invalid_grant", "The authorization request failed.");
@@ -77,6 +91,8 @@ export async function handleToken(request: Request, env: Env): Promise<Response>
         clientId: row.client_id,
         scope: row.scope,
         now,
+        resource: row.resource,
+        authTime: row.auth_time,
       });
       refreshToken = issued.token;
       familyId = issued.familyId;
@@ -124,6 +140,8 @@ export async function handleToken(request: Request, env: Env): Promise<Response>
       familyId: row.family_id,
       refreshToken: next.token,
       now,
+      resource: row.resource,
+      authTime: row.auth_time ?? Math.floor(now / 1000),
     });
     return corsJson(request, tokens);
   }
@@ -135,8 +153,12 @@ export async function handleToken(request: Request, env: Env): Promise<Response>
     const { issuer } = publicBase(request, env);
     const ctx = await signingContext(env);
     const nowSec = Math.floor(now / 1000);
-    const scope = (body.scope || "api").split(/\s+/).filter(Boolean).join(" ") || "api";
+    const scope = scopeSubset(body.scope, app.scopes || "api");
+    if (!scope) return corsOauth(request, "invalid_scope", "The requested scope is not allowed.");
     const audience = body.resource || body.audience || app.client_id;
+    if (!audienceAllowed(audience, app.resources, app.client_id)) {
+      return corsOauth(request, "invalid_target", "The requested audience is not allowed.");
+    }
     const claims: JwtClaims = {
       iss: issuer,
       sub: app.client_id,
@@ -164,6 +186,7 @@ export async function handleToken(request: Request, env: Env): Promise<Response>
     }
     const deviceCode = body.device_code ?? "";
     const row = await lookupDeviceByCode(env.DB, deviceCode);
+    if (deviceCodeForeign(row?.client_id, app.client_id)) return corsOauth(request, "invalid_grant", "The device code is unknown.");
     const status = devicePollStatus(row, now);
     if (status === "missing") return corsOauth(request, "invalid_grant", "The device code is unknown.");
     if (status === "expired") return corsOauth(request, "expired_token", "The device code expired.");
@@ -179,10 +202,15 @@ export async function handleToken(request: Request, env: Env): Promise<Response>
     if (!row?.user_id) return corsOauth(request, "authorization_pending", "The user has not approved the request yet.", 400);
     const consumed = await consumeDevice(env.DB, row.id, now);
     if (!consumed?.user_id) return corsOauth(request, "invalid_grant", "The device code is unknown.");
+    const scope = scopeSubset(consumed.scope, appScopes(app).join(" "));
+    if (!scope) return corsOauth(request, "invalid_scope", "The requested scope is not allowed.");
+    if (consumed.audience && !audienceAllowed(consumed.audience, app.resources, app.client_id)) {
+      return corsOauth(request, "invalid_target", "The requested audience is not allowed.");
+    }
     const tokens = await mintForUser(env, request, {
       userId: consumed.user_id,
       clientId: app.client_id,
-      scope: consumed.scope,
+      scope,
       now,
       resource: consumed.audience,
     });
@@ -191,43 +219,59 @@ export async function handleToken(request: Request, env: Env): Promise<Response>
 
   if (grant === "urn:ietf:params:oauth:grant-type:token-exchange") {
     const app = await authenticateClient(env, request, body, now);
-    if (!clientAllowsGrant(app, "urn:ietf:params:oauth:grant-type:token-exchange") && app.client_type !== "confidential") {
-      return corsOauth(request,"unauthorized_client", "This client cannot use that grant.");
+    if (tokenExchangeDenied(clientAllowsGrant(app, "urn:ietf:params:oauth:grant-type:token-exchange"), app.client_type)) {
+      return corsOauth(request, "unauthorized_client", "This client cannot use that grant.");
     }
-    if (app.client_type !== "confidential") return corsOauth(request, "unauthorized_client", "This client cannot use that grant.");
     const subject = body.subject_token ?? "";
     const type = body.subject_token_type ?? "";
-    if (type && type !== "urn:ietf:params:oauth:token-type:access_token" && type !== "urn:ietf:params:oauth:token-type:jwt") {
-      return corsOauth(request,"invalid_request", "Unsupported subject_token_type.");
+    if (type && type !== "urn:ietf:params:oauth:token-type:access_token") {
+      return corsOauth(request, "invalid_request", "Unsupported subject_token_type.");
     }
+    const decoded = decodeJwt(subject);
+    if (!decoded || decoded.header.typ !== "at+jwt") return corsOauth(request, "invalid_grant", "The subject token is invalid.");
     const { issuer } = publicBase(request, env);
     const claims = await verifyJwtWithKeys(subject, await verificationKeys(env));
     if (!claims || claims.iss !== issuer || claims.token_use !== "access") {
-      return corsOauth(request,"invalid_grant", "The subject token is invalid.");
+      return corsOauth(request, "invalid_grant", "The subject token is invalid.");
     }
+    if (claims.jti && (await isJtiRevoked(env.DB, claims.jti, now))) {
+      return corsOauth(request, "invalid_grant", "The subject token is invalid.");
+    }
+    if (!subjectBoundToClient(claims, app.client_id)) {
+      return corsOauth(request, "invalid_grant", "The subject token is invalid.");
+    }
+    const user = await getUserById(env.DB, claims.sub, now);
+    if (!user) return corsOauth(request, "invalid_grant", "The subject token is invalid.");
+    const scope = scopeSubset(body.scope, claims.scope);
+    if (!scope) return corsOauth(request, "invalid_scope", "The requested scope is not allowed.");
     const audience = body.audience || body.resource || app.client_id;
+    if (!audienceAllowed(audience, app.resources, app.client_id)) {
+      return corsOauth(request, "invalid_target", "The requested audience is not allowed.");
+    }
     const ctx = await signingContext(env);
     const nowSec = Math.floor(now / 1000);
+    const exp = exchangeExp(nowSec, claims.exp, ACCESS_TTL_SEC);
+    if (exp == null) return corsOauth(request, "invalid_grant", "The subject token is invalid.");
     const next: JwtClaims = {
       iss: issuer,
       sub: claims.sub,
       aud: audience,
       iat: nowSec,
-      exp: nowSec + ACCESS_TTL_SEC,
+      exp,
       token_use: "access",
-      scope: body.scope || claims.scope,
+      scope,
       client_id: app.client_id,
       jti: randomId("jti"),
       azp: app.client_id,
-      act: { sub: claims.client_id || app.client_id },
+      act: actClaim(app.client_id, claims.act),
     };
     const access = await signJwt({ alg: "ES256", typ: "at+jwt", kid: ctx.kid }, next, ctx.key);
     return corsJson(request, {
       access_token: access,
       issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
       token_type: "Bearer",
-      expires_in: ACCESS_TTL_SEC,
-      scope: next.scope ?? "",
+      expires_in: exp - nowSec,
+      scope,
     });
   }
 
