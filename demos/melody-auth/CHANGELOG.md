@@ -7,10 +7,10 @@ This demo is a slice inspired by [ValueMelody/melody-auth](https://github.com/Va
 | | Melody Auth (upstream) | This demo |
 | --- | --- | --- |
 | Runtime | Worker + D1 + KV, or Node + Postgres + Redis | Worker + D1 + KV only |
-| Grants | Authorization code, refresh, S2S, embedded auth | Authorization code + PKCE S256, refresh rotation |
-| Signing | RS256 JWKS, key rotation UI | ES256 via WebCrypto. Private JWK is a Worker secret. Public JWKS in KV |
-| Identity | Password, passwordless, social, SAML, MFA | Email + password only |
-| Admin | Full panel: users, apps, roles, orgs, logs | Read-only masked users and registered apps |
+| Grants | Authorization code, refresh, S2S, embedded auth | Authorization code + PKCE, refresh, client credentials, device, token exchange |
+| Signing | RS256 JWKS, key rotation UI | ES256 key ring in KV (`kid`, cron rotate, verify window) |
+| Identity | Password, passwordless, social, SAML, MFA | Email + password, plus optional Google/GitHub/Microsoft/OIDC |
+| Admin | Full panel: users, apps, roles, orgs, logs | Masked users; client create/edit with ADMIN_TOKEN |
 | Tenancy | Long-lived customer data | Demo users expire after 24 hours. Cron purge |
 | Auth | Product accounts | Turnstile on sign-up and sign-in |
 | UI | React / Vue / Angular SDKs | Graphite & Ember static sample app |
@@ -18,11 +18,9 @@ This demo is a slice inspired by [ValueMelody/melody-auth](https://github.com/Va
 ## What we cut
 
 - MFA, passkeys, recovery codes
-- Social, OIDC federation, and SAML
-- Email delivery, password reset, email verification
+- SAML, DPoP, JAR, CIBA (federation presets are Google/GitHub/Microsoft + generic OIDC only)
+- Email delivery, password reset
 - RBAC, organizations, user attributes
-- Embedded Auth API and first-party SDKs
-- Admin mutations and impersonation
 - Workers for Platforms / dispatch namespaces
 
 ## What we kept (simplified)
@@ -40,8 +38,14 @@ Hub Graphite & Ember. Background `#0e0e11`, ember `#c2410c`, Bricolage Grotesque
 
 ## 2026-10-16
 
+Full OP + RP: authorization code + PKCE, client credentials, device code (RFC 8628), token exchange (RFC 8693), RFC 9068 `at+jwt`, introspection, revocation, PAR, `form_post`, consent, DCR (RFC 7591/7592), JWKS key ring, admin client CRUD, federation RP (Google/GitHub/Microsoft/OIDC), playground, `sdk/` client. Implicit and password grants rejected (OAuth 2.1). Rate limits `7486`–`7492`.
+
 Polish: refresh claim+child insert is one D1 batch; code reuse revokes only the stored family; JWKS prefers the secret; authorize GET uses `7485`.
 
 Review pass: `email_verified` is false; claim-first codes and refresh rotation; Origin `null` and `sec-fetch-site: cross-site` rejected; sole issuer `melody-auth.tech-demos.theserverless.dev`; `__Host-ma_session` only on the subdomain; demo signing key `503`s outside local; prod seed drops loopback / hub / docs clients; authorize validates `response_type`, scopes, and state/nonce length; sample app checks nonce/aud/iss/exp.
+
+Second review: token exchange and client-credentials are confined to the caller's grant, scopes, and `resources`; DCR strips privileged grants; device codes are client-bound; federation rotates an unverified local password and checks the ID token plus a state cookie; the key ring wraps `d` with `AUTH_KEK`, republishes on a 60s read, and stages the next `kid` for one JWKS cache period; `private_key_jwt` is single-use; ID tokens are not access tokens. Migration `0005_review_fixes.sql` is additive.
+
+Third review: federation lock is one batch that also denies pending device grants and deletes unused auth codes; the SDK JWKS refetch limit is per URI and shared in flight; key rotation reads KV fresh and does not write on a read error; public clients can revoke their own tokens; admin clients can store up to five https resources and are not labeled as dynamic registration.
 
 First slice: hosted authorize, sample-app PKCE client, token inspector, admin list, 24-hour cron purge, Turnstile, rate limits `7481` / `7482` / `7483` / `7484`. Phone layout uses 16px fields and 44px controls.

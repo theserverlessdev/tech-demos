@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "bun build src/client/app.ts src/client/admin.ts --outdir public/assets --target browser --minify",
+    "build": "bun build src/client/app.ts src/client/admin.ts src/client/playground.ts --outdir public/assets --target browser --minify",
     "dev": "bun run build && CI=1 wrangler d1 migrations apply DB --local && wrangler dev",
     "dev:local": "bun run build && CI=1 wrangler d1 migrations apply DB --local -c wrangler.local.jsonc && wrangler dev -c wrangler.local.jsonc --port 8788",
     "deploy": "bun run build && CI=1 wrangler d1 migrations apply DB --remote && wrangler deploy",

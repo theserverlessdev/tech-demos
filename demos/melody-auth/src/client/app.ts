@@ -8,7 +8,15 @@ type TurnstileApi = {
   reset: (id?: string) => void;
 };
 
-type StoredPkce = { verifier: string; state: string; nonce: string; mode?: string };
+type StoredPkce = { verifier: string; state: string; nonce: string; mode?: string; returnTo?: string };
+
+function safeDeviceReturn(value: string | null): string | null {
+  if (!value || !value.startsWith("/") || value.startsWith("//") || value.includes("\\") || value.includes("://")) return null;
+  const path = value.split("?")[0] ?? "";
+  const root = apiRoot();
+  if (path !== `${root}/device`) return null;
+  return value;
+}
 
 function apiRoot(): string {
   const path = location.pathname;
@@ -124,16 +132,20 @@ async function wireAuthorizeForm(): Promise<void> {
     if (submit && token) submit.disabled = false;
   };
   const api = await waitForTurnstile();
+  let widgetId = "";
   if (api && sitekey && !sitekey.startsWith("REPLACE_ME")) {
-    api.render(host, {
+    widgetId = api.render(host, {
       sitekey,
       action: "melody-auth",
       callback: ready,
     });
   }
   form.addEventListener("submit", (event) => {
-    if (!hidden.value) hidden.value = turnstileApi()?.getResponse() || "";
-    if (!hidden.value) event.preventDefault();
+    if (!hidden.value) hidden.value = turnstileApi()?.getResponse(widgetId) || "";
+    if (!hidden.value) {
+      event.preventDefault();
+      if (widgetId) turnstileApi()?.reset(widgetId);
+    }
   });
 }
 
@@ -187,13 +199,14 @@ async function startPkce(mode: "signin" | "signup"): Promise<void> {
   const verifier = randomB64(32);
   const state = randomB64(16);
   const nonce = randomB64(16);
-  const stored: StoredPkce = { verifier, state, nonce, mode };
+  const returnTo = safeDeviceReturn(sessionStorage.getItem("melody-return")) ?? undefined;
+  const stored: StoredPkce = { verifier, state, nonce, mode, returnTo };
   sessionStorage.setItem(PKCE_KEY, JSON.stringify(stored));
   const url = new URL(config.authorizationEndpoint);
   url.searchParams.set("response_type", "code");
   url.searchParams.set("client_id", config.clientId);
   url.searchParams.set("redirect_uri", config.redirectUri);
-  url.searchParams.set("scope", "openid email profile");
+  url.searchParams.set("scope", "openid email profile offline_access");
   url.searchParams.set("state", state);
   url.searchParams.set("nonce", nonce);
   url.searchParams.set("code_challenge", await s256(verifier));
@@ -204,6 +217,12 @@ async function startPkce(mode: "signin" | "signup"): Promise<void> {
 
 async function finishPkce(): Promise<boolean> {
   const params = new URLSearchParams(location.search);
+  const oauthError = params.get("error");
+  if (oauthError) {
+    $("intro-error").textContent = params.get("error_description") || oauthError;
+    history.replaceState({}, "", `${apiRoot()}/`);
+    return true;
+  }
   const code = params.get("code");
   const state = params.get("state");
   if (!code || !state || !config) return false;
@@ -230,7 +249,7 @@ async function finishPkce(): Promise<boolean> {
     },
   });
   history.replaceState({}, "", `${apiRoot()}/`);
-  if (res.status !== 200 || !res.data || !("id_token" in res.data)) {
+  if (res.status !== 200 || !res.data || !("access_token" in res.data) || !res.data.id_token) {
     $("intro-error").textContent = messageOf(res.data, "The token exchange failed.");
     return true;
   }
@@ -241,7 +260,13 @@ async function finishPkce(): Promise<boolean> {
   }
   tokens = res.data;
   sessionStorage.setItem("melody-tokens", JSON.stringify(tokens));
-  paintClaims(tokens.id_token, await loadUserinfo(tokens.access_token));
+  const back = safeDeviceReturn(stored.returnTo ?? null);
+  sessionStorage.removeItem("melody-return");
+  if (back) {
+    location.assign(back);
+    return true;
+  }
+  paintClaims(res.data.id_token, await loadUserinfo(tokens.access_token));
   showTokens();
   return true;
 }
@@ -255,10 +280,16 @@ async function bootSample(): Promise<void> {
     $("intro-error").textContent = "The page could not reach the Worker.";
     return;
   }
+  const pendingReturn = safeDeviceReturn(new URLSearchParams(location.search).get("return_to"));
+  if (pendingReturn) sessionStorage.setItem("melody-return", pendingReturn);
   if (await finishPkce()) return;
   const saved = sessionStorage.getItem("melody-tokens");
   if (saved) {
     const parsed = JSON.parse(saved) as TokenResponse;
+    if (!parsed.id_token) {
+      sessionStorage.removeItem("melody-tokens");
+      return;
+    }
     const invalid = idTokenInvalid(parsed.id_token, { aud: config.clientId, iss: config.issuer }, { ignoreExp: true });
     if (invalid) {
       sessionStorage.removeItem("melody-tokens");
@@ -266,7 +297,7 @@ async function bootSample(): Promise<void> {
       return;
     }
     tokens = parsed;
-    paintClaims(tokens.id_token, await loadUserinfo(tokens.access_token));
+    paintClaims(parsed.id_token, await loadUserinfo(tokens.access_token));
     showTokens();
     if (idTokenExpired(parsed.id_token)) $("token-error").textContent = "expired, refresh";
   }
@@ -299,7 +330,7 @@ if (refreshBtn) {
         client_id: config.clientId,
       },
     });
-    if (res.status !== 200 || !res.data || !("id_token" in res.data)) {
+    if (res.status !== 200 || !res.data || !("access_token" in res.data) || !res.data.id_token) {
       $("token-error").textContent = messageOf(res.data, "Refresh failed.");
       return;
     }
@@ -310,7 +341,7 @@ if (refreshBtn) {
     }
     tokens = res.data;
     sessionStorage.setItem("melody-tokens", JSON.stringify(tokens));
-    paintClaims(tokens.id_token, await loadUserinfo(tokens.access_token));
+    paintClaims(res.data.id_token, await loadUserinfo(tokens.access_token));
   });
 }
 

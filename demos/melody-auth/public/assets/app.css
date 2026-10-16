@@ -176,6 +176,7 @@ textarea, select {
   font-size: 0.78rem;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  word-break: break-all;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -193,6 +194,19 @@ textarea, select {
 }
 .row p { color: var(--text-strong); }
 .row__meta { margin-top: 0.3rem; color: var(--muted); font-size: 0.78rem; }
+
+.steps { margin: 0.5rem 0 0; padding-left: 1.2rem; color: var(--text); }
+.steps li { margin: 0.35rem 0; overflow-wrap: anywhere; }
+.device-code {
+  font-family: var(--font-mono);
+  font-size: 1.6rem;
+  letter-spacing: 0.18em;
+  color: var(--text-strong);
+  text-align: center;
+  padding: 0.8rem 0.4rem;
+  overflow-wrap: anywhere;
+}
+.strip strong { color: var(--text-strong); font-weight: 640; }
 
 .foot { padding: 1.5rem 1.25rem 2rem; color: var(--muted); font-size: 0.88rem; text-align: center; }
 .foot a {

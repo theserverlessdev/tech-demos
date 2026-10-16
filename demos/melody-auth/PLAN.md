@@ -1,59 +1,40 @@
-# Melody Auth
+# Melody Auth — full OAuth 2.x / OIDC OP + RP
 
 ## Goal
 
-Prove that you can run your own standards-compliant sign-in server at the edge on Workers + D1 + KV: OAuth 2.0 authorization code + PKCE S256, OIDC discovery / JWKS / ID tokens, hosted sign-up and sign-in, refresh rotation, and a sample app that inspects the tokens.
+Melody Auth is a **pluggable OAuth 2.1-aligned OpenID Provider and a relying party** on Workers + D1 + KV: any app that already speaks OIDC/OAuth can use it as IdP, and Melody can broker Google / GitHub / Microsoft / generic OIDC logins and issue its own tokens.
 
-This is a **fresh small slice** inspired by [ValueMelody/melody-auth](https://github.com/ValueMelody/melody-auth) (MIT). It is not a fork and it does not vendor that codebase.
+## MVP (this cut)
 
-## MVP
-
-One Worker + Static Assets. A visitor opens the sample app, signs up or signs in on the hosted `/authorize` page (Turnstile), completes the PKCE code flow, reads decoded ID token claims and `/userinfo`, refreshes, and signs out. A tiny admin page lists masked demo users and registered apps. A cron deletes users older than 24 hours.
+- Authorization code + PKCE S256, confidential clients (`client_secret_basic` / `post` / `private_key_jwt`), public clients.
+- Grants: `authorization_code`, `refresh_token` (rotation + reuse), `client_credentials`, device code (RFC 8628), token exchange (RFC 8693). **No implicit, no password grant** (removed in OAuth 2.1).
+- RFC 9068 JWT access tokens (`at+jwt`), ID tokens, introspection (7662), revocation (7009), userinfo, RP-initiated logout, PAR (9126), `response_mode=form_post`, `prompt` / `max_age` / `login_hint`, consent per client+scopes, `openid profile email offline_access` plus `api` + `resource` (RFC 8707).
+- Dynamic client registration (7591/7592), gated by Turnstile or `ADMIN_TOKEN`, demo TTL.
+- JWKS key ring with `kid`, cron rotation, previous key kept for verify.
+- Admin: create/edit clients; secrets shown once; hashed at rest.
+- Federation: Sign in with Google / GitHub / Microsoft / generic OIDC when secrets exist; link only on **verified** upstream email.
+- Playground page (auth code, client credentials, device, introspect, revoke, refresh) with request/response viewer.
+- Tiny zero-dep SDK under `sdk/` (discovery, PKCE, callback, refresh, JWKS verify, Workers/Hono guard).
+- README “Plug it into X” snippets.
 
 ## Out of scope
 
-MFA, social logins, email delivery, password reset, SAML, RBAC, organizations, admin mutations, Workers for Platforms, Containers.
+MFA, SAML, CIBA, DPoP, JAR request objects, WebFinger, password grant, implicit, social beyond the three presets + generic OIDC, Workers for Platforms.
 
 ## Stack
 
-- **Workers + Static Assets** — sample app, admin, and the auth API share one Worker (`run_worker_first`).
-- **D1** — users, apps (clients + exact redirect URIs), auth codes, hosted sessions, refresh tokens.
-- **KV** — JWKS / signing-key metadata (`kid`, public JWK). Private key is `AUTH_PRIVATE_JWK` (ES256 via WebCrypto).
-- **Turnstile** — sign-up and sign-in. Site key var `TURNSTILE_SITE_KEY` (placeholder / widget key). Secret `TURNSTILE_SECRET`.
-- **Rate-limit bindings** — `7481` authorize POST, `7482` token, `7483` admin, `7484` userinfo/logout, `7485` authorize GET. Unused elsewhere (`7480` is goodvibes `CONNECT_LIMIT`).
-- **No Hono, no React, no jose.** Vanilla TS, Bun bundle, Graphite & Ember.
+- Workers + Static Assets + D1 (additive migrations) + KV (JWKS ring).
+- Rate limits: keep 7481–7485; add unused **7486–7492**.
+- Turnstile on human paths. No Hono in the Worker; SDK is optional Hono-shaped middleware.
 
 ## Tasks
 
-1. D1 schema + seed sample app + 24h cron purge.
-2. ES256 JWT / JWKS (secret private JWK, public JWKS in KV).
-3. OIDC endpoints: discovery, JWKS, authorize (hosted pages), token (code + PKCE S256, refresh rotation), userinfo, logout.
-4. Sample app PKCE client and admin list (masked emails, no destructive actions).
-5. Turnstile, exact `redirect_uri`, generic errors, secure cookies, CSP.
-6. Unit tests, typecheck, build, 390px screenshots + short video.
-7. Hub registry fallback via `redirectSource`.
-
-## Architecture
-
-```text
-browser ── HTTPS ──► Worker
-                      ├─ Static Assets (sample app, admin)
-                      ├─ Hosted /authorize (sign-up / sign-in)
-                      ├─ D1 users, apps, codes, sessions, refresh
-                      └─ KV JWKS metadata  +  AUTH_PRIVATE_JWK secret
-```
-
-Worker `tech-demos-melody-auth`:
-
-- `tech-demos.theserverless.dev/demos/melody-auth*`
-- `melody-auth.tech-demos.theserverless.dev/*`
-
-## Testing
-
-- `bun test` — PKCE S256, exact `redirect_uri`, code reuse, refresh rotation, PBKDF2 verify.
-- `bun run typecheck` and `bun run build`.
-- `scripts/smoke.ts` against `wrangler dev` for the full code flow.
+1. Additive `0004_oidc_full.sql` + rate-limit bindings 7486–7492.
+2. Client auth, grants, PAR, device, introspect/revoke, consent, RFC 9068 access JWTs, key ring.
+3. Dynamic registration + admin mutations (hashed secrets).
+4. Federation RP + SDK + playground + plug-in docs.
+5. Tests per grant, typecheck, build, smoke, 390px artifacts.
 
 ## Deferred
 
-MFA, social, email, password reset, ES256 rotation UI, multi-tenant orgs.
+DPoP, JAR, CIBA, password/implicit (never), multi-region key HSM.
