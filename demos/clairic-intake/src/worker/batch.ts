@@ -57,12 +57,13 @@ export async function enqueueBundledInbox(env: Env, visitorId: string, ipKey: st
   return ids;
 }
 
-export async function processInboxItem(env: Env, id: string, now: number, attempts = 1): Promise<"done" | "missing" | "retry"> {
+export async function processInboxItem(env: Env, id: string, now: number, attempts = 1): Promise<"done" | "missing" | "retry" | "lease"> {
   const claimed = await claimInbox(env, id, now);
   if (!claimed) {
     const row = await getInbox(env, id);
     if (!row) return "missing";
-    if (row.status === "queued" || row.status === "running") return "retry";
+    if (row.status === "running") return "lease";
+    if (row.status === "queued") return "retry";
     return "done";
   }
   const row = await getInbox(env, id);
@@ -103,21 +104,33 @@ async function reserveRetry(env: Env, ipKey: string, now: number): Promise<"ok" 
   return reserved === "global" ? "daily_budget" : "budget";
 }
 
-export async function handleQueueMessage(env: Env, body: unknown, attempts: number, now = Date.now()): Promise<"ack" | "retry"> {
+/** One delivery plus max_retries 3. The fourth delivery is the last. */
+export const MAX_QUEUE_ATTEMPTS = 4;
+/** Longer than the 60s lease, so the next delivery can claim the row. */
+export const LEASE_RETRY_DELAY_SECONDS = 65;
+
+export type QueueOutcome = { action: "ack" } | { action: "retry"; delaySeconds?: number };
+
+export async function handleQueueMessage(env: Env, body: unknown, attempts: number, now = Date.now()): Promise<QueueOutcome> {
   const id = body && typeof body === "object" && typeof (body as { id?: unknown }).id === "string" ? (body as { id: string }).id : "";
-  if (!/^[a-f0-9]{32}$/.test(id)) return "ack";
+  if (!/^[a-f0-9]{32}$/.test(id)) return { action: "ack" };
   try {
     const outcome = await processInboxItem(env, id, now, attempts);
-    if (outcome === "retry") return "retry";
-    return "ack";
+    if (outcome === "lease" || outcome === "retry") return retryOrFail(env, id, outcome, attempts, now);
+    return { action: "ack" };
   } catch (err) {
     console.warn(JSON.stringify({ event: "intake_retry", id, attempts, error: err instanceof Error ? err.message : "error" }));
-    if (attempts >= 3) {
-      await failInbox(env, id, "extract_failed", now);
-      return "ack";
-    }
-    return "retry";
+    return retryOrFail(env, id, "retry", attempts, now);
   }
+}
+
+async function retryOrFail(env: Env, id: string, outcome: "lease" | "retry", attempts: number, now: number): Promise<QueueOutcome> {
+  if (attempts >= MAX_QUEUE_ATTEMPTS) {
+    await failInbox(env, id, "extract_failed", now);
+    return { action: "ack" };
+  }
+  if (outcome === "lease") return { action: "retry", delaySeconds: LEASE_RETRY_DELAY_SECONDS };
+  return { action: "retry" };
 }
 
 export function publicInbox(row: {
@@ -153,14 +166,12 @@ export function publicInbox(row: {
   } catch {
     fields = null;
   }
-  const stateText = row.state_text?.trim() ? row.state_text : row.state;
   return {
     id: row.id,
     sampleId: row.sample_id,
     title: row.title,
     status: row.status,
-    state: row.state,
-    stateText,
+    state: row.state_text?.trim() ? row.state_text : row.state,
     truncated: row.truncated === 1,
     fields,
     answers,

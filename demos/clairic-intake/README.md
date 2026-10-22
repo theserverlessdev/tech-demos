@@ -36,9 +36,9 @@ flowchart LR
   worker --> clef[Clef]
   worker --> queue[Queue]
   queue --> consumer[Consumer]
+  consumer --> clairic
   consumer --> d1[D1 review rows]
-  browser --> r2[R2 intake]
-  worker --> r2
+  worker --> r2[R2 intake]
   cron[Hourly cron] --> r2
 ```
 
@@ -73,7 +73,7 @@ The D1 id in `wrangler.jsonc` is a placeholder (`00000000-0000-4000-8000-0000000
 2. **R2.** `wrangler r2 bucket create tech-demos-clairic-intake`, then the one-day lifecycle (not a wrangler.jsonc field):
    `wrangler r2 bucket lifecycle add tech-demos-clairic-intake intake-expiry intake/ --expire-days 1`
    The hourly cron also deletes objects older than a day.
-3. **Queue.** `wrangler queues create tech-demos-clairic-intake` (producer binding `INTAKE`, consumer on the same queue).
+3. **Queue.** `wrangler queues create tech-demos-clairic-intake` and `wrangler queues create tech-demos-clairic-intake-dlq`. The producer binding is `INTAKE`. The consumer reads the same queue and sends exhausted messages to the dead-letter queue.
 4. **Secrets.** `wrangler secret put TURNSTILE_SECRET` and `wrangler secret put IP_HASH_SECRET` (32 or more random bytes).
 5. **Turnstile.** Create a widget whose hostname is `clairic-intake.tech-demos.theserverless.dev`. Put its site key in `TURNSTILE_SITE_KEY`. The widget actions are `extract`, `decide`, and `batch`.
 6. **DNS.** Add a proxied record for `clairic-intake.tech-demos.theserverless.dev`, or switch that route to a `custom_domain`.

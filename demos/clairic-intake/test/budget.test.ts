@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { budgetDecision, dayKey, guardFailure, rateLimitResult } from "../src/shared/budget";
 import { LIMITS } from "../src/shared/limits";
-import { reserveCalls, spendUsed } from "../src/worker/db";
+import { refundCalls, reserveCalls, spendUsed } from "../src/worker/db";
 import { asD1, memoryDb } from "./helpers";
 
 const open = {
@@ -43,6 +43,15 @@ describe("budget and rate limit", () => {
     expect(await spendUsed(db, "ip", now)).toBe(40);
     expect(await spendUsed(db, "*", now)).toBe(40);
     expect(await reserveCalls(db, "other", now, 40, 40)).toBe("ok");
+  });
+
+  test("a refund returns the reserved calls to the network and the shared cap", async () => {
+    const db = asD1(memoryDb());
+    const now = Date.parse("2026-10-22T12:00:00Z");
+    expect(await reserveCalls(db, "ip", now, 12)).toBe("ok");
+    await refundCalls(db, "ip", now, 12);
+    expect(await spendUsed(db, "ip", now)).toBe(0);
+    expect(await spendUsed(db, "*", now)).toBe(0);
   });
 
   test("the shared daily cap stops every network with one statement", async () => {

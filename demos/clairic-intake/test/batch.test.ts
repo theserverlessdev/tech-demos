@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { PRESETS } from "../src/shared/presets";
 import { INVOICE_STATE, SUPPORT_STATE } from "../src/shared/samples";
 import { decisionState } from "../src/shared/policy";
-import { enqueueBundledInbox, handleQueueMessage, processInboxItem } from "../src/worker/batch";
+import { enqueueBundledInbox, handleQueueMessage, LEASE_RETRY_DELAY_SECONDS, MAX_QUEUE_ATTEMPTS, processInboxItem, publicInbox } from "../src/worker/batch";
 import { getInbox, listInbox, reviewInbox } from "../src/worker/db";
 import { mockClairic, mockCompare } from "../src/worker/mock";
 import { asD1, memoryDb } from "./helpers";
@@ -68,10 +68,13 @@ test("the batch pipeline lands the inbox in review and a correction sticks", asy
   expect(answers.invoice_number.value).toBe("INV-2291");
 
   const again = await handleQueueMessage(worker, { id: ids[0] }, 1, now);
-  expect(again).toBe("ack");
+  expect(again).toEqual({ action: "ack" });
   expect((await getInbox(worker, ids[0]))?.status).toBe("review");
+  const published = publicInbox(invoice!);
+  expect(published.state).toContain("INV-2291");
+  expect("stateText" in published).toBe(false);
 
-  expect(await handleQueueMessage(worker, { id: "nope" }, 1, now)).toBe("ack");
+  expect(await handleQueueMessage(worker, { id: "nope" }, 1, now)).toEqual({ action: "ack" });
   const saved = await reviewInbox(worker, invoice!.id, "visitor", JSON.stringify({ vendor: "Northwind Supply" }), now);
   expect(saved).toBe(true);
   expect((await getInbox(worker, invoice!.id))?.status).toBe("accepted");
@@ -87,9 +90,10 @@ test("a bad schema fails closed and a thrown extract is retried then failed", as
   expect((await getInbox(worker, ids[0]))?.status).toBe("failed");
 
   await worker.DB.prepare("UPDATE inbox SET status = 'queued', fields_json = ? WHERE id = ?").bind("{", ids[1]).run();
-  expect(await handleQueueMessage(worker, { id: ids[1] }, 1, now)).toBe("retry");
+  expect(await handleQueueMessage(worker, { id: ids[1] }, 1, now)).toEqual({ action: "retry" });
   expect((await getInbox(worker, ids[1]))?.status).toBe("queued");
-  expect(await handleQueueMessage(worker, { id: ids[1] }, 3, now)).toBe("ack");
+  expect(await handleQueueMessage(worker, { id: ids[1] }, MAX_QUEUE_ATTEMPTS - 1, now)).toEqual({ action: "retry" });
+  expect(await handleQueueMessage(worker, { id: ids[1] }, MAX_QUEUE_ATTEMPTS, now)).toEqual({ action: "ack" });
   expect((await getInbox(worker, ids[1]))?.status).toBe("failed");
   expect((await getInbox(worker, ids[1]))?.error).toBe("extract_failed");
 });
@@ -99,10 +103,20 @@ test("a live lease is retried and an expired lease is claimed again", async () =
   const now = Date.parse("2026-10-22T15:00:00Z");
   const ids = await enqueueBundledInbox(worker, "visitor", "ip", now);
   await worker.DB.prepare("UPDATE inbox SET status = 'running', updated_at = ? WHERE id = ?").bind(now, ids[0]).run();
-  expect(await processInboxItem(worker, ids[0], now + 1_000)).toBe("retry");
+  expect(await processInboxItem(worker, ids[0], now + 1_000)).toBe("lease");
+  expect(await handleQueueMessage(worker, { id: ids[0] }, 1, now + 1_000)).toEqual({
+    action: "retry",
+    delaySeconds: LEASE_RETRY_DELAY_SECONDS,
+  });
+  expect(LEASE_RETRY_DELAY_SECONDS).toBe(65);
   expect((await getInbox(worker, ids[0]))?.status).toBe("running");
-  expect(await processInboxItem(worker, ids[0], now + 61_000)).toBe("done");
-  expect((await getInbox(worker, ids[0]))?.status).toBe("review");
+  expect(await handleQueueMessage(worker, { id: ids[0] }, MAX_QUEUE_ATTEMPTS, now + 2_000)).toEqual({ action: "ack" });
+  expect((await getInbox(worker, ids[0]))?.status).toBe("failed");
+  expect((await getInbox(worker, ids[0]))?.error).toBe("extract_failed");
+
+  await worker.DB.prepare("UPDATE inbox SET status = 'running', updated_at = ? WHERE id = ?").bind(now, ids[1]).run();
+  expect(await processInboxItem(worker, ids[1], now + 61_000)).toBe("done");
+  expect((await getInbox(worker, ids[1]))?.status).toBe("review");
 });
 
 test("a retry that cannot reserve another call fails closed", async () => {

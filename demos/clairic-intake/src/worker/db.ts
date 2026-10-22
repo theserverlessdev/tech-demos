@@ -80,20 +80,8 @@ export function inboxInsert(
   return env.DB.prepare(INBOX_INSERT).bind(row.id, row.visitorId, row.ipKey, row.sampleId, row.title, row.state, row.fieldsJson, row.now, row.now);
 }
 
-export async function insertInbox(
-  env: Env,
-  row: {
-    id: string;
-    visitorId: string;
-    ipKey: string;
-    sampleId: string;
-    title: string;
-    state: string;
-    fieldsJson: string;
-    now: number;
-  },
-): Promise<void> {
-  await inboxInsert(env, row).run();
+export async function refundCalls(db: D1Database, ipKey: string, now: number, calls: number): Promise<void> {
+  await db.prepare("UPDATE spend SET calls = MAX(0, calls - ?) WHERE ip_key IN (?, ?) AND day = ?").bind(calls, ipKey, GLOBAL_KEY, dayKey(now)).run();
 }
 
 export async function getInbox(env: Env, id: string): Promise<InboxRow | null> {

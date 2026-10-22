@@ -1,9 +1,14 @@
 # Changelog
 
+## 0.1.2
+
+- A live inbox lease is retried after 65 seconds. The fourth delivery marks the row failed and acknowledges the message. Messages that still fail go to `tech-demos-clairic-intake-dlq`.
+- A failed queue send refunds the reserved calls. A failed Llama compare shows no estimated cost. An image with no pasted text says that compare needs text.
+
 ## 0.1.1
 
 - A failed Llama compare no longer drops the Clairic result.
-- Inbox rows carry Clairic's `state_text` and `truncated` flag. A running row can be claimed again after a one-minute lease.
+- Inbox rows carry Clairic's `state_text` and `truncated` flag. The claim lease is one minute; the queue delay that waits it out arrived in 0.1.2.
 - The review list loads on open, polls for about a minute, and has a Refresh button.
 - IPv6 addresses share a /64 budget. A shared daily cap of 200 paid calls returns 503 when it is used up.
 - `bun run dev:live` uses the Worker name `tech-demos-clairic-intake-dev`.

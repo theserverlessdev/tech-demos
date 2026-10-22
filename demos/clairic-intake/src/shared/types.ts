@@ -49,7 +49,8 @@ export type Comparison = {
   source: "llama" | "mock";
   model: string;
   latencyMs: number;
-  costUsd: number;
+  /** Null when the instruct call failed and may not have been billed. */
+  costUsd: number | null;
   schemaValid: boolean;
   reasons: string[];
   parsed: unknown;

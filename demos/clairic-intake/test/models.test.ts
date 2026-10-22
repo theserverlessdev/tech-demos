@@ -102,6 +102,7 @@ test("a Llama failure stays on the comparison and does not throw", async () => {
   expect(comparison.schemaValid).toBe(false);
   expect(comparison.reasons).toEqual(["llama_failed: compare_timeout"]);
   expect(comparison.parsed).toBeNull();
+  expect(comparison.costUsd).toBeNull();
 });
 
 test("client answers only keep numeric confidence, p_null, and median", () => {

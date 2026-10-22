@@ -31,7 +31,8 @@
         "queue": "tech-demos-clairic-intake",
         "max_batch_size": 4,
         "max_batch_timeout": 2,
-        "max_retries": 3
+        "max_retries": 3,
+        "dead_letter_queue": "tech-demos-clairic-intake-dlq"
       }
     ]
   },

@@ -57,8 +57,10 @@ function boot() {
   $("decide").addEventListener("click", () => void runDecide());
   $("batch").addEventListener("click", () => void runBatch());
   $("refresh").addEventListener("click", () => void loadReview(false));
-  void loadConfig();
-  void loadReview(false);
+  void (async () => {
+    await loadConfig();
+    await loadReview(false);
+  })();
 }
 
 function renderSamples() {
@@ -476,8 +478,18 @@ function renderComparison(result: Extraction, fields: Record<string, FieldSpec>)
   const panel = $("comparison");
   const comparison = result.comparison;
   if (!comparison) {
-    panel.hidden = true;
+    const wantsCompare = ($("compare") as HTMLInputElement).checked;
+    const hasText = ($("state") as HTMLTextAreaElement).value.trim().length > 0;
     panel.replaceChildren();
+    if (wantsCompare && !hasText) {
+      panel.hidden = false;
+      const note = document.createElement("p");
+      note.className = "hint";
+      text(note, "Compare needs pasted text.");
+      panel.append(note);
+      return;
+    }
+    panel.hidden = true;
     return;
   }
   panel.hidden = false;
@@ -496,9 +508,9 @@ function renderComparison(result: Extraction, fields: Record<string, FieldSpec>)
   }
   const grid = document.createElement("div");
   grid.className = "compare";
-  grid.append(statCard("Clairic", `${result.latencyMs} ms`, "Schema-valid", "Yes", usd(result.costUsd)));
+  grid.append(statCard("Clairic", `${result.latencyMs} ms`, "Schema-valid", "Yes", result.costUsd));
   const schema = comparison.schemaValid ? "Yes" : "No";
-  grid.append(statCard(comparison.model, `${comparison.latencyMs} ms`, "Schema-valid", schema, usd(comparison.costUsd), !comparison.schemaValid));
+  grid.append(statCard(comparison.model, `${comparison.latencyMs} ms`, "Schema-valid", schema, comparison.costUsd, !comparison.schemaValid));
   panel.append(grid);
   if (!comparison.schemaValid && comparison.reasons.length) {
     const why = document.createElement("p");
@@ -524,7 +536,7 @@ function renderComparison(result: Extraction, fields: Record<string, FieldSpec>)
   panel.append(table);
 }
 
-function statCard(model: string, latency: string, schemaLabel: string, schema: string, cost: string, bad = false): HTMLElement {
+function statCard(model: string, latency: string, schemaLabel: string, schema: string, cost: number | null, bad = false): HTMLElement {
   const card = document.createElement("article");
   card.className = "card stat";
   const heading = document.createElement("h3");
@@ -536,7 +548,7 @@ function statCard(model: string, latency: string, schemaLabel: string, schema: s
   text(valid, `${schemaLabel}: ${schema}`);
   const price = document.createElement("p");
   price.className = "meta";
-  text(price, `Estimated cost ${cost}`);
+  text(price, cost === null ? "Estimated cost unknown" : `Estimated cost ${usd(cost)}`);
   card.append(heading, lat, valid, price);
   return card;
 }
@@ -665,7 +677,6 @@ type ReviewItem = {
   title: string;
   status: string;
   state: string;
-  stateText?: string;
   truncated?: boolean;
   answers: Record<string, Answer> | null;
   corrections: Record<string, string> | null;
@@ -729,7 +740,7 @@ function reviewCard(item: ReviewItem): HTMLElement {
     text(summary, "Source");
     const source = document.createElement("div");
     source.className = "source";
-    source.innerHTML = highlightHtml(item.stateText || item.state, marksFromAnswers(item.answers));
+    source.innerHTML = highlightHtml(item.state, marksFromAnswers(item.answers));
     fold.append(summary, source);
     card.append(fold);
     if (item.truncated) {
