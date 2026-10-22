@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { LIMITS } from "../src/shared/limits";
 import { PRESETS } from "../src/shared/presets";
 import { INVOICE_STATE, SUPPORT_STATE } from "../src/shared/samples";
@@ -125,6 +126,47 @@ test("a live lease is retried and an expired lease is claimed again", async () =
   expect(await spendUsed(worker.DB, "ip", redelivery)).toBe(1);
 });
 
+test("the attempt cap is one more than max_retries in every wrangler config", () => {
+  for (const name of ["wrangler.jsonc", "wrangler.local.jsonc", "wrangler.live.jsonc"]) {
+    const text = readFileSync(new URL(`../${name}`, import.meta.url), "utf8");
+    const match = text.match(/"max_retries":\s*(\d+)/);
+    expect(match?.[1]).toBe("2");
+    expect(MAX_QUEUE_ATTEMPTS).toBe(Number(match?.[1]) + 1);
+  }
+});
+
+test("a failed insert refunds both spend rows and leaves no inbox rows", async () => {
+  const db = memoryDb();
+  const now = Date.parse("2026-10-22T15:00:00Z");
+  const database = asD1(db);
+  database.batch = async () => {
+    throw new Error("d1 down");
+  };
+  const worker = {
+    ENVIRONMENT: "",
+    DB: database,
+    INTAKE: { send: async () => {}, sendBatch: async () => {} },
+  } as unknown as Env;
+  expect(await reserveCalls(worker.DB, "ip", now, 12)).toBe("ok");
+  await expect(enqueueBundledInbox(worker, "visitor", "ip", now)).rejects.toThrow("d1 down");
+  expect(await listInbox(worker, "visitor")).toHaveLength(0);
+  expect(await spendUsed(worker.DB, "ip", now)).toBe(0);
+  expect(await spendUsed(worker.DB, "*", now)).toBe(0);
+});
+
+test("a row left running past the lease and the retry wait is shown as failed", async () => {
+  const { env: worker } = env();
+  const now = Date.now();
+  const ids = await enqueueBundledInbox(worker, "visitor", "ip", now);
+  const stale = now - LIMITS.leaseMs - LEASE_RETRY_DELAY_SECONDS * 1000 - 1_000;
+  await worker.DB.prepare("UPDATE inbox SET status = 'running', updated_at = ? WHERE id = ?").bind(stale, ids[0]).run();
+  const row = await getInbox(worker, ids[0]);
+  const published = publicInbox(row!);
+  expect(published.status).toBe("failed");
+  expect(published.error).toBe("The extraction did not finish.");
+  expect((await getInbox(worker, ids[0]))?.status).toBe("running");
+});
+
 test("a failed queue send marks the rows failed and refunds both spend rows", async () => {
   const db = memoryDb();
   const now = Date.parse("2026-10-22T15:00:00Z");
@@ -176,7 +218,7 @@ test("the queue handler delays a live lease and fails the last attempt", async (
   expect(live.retried).toEqual({ delaySeconds: 65 });
   expect((await getInbox(workerEnv, ids[0]))?.status).toBe("running");
 
-  const last = queueMessage({ id: ids[0] }, 4);
+  const last = queueMessage({ id: ids[0] }, MAX_QUEUE_ATTEMPTS);
   await worker.queue({ queue: "tech-demos-clairic-intake", messages: [last] } as unknown as MessageBatch, workerEnv);
   expect(last.acked).toBe(true);
   expect(last.retried).toBeNull();
@@ -194,7 +236,7 @@ test("the queue handler retries when the last attempt cannot mark the row failed
     if (sql.includes("status = 'failed'")) throw new Error("d1 down");
     return realPrepare(sql);
   }) as typeof workerEnv.DB.prepare;
-  const message = queueMessage({ id: ids[0] }, 4);
+  const message = queueMessage({ id: ids[0] }, MAX_QUEUE_ATTEMPTS);
   await worker.queue({ queue: "tech-demos-clairic-intake", messages: [message] } as unknown as MessageBatch, workerEnv);
   expect(message.acked).toBe(false);
   expect(message.retried).toEqual({});

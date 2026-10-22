@@ -30,20 +30,25 @@ export async function enqueueBundledInbox(env: Env, visitorId: string, ipKey: st
       fieldsJson: JSON.stringify(fields.fields),
     };
   });
-  await env.DB.batch(
-    rows.map((row) =>
-      inboxInsert(env, {
-        id: row.id,
-        visitorId,
-        ipKey,
-        sampleId: row.doc.id,
-        title: row.doc.title,
-        state: row.doc.state,
-        fieldsJson: row.fieldsJson,
-        now,
-      }),
-    ),
-  );
+  try {
+    await env.DB.batch(
+      rows.map((row) =>
+        inboxInsert(env, {
+          id: row.id,
+          visitorId,
+          ipKey,
+          sampleId: row.doc.id,
+          title: row.doc.title,
+          state: row.doc.state,
+          fieldsJson: row.fieldsJson,
+          now,
+        }),
+      ),
+    );
+  } catch (err) {
+    await refundCalls(env.DB, ipKey, now, rows.length);
+    throw err;
+  }
   const ids = rows.map((row) => row.id);
   if (useMock(env)) {
     for (const id of ids) await processInboxItem(env, id, now);
@@ -106,8 +111,8 @@ async function reserveRetry(env: Env, ipKey: string, now: number): Promise<"ok" 
   return reserved === "global" ? "daily_budget" : "budget";
 }
 
-/** One delivery plus max_retries 3. The fourth delivery is the last. */
-export const MAX_QUEUE_ATTEMPTS = 4;
+/** One delivery plus max_retries 2. The third delivery is the last, so a failed batch stays within 40 calls. */
+export const MAX_QUEUE_ATTEMPTS = 3;
 /** Five seconds past the claim lease, so the next delivery can claim the row. */
 export const LEASE_RETRY_DELAY_SECONDS = Math.ceil(LIMITS.leaseMs / 1000) + 5;
 
@@ -174,18 +179,21 @@ export function publicInbox(row: {
   } catch {
     fields = null;
   }
+  const abandoned =
+    (row.status === "running" || row.status === "queued") &&
+    Date.now() - row.updated_at > LIMITS.leaseMs + LEASE_RETRY_DELAY_SECONDS * 1000;
   return {
     id: row.id,
     sampleId: row.sample_id,
     title: row.title,
-    status: row.status,
+    status: abandoned ? "failed" : row.status,
     state: row.state_text?.trim() ? row.state_text : row.state,
     truncated: row.truncated === 1,
     fields,
     answers,
     corrections,
     source: row.source,
-    error: row.error ? (ERROR_TEXT[row.error] ?? ERROR_TEXT.extract_failed) : null,
+    error: row.error ? (ERROR_TEXT[row.error] ?? ERROR_TEXT.extract_failed) : abandoned ? ERROR_TEXT.extract_failed : null,
     updatedAt: row.updated_at,
   };
 }

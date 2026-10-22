@@ -60,8 +60,13 @@ function boot() {
   void (async () => {
     try {
       await loadConfig();
-    } finally {
+    } catch (err) {
+      showError("form-error", err instanceof Error ? err.message : "The desk did not load.");
+    }
+    try {
       await loadReview(false);
+    } catch (err) {
+      showError("form-error", err instanceof Error ? err.message : "The review list did not load.");
     }
   })();
 }

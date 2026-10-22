@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.4
+
+- The queue retries twice, so a batch whose extracts all fail stays within the 40-call daily cap.
+- A failed inbox insert refunds the reserved calls. A row left queued or running after the dead-letter handoff is shown as failed.
+
 ## 0.1.3
 
 - A queue handler error retries the message, including the last attempt, so Queues can move it to the dead-letter queue.
