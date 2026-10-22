@@ -25,6 +25,7 @@ export function mockClairic(state: string, fields: Record<string, FieldSpec>, ha
     costUsd: clairicUsd(usage.input_tokens),
     review: reviewFlags(answers),
     photoUnread,
+    truncated: false,
   };
 }
 

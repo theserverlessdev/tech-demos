@@ -36,12 +36,27 @@ describe("budget and rate limit", () => {
     const db = asD1(memoryDb());
     const now = Date.parse("2026-10-22T12:00:00Z");
     expect(dayKey(now)).toBe("2026-10-22");
-    expect(await reserveCalls(db, "ip", now, 30, 40)).toBe(true);
-    expect(await reserveCalls(db, "ip", now, 12, 40)).toBe(false);
+    expect(await reserveCalls(db, "ip", now, 30, 40)).toBe("ok");
+    expect(await reserveCalls(db, "ip", now, 12, 40)).toBe("ip");
     expect(await spendUsed(db, "ip", now)).toBe(30);
-    expect(await reserveCalls(db, "ip", now, 10, 40)).toBe(true);
+    expect(await reserveCalls(db, "ip", now, 10, 40)).toBe("ok");
     expect(await spendUsed(db, "ip", now)).toBe(40);
-    expect(await reserveCalls(db, "other", now, 40, 40)).toBe(true);
+    expect(await spendUsed(db, "*", now)).toBe(40);
+    expect(await reserveCalls(db, "other", now, 40, 40)).toBe("ok");
+  });
+
+  test("the shared daily cap stops every network with one statement", async () => {
+    const db = asD1(memoryDb());
+    const now = Date.parse("2026-10-22T12:00:00Z");
+    expect(await reserveCalls(db, "a", now, 30, 40, 50)).toBe("ok");
+    expect(await reserveCalls(db, "b", now, 30, 40, 50)).toBe("global");
+    expect(await spendUsed(db, "b", now)).toBe(0);
+    expect(await spendUsed(db, "*", now)).toBe(30);
+  });
+
+  test("the body cap covers a 1.5 MB image plus the text field", () => {
+    const floor = Math.ceil((LIMITS.maxImageBytes * 4) / 3) + LIMITS.maxStateChars * 6 + 64 * 1024;
+    expect(LIMITS.maxBodyBytes).toBeGreaterThanOrEqual(floor);
   });
 
   test("the guard rejects a remote image, a huge body, and a failed check before the model", () => {

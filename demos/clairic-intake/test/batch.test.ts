@@ -9,12 +9,19 @@ import { asD1, memoryDb } from "./helpers";
 
 function env() {
   const db = memoryDb();
+  const sent: { body: { id: string } }[][] = [];
   return {
     db,
+    sent,
     env: {
       ENVIRONMENT: "local",
       DB: asD1(db),
-      INTAKE: { send: async () => {} },
+      INTAKE: {
+        send: async () => {},
+        sendBatch: async (messages: { body: { id: string } }[]) => {
+          sent.push(messages);
+        },
+      },
     } as unknown as Env,
   };
 }
@@ -41,15 +48,18 @@ test("the support email computes the paid total and the days since delivery", ()
   expect(result.answers.damage.value).toEqual(["cracked screen", "dented corner"]);
   expect(result.answers.tracking_number.value).toBeNull();
   const state = decisionState(result.answers);
+  expect(state.startsWith("Policy:")).toBe(true);
   expect(state.includes(SUPPORT_STATE)).toBe(false);
   expect(state).toContain("order_id: A-88412");
 });
 
 test("the batch pipeline lands the inbox in review and a correction sticks", async () => {
-  const { env: worker } = env();
+  const { env: worker, sent } = env();
   const now = Date.parse("2026-10-22T15:00:00Z");
   const ids = await enqueueBundledInbox(worker, "visitor", "ip", now);
   expect(ids).toHaveLength(12);
+  expect(sent).toHaveLength(1);
+  expect(sent[0]).toHaveLength(12);
   const rows = await listInbox(worker, "visitor");
   expect(rows.every((row) => row.status === "review")).toBe(true);
   const invoice = rows.find((row) => row.sample_id === "in-01");
@@ -81,4 +91,28 @@ test("a bad schema fails closed and a thrown extract is retried then failed", as
   expect((await getInbox(worker, ids[1]))?.status).toBe("queued");
   expect(await handleQueueMessage(worker, { id: ids[1] }, 3, now)).toBe("ack");
   expect((await getInbox(worker, ids[1]))?.status).toBe("failed");
+  expect((await getInbox(worker, ids[1]))?.error).toBe("extract_failed");
+});
+
+test("a live lease is retried and an expired lease is claimed again", async () => {
+  const { env: worker } = env();
+  const now = Date.parse("2026-10-22T15:00:00Z");
+  const ids = await enqueueBundledInbox(worker, "visitor", "ip", now);
+  await worker.DB.prepare("UPDATE inbox SET status = 'running', updated_at = ? WHERE id = ?").bind(now, ids[0]).run();
+  expect(await processInboxItem(worker, ids[0], now + 1_000)).toBe("retry");
+  expect((await getInbox(worker, ids[0]))?.status).toBe("running");
+  expect(await processInboxItem(worker, ids[0], now + 61_000)).toBe("done");
+  expect((await getInbox(worker, ids[0]))?.status).toBe("review");
+});
+
+test("a retry that cannot reserve another call fails closed", async () => {
+  const { env: worker } = env();
+  const now = Date.parse("2026-10-22T15:00:00Z");
+  const ids = await enqueueBundledInbox(worker, "visitor", "ip", now);
+  const { reserveCalls } = await import("../src/worker/db");
+  expect(await reserveCalls(worker.DB, "ip", now, 40)).toBe("ok");
+  await worker.DB.prepare("UPDATE inbox SET status = 'queued', answers_json = NULL WHERE id = ?").bind(ids[2]).run();
+  expect(await processInboxItem(worker, ids[2], now, 2)).toBe("done");
+  expect((await getInbox(worker, ids[2]))?.status).toBe("failed");
+  expect((await getInbox(worker, ids[2]))?.error).toBe("budget");
 });

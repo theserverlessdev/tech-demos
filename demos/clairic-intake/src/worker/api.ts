@@ -5,7 +5,7 @@ import { SAMPLES } from "../shared/samples";
 import { parseCorrections, validateFields, validateImage, validateState } from "../shared/schema";
 import type { Answer } from "../shared/types";
 import { enqueueBundledInbox, newId, publicInbox } from "./batch";
-import { insertUpload, listInbox, reserveCalls, reviewInbox, spendUsed } from "./db";
+import { insertUpload, listInbox, reserveCalls, reviewInbox, spendUsed, type ReserveResult } from "./db";
 import { clientIp, hashIp } from "./ip";
 import { runClairic, runCompare, runDecide, useMock } from "./models";
 import { isLocalRequest, isTestSiteKey, resolveTurnstileSecret, verifyTurnstile, type TurnstileAction } from "./turnstile";
@@ -84,8 +84,6 @@ async function extract(request: Request, env: Env): Promise<Response> {
   const now = Date.now();
   const { visitor, ipKey, body } = await begin(request, env, "extract", "extract");
   const record = objectBody(body);
-  const compare = record.compare === true;
-  if (compare) await enforceLimit(request, env, "compare", ipKey);
   const imageInput = record.image;
   const image = imageInput ? validateImage(imageInput) : null;
   if (image && !image.ok) throw new HttpError(400, "bad_image", image.message);
@@ -94,6 +92,8 @@ async function extract(request: Request, env: Env): Promise<Response> {
   if (!state.ok) throw new HttpError(400, "bad_schema", state.message);
   const fields = validateFields(record.fields);
   if (!fields.ok) throw new HttpError(400, "bad_schema", fields.message);
+  const compare = record.compare === true && state.state.trim().length > 0;
+  if (compare) await enforceLimit(request, env, "compare", ipKey);
   const guard = guardFailure({
     bodyBytes: 0,
     stateChars: state.state.length,
@@ -106,11 +106,7 @@ async function extract(request: Request, env: Env): Promise<Response> {
   });
   if (guard) throw new HttpError(400, guard.code, guard.message);
   const calls = compare ? 2 : 1;
-  if (!(await reserveCalls(env.DB, ipKey, now, calls))) {
-    const used = await spendUsed(env.DB, ipKey, now);
-    const decision = budgetDecision(used, calls);
-    throw new HttpError(429, "budget", decision.ok ? "This network is out of paid calls for today." : decision.message);
-  }
+  await reserveOrThrow(env, ipKey, now, calls);
   let uploadId: string | null = null;
   if (image?.ok) {
     uploadId = newId();
@@ -138,9 +134,7 @@ async function decide(request: Request, env: Env): Promise<Response> {
   const fields = validateFields(record.fields);
   if (!fields.ok) throw new HttpError(400, "bad_schema", fields.message);
   const answers = readAnswers(record.answers, fields.fields);
-  if (!(await reserveCalls(env.DB, ipKey, now, 1))) {
-    throw new HttpError(429, "budget", "This network is out of paid calls for today.");
-  }
+  await reserveOrThrow(env, ipKey, now, 1);
   try {
     const decision = await runDecide(env, answers);
     return json({ ...decision, labelled: decision.source === "mock" }, 200, visitor, request);
@@ -154,11 +148,7 @@ async function batch(request: Request, env: Env): Promise<Response> {
   const now = Date.now();
   const { visitor, ipKey } = await begin(request, env, "batch", "batch");
   const count = 12;
-  if (!(await reserveCalls(env.DB, ipKey, now, count))) {
-    const used = await spendUsed(env.DB, ipKey, now);
-    const decision = budgetDecision(used, count);
-    throw new HttpError(429, "budget", decision.ok ? "This network is out of paid calls for today." : decision.message);
-  }
+  await reserveOrThrow(env, ipKey, now, count);
   try {
     const ids = await enqueueBundledInbox(env, visitor.id, ipKey, now);
     return json({ ids, labelled: useMock(env) }, 202, visitor, request);
@@ -194,6 +184,17 @@ async function reviewOne(request: Request, env: Env, id: string): Promise<Respon
   const rows = await listInbox(env, visitor.id);
   const item = rows.find((row) => row.id === id);
   return json({ item: item ? publicInbox(item) : null }, 200, visitor, request);
+}
+
+async function reserveOrThrow(env: Env, ipKey: string, now: number, calls: number): Promise<void> {
+  const reserved: ReserveResult = await reserveCalls(env.DB, ipKey, now, calls);
+  if (reserved === "ok") return;
+  if (reserved === "global") {
+    throw new HttpError(503, "daily", "The shared Workers AI budget for today is used up. Try again tomorrow.");
+  }
+  const used = await spendUsed(env.DB, ipKey, now);
+  const decision = budgetDecision(used, calls);
+  throw new HttpError(429, "budget", decision.ok ? "This network is out of paid calls for today." : decision.message);
 }
 
 async function begin(request: Request, env: Env, limit: LimitName, action: TurnstileAction) {
@@ -236,8 +237,7 @@ function readVisitor(request: Request): { id: string; fresh: boolean } {
 }
 
 async function readJson(request: Request): Promise<unknown> {
-  const text = await request.text();
-  if (text.length > LIMITS.maxBodyBytes) throw new HttpError(413, "too_large", "That request is too large.");
+  const text = await readBounded(request);
   try {
     return JSON.parse(text);
   } catch {
@@ -245,28 +245,73 @@ async function readJson(request: Request): Promise<unknown> {
   }
 }
 
+async function readBounded(request: Request): Promise<string> {
+  const body = request.body;
+  if (!body) return "";
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value?.byteLength) continue;
+    total += value.byteLength;
+    if (total > LIMITS.maxBodyBytes) {
+      await reader.cancel();
+      throw new HttpError(413, "too_large", "That request is too large.");
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
+}
+
 function objectBody(body: unknown): Record<string, unknown> {
   if (!body || typeof body !== "object" || Array.isArray(body)) throw new HttpError(400, "bad_json", "Send a JSON object.");
   return body as Record<string, unknown>;
 }
 
-function readAnswers(input: unknown, fields: Record<string, unknown>): Record<string, Answer> {
+export function readAnswers(input: unknown, fields: Record<string, unknown>): Record<string, Answer> {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new HttpError(400, "bad_schema", "Missing extracted answers.");
   const answers: Record<string, Answer> = {};
   for (const name of Object.keys(fields)) {
     const raw = (input as Record<string, unknown>)[name];
-    if (!raw || typeof raw !== "object") {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
       answers[name] = { type: "text", value: null };
       continue;
     }
-    const record = raw as Answer;
-    answers[name] = { type: typeof record.type === "string" ? record.type : "text", value: record.value ?? null, confidence: record.confidence, p_null: record.p_null };
-    if (typeof record.median === "number" || Array.isArray(record.median)) answers[name].median = record.median;
+    const record = raw as Record<string, unknown>;
+    const answer: Answer = { type: typeof record.type === "string" ? record.type : "text", value: null };
     if (Array.isArray(record.value) || typeof record.value === "number" || typeof record.value === "string" || record.value === null) {
-      answers[name].value = record.value;
+      answer.value = record.value;
     }
+    const confidence = finiteNumber(record.confidence);
+    if (confidence !== undefined) answer.confidence = confidence;
+    const pNull = finiteNumber(record.p_null);
+    if (pNull !== undefined) answer.p_null = pNull;
+    const median = finiteNumber(record.median);
+    if (median !== undefined) answer.median = median;
+    else {
+      const series = finiteList(record.median);
+      if (series) answer.median = series;
+    }
+    answers[name] = answer;
   }
   return answers;
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function finiteList(value: unknown): number[] | undefined {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "number" || !Number.isFinite(item))) return undefined;
+  return value;
 }
 
 function readCookie(header: string | null, name: string): string | null {

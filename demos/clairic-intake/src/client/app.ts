@@ -56,7 +56,9 @@ function boot() {
   $("extract").addEventListener("click", () => void runExtract());
   $("decide").addEventListener("click", () => void runDecide());
   $("batch").addEventListener("click", () => void runBatch());
+  $("refresh").addEventListener("click", () => void loadReview(false));
   void loadConfig();
+  void loadReview(false);
 }
 
 function renderSamples() {
@@ -326,6 +328,12 @@ function renderExtraction(result: Extraction, fields: Record<string, FieldSpec>)
     text(note, result.photoUnread
       ? "Local mock cannot read a photo on its own. Production Clairic can. Paste the transcript or use the receipt sample."
       : "Labelled local mock. Latency and cost are estimates, and nothing was billed.");
+    panel.append(note);
+  }
+  if (result.truncated) {
+    const note = document.createElement("p");
+    note.className = "banner";
+    text(note, "Clairic truncated this document. A field past the cut can come back null.");
     panel.append(note);
   }
   const legend = document.createElement("div");
@@ -625,18 +633,31 @@ async function runBatch() {
 }
 
 async function pollReview() {
-  for (let attempt = 0; attempt < 20; attempt++) {
-    const res = await fetch("./api/review");
-    const body = (await readBody(res)) as { items?: ReviewItem[] };
-    const items = body.items ?? [];
-    renderReview(items);
-    if (items.length && items.every((item) => item.status !== "queued" && item.status !== "running")) {
-      text($("batch-note"), `${items.length} documents are ready for review.`);
-      $("review").scrollIntoView({ block: "start" });
-      return;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 400));
+  const started = Date.now();
+  let wait = 400;
+  while (Date.now() - started < 60_000) {
+    if (await loadReview(true)) return;
+    await new Promise((resolve) => setTimeout(resolve, wait));
+    wait = Math.min(4_000, Math.round(wait * 1.5));
   }
+  text($("batch-note"), "Still working. Use Refresh in a moment.");
+}
+
+async function loadReview(announce: boolean): Promise<boolean> {
+  const res = await fetch("./api/review");
+  const body = (await readBody(res)) as { items?: ReviewItem[]; error?: { message?: string } };
+  if (!res.ok) {
+    if (announce) text($("batch-note"), body.error?.message || "The review list did not load.");
+    return false;
+  }
+  const items = body.items ?? [];
+  renderReview(items);
+  const ready = items.length > 0 && items.every((item) => item.status !== "queued" && item.status !== "running");
+  if (announce && ready) {
+    text($("batch-note"), `${items.length} documents are ready for review.`);
+    $("review").scrollIntoView({ block: "start" });
+  }
+  return ready;
 }
 
 type ReviewItem = {
@@ -644,6 +665,8 @@ type ReviewItem = {
   title: string;
   status: string;
   state: string;
+  stateText?: string;
+  truncated?: boolean;
   answers: Record<string, Answer> | null;
   corrections: Record<string, string> | null;
   source: string | null;
@@ -706,9 +729,15 @@ function reviewCard(item: ReviewItem): HTMLElement {
     text(summary, "Source");
     const source = document.createElement("div");
     source.className = "source";
-    source.innerHTML = highlightHtml(item.state, marksFromAnswers(item.answers));
+    source.innerHTML = highlightHtml(item.stateText || item.state, marksFromAnswers(item.answers));
     fold.append(summary, source);
     card.append(fold);
+    if (item.truncated) {
+      const note = document.createElement("p");
+      note.className = "hint";
+      text(note, "Clairic truncated this document.");
+      card.append(note);
+    }
   }
   const actions = document.createElement("div");
   actions.className = "review-actions";

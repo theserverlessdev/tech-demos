@@ -44,7 +44,7 @@ Out of scope: accounts, Durable Objects, Workers for Platforms, fetching documen
 3. Phone-first page: schema editor, highlights, comparison, decision, review queue.
 4. Tests, typecheck, build, local smoke.
 5. 390px screenshots (input, highlighted results, comparison, review queue) and a short H.264 video.
-6. Hub card via `redirectSource`.
+6. Hub card via `standalone()` in the hub registry, same shape as the other standalone demos.
 
 ## Stack
 

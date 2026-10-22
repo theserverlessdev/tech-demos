@@ -69,11 +69,18 @@ export default {
   },
 
   async queue(batch, env): Promise<void> {
-    for (const message of batch.messages) {
-      const outcome = await handleQueueMessage(env, message.body, message.attempts);
-      if (outcome === "retry") message.retry();
-      else message.ack();
-    }
+    await Promise.allSettled(
+      batch.messages.map(async (message) => {
+        try {
+          const outcome = await handleQueueMessage(env, message.body, message.attempts);
+          if (outcome === "retry") message.retry();
+          else message.ack();
+        } catch (err) {
+          console.warn(JSON.stringify({ event: "queue_message_failed", error: err instanceof Error ? err.message : "error" }));
+          message.retry();
+        }
+      }),
+    );
   },
 
   async scheduled(_controller, env): Promise<void> {

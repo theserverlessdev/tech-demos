@@ -5,8 +5,13 @@ export const LIMITS = {
   maxStateChars: 12_000,
   maxImageBytes: 1_500_000,
   maxImages: 1,
-  maxBodyBytes: 2_000_000,
+  /** Base64 of a 1.5 MB image, plus the text field and JSON overhead. */
+  maxBodyBytes: Math.ceil((1_500_000 * 4) / 3) + 12_000 * 6 + 64 * 1024,
   dailyCalls: 40,
+  /** Shared ceiling for every network. The '*' spend row holds this total. */
+  dailyGlobalCalls: 200,
+  /** A running inbox row can be claimed again after this. */
+  leaseMs: 60_000,
   retentionMs: 24 * 60 * 60 * 1000,
   /** Under this confidence, or a null value, the field is flagged for review. */
   reviewConfidence: 0.8,

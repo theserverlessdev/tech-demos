@@ -21,6 +21,7 @@ export async function runClairic(
 ): Promise<Omit<Extraction, "comparison">> {
   if (useMock(env)) return mockClairic(state, fields, !!image);
   const started = Date.now();
+  // @cf/cloudflare/clairic is not in @cloudflare/workers-types yet, so the model id and body are unchecked.
   const body = await withTimeout(
     env.AI.run(env.CLAIRIC_MODEL as never, {
       model: "clairic",
@@ -50,6 +51,7 @@ export async function runClairic(
     costUsd: clairicUsd(usage.input_tokens),
     review: reviewFlags(answers),
     photoUnread: false,
+    truncated: root.truncated === true,
   };
 }
 
@@ -61,49 +63,68 @@ export async function runCompare(env: Env, state: string, fields: Record<string,
     "Use JSON null when the document does not say the value.",
     "Numbers must be numbers. Dates must be YYYY-MM-DD. Lists must be arrays.",
     `Fields:\n${JSON.stringify(fields)}`,
-    `Document:\n${state || "(image only; say null for every field you cannot see)"}`,
+    `Document:\n${state}`,
   ].join("\n\n");
-  const body = await withTimeout(
-    env.AI.run(env.COMPARE_MODEL as never, {
-      messages: [
-        { role: "system", content: "You extract JSON. No markdown." },
-        { role: "user", content: prompt },
-      ],
-      max_tokens: 700,
-      response_format: { type: "json_object" },
-    } as never),
-    25_000,
-    "compare_timeout",
-  );
-  const root = unwrap(body) ?? {};
-  const raw = textFromModel(root);
-  let parsed: unknown = null;
-  let reasons = ["Response is not a JSON object."];
   try {
-    parsed = parseModelJson(raw);
-    reasons = llmSchemaReport(fields, parsed).reasons;
-  } catch {
-    parsed = null;
+    // response_format is missing from this model's workers-types input. JSON mode may return response as an object.
+    const body = await withTimeout(
+      env.AI.run(env.COMPARE_MODEL as never, {
+        messages: [
+          { role: "system", content: "You extract JSON. No markdown." },
+          { role: "user", content: prompt },
+        ],
+        max_tokens: 700,
+        response_format: { type: "json_object" },
+      } as never),
+      25_000,
+      "compare_timeout",
+    );
+    const root = unwrap(body) ?? {};
+    const raw = textFromModel(root);
+    let parsed: unknown = null;
+    let reasons = ["Response is not a JSON object."];
+    try {
+      parsed = parseModelJson(raw);
+      reasons = llmSchemaReport(fields, parsed).reasons;
+    } catch {
+      parsed = null;
+    }
+    const usage = readUsage(root, prompt, fields);
+    if (!usage.output_tokens) usage.output_tokens = Math.max(1, Math.ceil(raw.length / 4));
+    return {
+      source: "llama",
+      model: env.COMPARE_MODEL || COMPARE_MODEL_ID,
+      latencyMs: Date.now() - started,
+      costUsd: llamaUsd(usage.input_tokens, usage.output_tokens),
+      schemaValid: reasons.length === 0,
+      reasons,
+      parsed,
+      rawPreview: raw.slice(0, 500),
+      usage,
+    };
+  } catch (err) {
+    const code = err instanceof Error ? err.message : "compare_failed";
+    const safe = code.replace(/[^a-z0-9_:-]/gi, "").slice(0, 40) || "compare_failed";
+    const usage = usageFromChars(prompt.length, JSON.stringify(fields).length);
+    return {
+      source: "llama",
+      model: env.COMPARE_MODEL || COMPARE_MODEL_ID,
+      latencyMs: Date.now() - started,
+      costUsd: llamaUsd(usage.input_tokens, usage.output_tokens),
+      schemaValid: false,
+      reasons: [`llama_failed: ${safe}`],
+      parsed: null,
+      rawPreview: "",
+      usage,
+    };
   }
-  const usage = readUsage(root, prompt, fields);
-  if (!usage.output_tokens) usage.output_tokens = Math.max(1, Math.ceil(raw.length / 4));
-  return {
-    source: "llama",
-    model: env.COMPARE_MODEL || COMPARE_MODEL_ID,
-    latencyMs: Date.now() - started,
-    costUsd: llamaUsd(usage.input_tokens, usage.output_tokens),
-    schemaValid: reasons.length === 0,
-    reasons,
-    parsed,
-    rawPreview: raw.slice(0, 500),
-    usage,
-  };
 }
 
 export async function runDecide(env: Env, answers: Record<string, Answer>): Promise<DeskDecision> {
   if (useMock(env)) return mockDecide(answers);
   const started = Date.now();
   const state = decisionState(answers);
+  // @cf/cloudflare/clef is not in @cloudflare/workers-types yet, so the model id and body are unchecked.
   const body = await withTimeout(
     env.AI.run(env.CLEF_MODEL as never, {
       model: "clef",
@@ -235,6 +256,7 @@ function unwrap(body: unknown): Record<string, unknown> | null {
 
 function textFromModel(root: Record<string, unknown>): string {
   if (typeof root.response === "string") return root.response;
+  if (root.response && typeof root.response === "object") return JSON.stringify(root.response);
   const choices = root.choices;
   if (Array.isArray(choices) && choices[0] && typeof choices[0] === "object") {
     const message = (choices[0] as { message?: { content?: unknown } }).message;

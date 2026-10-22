@@ -236,7 +236,7 @@ mark.hl-null { background: transparent; }
 .stat { display: grid; gap: 0.2rem; }
 .stat b { color: var(--text-strong); font-weight: 650; }
 .pair { display: grid; gap: 0.35rem; margin-top: 0.35rem; }
-.pair div { overflow-wrap: anywhere; }
+.card h3, .pair p, .stat h3, .stat p { overflow-wrap: anywhere; min-width: 0; }
 .ok { color: var(--ok); }
 .bad { color: var(--danger); }
 .bars { list-style: none; margin: 0.55rem 0 0; padding: 0; display: grid; gap: 0.4rem; }

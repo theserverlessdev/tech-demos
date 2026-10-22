@@ -24,10 +24,13 @@ export function probabilitiesFor(choice: Decision): Record<Decision, number> {
   return out;
 }
 
-/** Clef sees typed values only. The raw document is not part of this string. */
+/** Clef sees typed values only. The raw document is not part of this string. The policy stays at the front so a long value list cannot cut it off. */
 export function decisionState(answers: Record<string, Answer>): string {
+  const policy = "Policy: refund damage within 30 days when the amount is known. Escalate nulls and low confidence. Otherwise approve.";
   const lines = Object.entries(answers).map(([name, answer]) => `${name}: ${formatAnswer(answer)}`);
-  return `Extracted intake values:\n${lines.join("\n")}\nPolicy: refund damage within 30 days when the amount is known. Escalate nulls and low confidence. Otherwise approve.`.slice(0, 2000);
+  const body = `Extracted intake values:\n${lines.join("\n")}`;
+  const head = `${policy}\n`;
+  return head + body.slice(0, Math.max(0, 2000 - head.length));
 }
 
 export function chooseFromAnswers(answers: Record<string, { value: unknown; confidence?: number }>): Decision {

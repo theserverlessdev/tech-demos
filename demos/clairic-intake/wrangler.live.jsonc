@@ -1,6 +1,7 @@
 {
+  // Local live check only (`bun run dev:live`). Do not deploy this file: the name is not the production Worker.
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "tech-demos-clairic-intake",
+  "name": "tech-demos-clairic-intake-dev",
   "main": "src/worker/index.ts",
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],

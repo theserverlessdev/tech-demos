@@ -2,8 +2,16 @@ import { bundledInbox } from "../shared/samples";
 import { PRESETS } from "../shared/presets";
 import { validateFields } from "../shared/schema";
 import type { Answer } from "../shared/types";
-import { claimInbox, failInbox, getInbox, insertInbox, releaseInbox, saveInboxResult } from "./db";
+import { claimInbox, failInbox, failInboxIds, getInbox, inboxInsert, releaseInbox, reserveCalls, saveInboxResult } from "./db";
 import { runClairic, useMock } from "./models";
+
+const ERROR_TEXT: Record<string, string> = {
+  bad_schema: "The field schema was not valid.",
+  extract_failed: "The extraction did not finish.",
+  queue_send_failed: "The inbox could not be queued.",
+  daily_budget: "The shared budget for today is used up.",
+  budget: "This network is out of paid calls for today.",
+};
 
 export function newId(): string {
   const bytes = new Uint8Array(16);
@@ -12,40 +20,50 @@ export function newId(): string {
 }
 
 export async function enqueueBundledInbox(env: Env, visitorId: string, ipKey: string, now: number): Promise<string[]> {
-  const ids: string[] = [];
-  for (const doc of bundledInbox()) {
+  const rows = bundledInbox().map((doc) => {
     const fields = validateFields(PRESETS[doc.preset].fields);
-    if (!fields.ok) throw new Error(fields.message);
-    const id = newId();
-    await insertInbox(env, {
-      id,
-      visitorId,
-      ipKey,
-      sampleId: doc.id,
-      title: doc.title,
-      state: doc.state,
+    if (!fields.ok) throw new Error("bad_schema");
+    return {
+      id: newId(),
+      doc,
       fieldsJson: JSON.stringify(fields.fields),
-      now,
-    });
-    ids.push(id);
-    if (useMock(env)) await processInboxItem(env, id, now);
-    try {
-      await env.INTAKE.send({ id });
-    } catch (err) {
-      if (useMock(env)) continue;
-      await failInbox(env, id, "queue_send_failed", now);
-      throw err;
-    }
+    };
+  });
+  await env.DB.batch(
+    rows.map((row) =>
+      inboxInsert(env, {
+        id: row.id,
+        visitorId,
+        ipKey,
+        sampleId: row.doc.id,
+        title: row.doc.title,
+        state: row.doc.state,
+        fieldsJson: row.fieldsJson,
+        now,
+      }),
+    ),
+  );
+  const ids = rows.map((row) => row.id);
+  if (useMock(env)) {
+    for (const id of ids) await processInboxItem(env, id, now);
+  }
+  try {
+    await env.INTAKE.sendBatch(ids.map((id) => ({ body: { id } })));
+  } catch (err) {
+    if (useMock(env)) return ids;
+    await failInboxIds(env, ids, "queue_send_failed", now);
+    throw err;
   }
   return ids;
 }
 
-export async function processInboxItem(env: Env, id: string, now: number): Promise<"done" | "missing" | "busy"> {
+export async function processInboxItem(env: Env, id: string, now: number, attempts = 1): Promise<"done" | "missing" | "retry"> {
   const claimed = await claimInbox(env, id, now);
   if (!claimed) {
     const row = await getInbox(env, id);
     if (!row) return "missing";
-    return row.status === "queued" ? "busy" : "done";
+    if (row.status === "queued" || row.status === "running") return "retry";
+    return "done";
   }
   const row = await getInbox(env, id);
   if (!row) return "missing";
@@ -58,29 +76,44 @@ export async function processInboxItem(env: Env, id: string, now: number): Promi
   }
   const fields = validateFields(parsed);
   if (!fields.ok) {
-    await failInbox(env, id, fields.message, now);
+    await failInbox(env, id, "bad_schema", now);
     return "done";
+  }
+  if (attempts > 1) {
+    const reserved = await reserveRetry(env, row.ip_key, now);
+    if (reserved !== "ok") {
+      await failInbox(env, id, reserved, now);
+      return "done";
+    }
   }
   try {
     const extraction = await runClairic(env, row.state, fields.fields, null, now);
-    await saveInboxResult(env, id, JSON.stringify(extraction.answers), extraction.source, now);
+    await saveInboxResult(env, id, JSON.stringify(extraction.answers), extraction.source, extraction.stateText, extraction.truncated, now);
     return "done";
   } catch (err) {
-    await releaseInbox(env, id, err instanceof Error ? err.message : "extract_failed", now);
+    console.warn(JSON.stringify({ event: "inbox_extract_failed", id, error: err instanceof Error ? err.message : "error" }));
+    await releaseInbox(env, id, "extract_failed", now);
     throw err;
   }
+}
+
+async function reserveRetry(env: Env, ipKey: string, now: number): Promise<"ok" | "budget" | "daily_budget"> {
+  const reserved = await reserveCalls(env.DB, ipKey, now, 1);
+  if (reserved === "ok") return "ok";
+  return reserved === "global" ? "daily_budget" : "budget";
 }
 
 export async function handleQueueMessage(env: Env, body: unknown, attempts: number, now = Date.now()): Promise<"ack" | "retry"> {
   const id = body && typeof body === "object" && typeof (body as { id?: unknown }).id === "string" ? (body as { id: string }).id : "";
   if (!/^[a-f0-9]{32}$/.test(id)) return "ack";
   try {
-    await processInboxItem(env, id, now);
+    const outcome = await processInboxItem(env, id, now, attempts);
+    if (outcome === "retry") return "retry";
     return "ack";
   } catch (err) {
     console.warn(JSON.stringify({ event: "intake_retry", id, attempts, error: err instanceof Error ? err.message : "error" }));
     if (attempts >= 3) {
-      await failInbox(env, id, "The extraction did not finish.", now);
+      await failInbox(env, id, "extract_failed", now);
       return "ack";
     }
     return "retry";
@@ -93,6 +126,8 @@ export function publicInbox(row: {
   title: string;
   status: string;
   state: string;
+  state_text?: string | null;
+  truncated?: number;
   fields_json: string;
   answers_json: string | null;
   corrections_json: string | null;
@@ -118,17 +153,20 @@ export function publicInbox(row: {
   } catch {
     fields = null;
   }
+  const stateText = row.state_text?.trim() ? row.state_text : row.state;
   return {
     id: row.id,
     sampleId: row.sample_id,
     title: row.title,
     status: row.status,
     state: row.state,
+    stateText,
+    truncated: row.truncated === 1,
     fields,
     answers,
     corrections,
     source: row.source,
-    error: row.error,
+    error: row.error ? (ERROR_TEXT[row.error] ?? ERROR_TEXT.extract_failed) : null,
     updatedAt: row.updated_at,
   };
 }

@@ -17,6 +17,7 @@ export function toneFor(confidence: number | null, valueIsNull: boolean): Tone {
   return "high";
 }
 
+/** Span ends are exclusive. Indexes match JS string indexes (UTF-16 code units), which agreed with Clairic on the BMP text from the live check. */
 export function segmentsFromSpans(text: string, marks: SpanMark[]): Segment[] {
   const n = text.length;
   const events: { at: number; open: boolean; tone: Tone }[] = [];

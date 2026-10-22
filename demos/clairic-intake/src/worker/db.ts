@@ -14,19 +14,42 @@ export type InboxRow = {
   corrections_json: string | null;
   source: string | null;
   error: string | null;
+  state_text: string | null;
+  truncated: number;
   created_at: number;
   updated_at: number;
 };
 
-const SPEND_SQL = `INSERT INTO spend (ip_key, day, calls)
-SELECT ?1, ?2, ?3
-WHERE COALESCE((SELECT calls FROM spend WHERE ip_key = ?1 AND day = ?2), 0) + ?3 <= ?4
-ON CONFLICT(ip_key, day) DO UPDATE SET calls = calls + excluded.calls
-WHERE spend.calls + excluded.calls <= ?4`;
+const GLOBAL_KEY = "*";
 
-export async function reserveCalls(db: D1Database, ipKey: string, now: number, adding: number, cap = LIMITS.dailyCalls): Promise<boolean> {
-  const result = await db.prepare(SPEND_SQL).bind(ipKey, dayKey(now), adding, cap).run();
-  return (result.meta.changes ?? 0) > 0;
+const SPEND_SQL = `INSERT INTO spend (ip_key, day, calls)
+SELECT ip_key, day, adding FROM (
+  SELECT ?1 AS ip_key, ?2 AS day, ?3 AS adding
+  UNION ALL
+  SELECT '${GLOBAL_KEY}', ?2, ?3
+)
+WHERE COALESCE((SELECT calls FROM spend WHERE ip_key = ?1 AND day = ?2), 0) + ?3 <= ?4
+  AND COALESCE((SELECT calls FROM spend WHERE ip_key = '${GLOBAL_KEY}' AND day = ?2), 0) + ?3 <= ?5
+ON CONFLICT(ip_key, day) DO UPDATE SET calls = calls + excluded.calls
+WHERE spend.calls + excluded.calls <= CASE WHEN spend.ip_key = '${GLOBAL_KEY}' THEN ?5 ELSE ?4 END`;
+
+export type ReserveResult = "ok" | "ip" | "global";
+
+/** One statement reserves the per-network row and the shared '*' row, or neither. */
+export async function reserveCalls(
+  db: D1Database,
+  ipKey: string,
+  now: number,
+  adding: number,
+  cap = LIMITS.dailyCalls,
+  globalCap = LIMITS.dailyGlobalCalls,
+): Promise<ReserveResult> {
+  const day = dayKey(now);
+  const result = await db.prepare(SPEND_SQL).bind(ipKey, day, adding, cap, globalCap).run();
+  if ((result.meta.changes ?? 0) > 0) return "ok";
+  const globalUsed = await spendUsed(db, GLOBAL_KEY, now);
+  if (globalUsed + adding > globalCap) return "global";
+  return "ip";
 }
 
 export async function spendUsed(db: D1Database, ipKey: string, now: number): Promise<number> {
@@ -36,6 +59,25 @@ export async function spendUsed(db: D1Database, ipKey: string, now: number): Pro
 
 export async function insertUpload(env: Env, row: { id: string; visitorId: string; key: string; contentType: string; bytes: number; now: number }): Promise<void> {
   await env.DB.prepare("INSERT INTO uploads (id, visitor_id, r2_key, content_type, bytes, created_at) VALUES (?, ?, ?, ?, ?, ?)").bind(row.id, row.visitorId, row.key, row.contentType, row.bytes, row.now).run();
+}
+
+const INBOX_INSERT = `INSERT INTO inbox (id, visitor_id, ip_key, sample_id, title, state, fields_json, status, answers_json, corrections_json, source, error, state_text, truncated, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', NULL, NULL, NULL, NULL, NULL, 0, ?, ?)`;
+
+export function inboxInsert(
+  env: Env,
+  row: {
+    id: string;
+    visitorId: string;
+    ipKey: string;
+    sampleId: string;
+    title: string;
+    state: string;
+    fieldsJson: string;
+    now: number;
+  },
+): D1PreparedStatement {
+  return env.DB.prepare(INBOX_INSERT).bind(row.id, row.visitorId, row.ipKey, row.sampleId, row.title, row.state, row.fieldsJson, row.now, row.now);
 }
 
 export async function insertInbox(
@@ -51,12 +93,7 @@ export async function insertInbox(
     now: number;
   },
 ): Promise<void> {
-  await env.DB.prepare(
-    `INSERT INTO inbox (id, visitor_id, ip_key, sample_id, title, state, fields_json, status, answers_json, corrections_json, source, error, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', NULL, NULL, NULL, NULL, ?, ?)`,
-  )
-    .bind(row.id, row.visitorId, row.ipKey, row.sampleId, row.title, row.state, row.fieldsJson, row.now, row.now)
-    .run();
+  await inboxInsert(env, row).run();
 }
 
 export async function getInbox(env: Env, id: string): Promise<InboxRow | null> {
@@ -69,13 +106,28 @@ export async function listInbox(env: Env, visitorId: string): Promise<InboxRow[]
 }
 
 export async function claimInbox(env: Env, id: string, now: number): Promise<boolean> {
-  const result = await env.DB.prepare("UPDATE inbox SET status = 'running', updated_at = ? WHERE id = ? AND status = 'queued'").bind(now, id).run();
+  const stale = now - LIMITS.leaseMs;
+  const result = await env.DB.prepare(
+    "UPDATE inbox SET status = 'running', updated_at = ? WHERE id = ? AND (status = 'queued' OR (status = 'running' AND updated_at < ?))",
+  )
+    .bind(now, id, stale)
+    .run();
   return (result.meta.changes ?? 0) > 0;
 }
 
-export async function saveInboxResult(env: Env, id: string, answersJson: string, source: string, now: number): Promise<void> {
-  await env.DB.prepare("UPDATE inbox SET status = 'review', answers_json = ?, source = ?, error = NULL, updated_at = ? WHERE id = ? AND status = 'running'")
-    .bind(answersJson, source, now, id)
+export async function saveInboxResult(
+  env: Env,
+  id: string,
+  answersJson: string,
+  source: string,
+  stateText: string,
+  truncated: boolean,
+  now: number,
+): Promise<void> {
+  await env.DB.prepare(
+    "UPDATE inbox SET status = 'review', answers_json = ?, source = ?, state_text = ?, truncated = ?, error = NULL, updated_at = ? WHERE id = ? AND status = 'running'",
+  )
+    .bind(answersJson, source, stateText, truncated ? 1 : 0, now, id)
     .run();
 }
 
@@ -84,8 +136,16 @@ export async function releaseInbox(env: Env, id: string, error: string, now: num
 }
 
 export async function failInbox(env: Env, id: string, error: string, now: number): Promise<void> {
-  await env.DB.prepare("UPDATE inbox SET status = 'failed', error = ?, updated_at = ? WHERE id = ? AND status IN ('running', 'queued')")
-    .bind(error.slice(0, 200), now, id)
+  await failInboxIds(env, [id], error, now);
+}
+
+export async function failInboxIds(env: Env, ids: string[], error: string, now: number): Promise<void> {
+  if (!ids.length) return;
+  const marks = ids.map(() => "?").join(", ");
+  await env.DB.prepare(
+    `UPDATE inbox SET status = 'failed', error = ?, updated_at = ? WHERE id IN (${marks}) AND status IN ('running', 'queued')`,
+  )
+    .bind(error.slice(0, 80), now, ...ids)
     .run();
 }
 
@@ -106,7 +166,7 @@ export async function cleanupExpired(env: Env, now: number): Promise<{ uploads: 
   await env.DB.prepare("DELETE FROM spend WHERE day < ?").bind(oldDay).run();
   let objects = 0;
   let cursor: string | undefined;
-  for (let page = 0; page < 5; page++) {
+  for (let page = 0; page < 20; page++) {
     const listed = await env.BUCKET.list({ prefix: "intake/", cursor, limit: 200 });
     for (const object of listed.objects) {
       if (now - object.uploaded.getTime() < LIMITS.retentionMs) continue;

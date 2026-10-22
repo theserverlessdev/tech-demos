@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.1
+
+- A failed Llama compare no longer drops the Clairic result.
+- Inbox rows carry Clairic's `state_text` and `truncated` flag. A running row can be claimed again after a one-minute lease.
+- The review list loads on open, polls for about a minute, and has a Refresh button.
+- IPv6 addresses share a /64 budget. A shared daily cap of 200 paid calls returns 503 when it is used up.
+- `bun run dev:live` uses the Worker name `tech-demos-clairic-intake-dev`.
+
 ## 0.1.0
 
 - Intake desk for `@cf/cloudflare/clairic`: paste a document or upload one receipt photo, edit a typed field schema, and read spans, confidence, nulls, estimate bands, and a forecast chart.

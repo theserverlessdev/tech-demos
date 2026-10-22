@@ -67,6 +67,8 @@ export type Extraction = {
   costUsd: number;
   review: ReviewFlag[];
   photoUnread: boolean;
+  /** Clairic set this when the document did not fit in one pass. */
+  truncated: boolean;
   comparison?: Comparison;
 };
 
