@@ -129,6 +129,7 @@ const hintContext = await browser.newContext({
   deviceScaleFactor: 2,
 });
 const hintPage = await hintContext.newPage();
+await hintPage.addInitScript(() => localStorage.setItem("theme", "dark"));
 hintPage.on("pageerror", (err) => consoleErrors.push(err.message));
 await hintPage.route("**/turnstile/v0/api.js*", (route) => route.fulfill({
   contentType: "application/javascript",
@@ -151,6 +152,7 @@ const branchContext = await browser.newContext({
   deviceScaleFactor: 2,
 });
 const branchPage = await branchContext.newPage();
+await branchPage.addInitScript(() => localStorage.setItem("theme", "dark"));
 branchPage.on("pageerror", (err) => consoleErrors.push(err.message));
 await branchPage.route("**/turnstile/v0/api.js*", (route) => route.fulfill({
   contentType: "application/javascript",
