@@ -11,6 +11,7 @@ export type UserRow = {
   salt: string;
   created_at: number;
   expires_at: number;
+  email_verified: number;
 };
 
 export type AppRow = {
@@ -33,6 +34,8 @@ export type CodeRow = {
   expires_at: number;
   used_at: number | null;
   family_id: string | null;
+  resource: string | null;
+  auth_time: number | null;
 };
 
 export type RefreshRow = {
@@ -45,6 +48,8 @@ export type RefreshRow = {
   expires_at: number;
   revoked_at: number | null;
   replaced_by: string | null;
+  resource: string | null;
+  auth_time: number | null;
 };
 
 export async function getApp(db: D1Database, clientId: string): Promise<AppRow | null> {
@@ -84,7 +89,14 @@ export async function deleteExpiredUserByEmail(db: D1Database, email: string, no
   await db.prepare("DELETE FROM users WHERE email = ? AND expires_at <= ?").bind(email, now).run();
 }
 
-export async function createUser(db: D1Database, email: string, hash: string, salt: string, now: number): Promise<UserRow> {
+export async function createUser(
+  db: D1Database,
+  email: string,
+  hash: string,
+  salt: string,
+  now: number,
+  emailVerified = false,
+): Promise<UserRow> {
   const row: UserRow = {
     id: randomId("usr"),
     email,
@@ -92,10 +104,11 @@ export async function createUser(db: D1Database, email: string, hash: string, sa
     salt,
     created_at: now,
     expires_at: now + USER_TTL_MS,
+    email_verified: emailVerified ? 1 : 0,
   };
   await db
-    .prepare("INSERT INTO users (id, email, password_hash, salt, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)")
-    .bind(row.id, row.email, row.password_hash, row.salt, row.created_at, row.expires_at)
+    .prepare("INSERT INTO users (id, email, password_hash, salt, created_at, expires_at, email_verified) VALUES (?, ?, ?, ?, ?, ?, ?)")
+    .bind(row.id, row.email, row.password_hash, row.salt, row.created_at, row.expires_at, row.email_verified)
     .run();
   return row;
 }
@@ -126,13 +139,23 @@ export async function deleteSession(db: D1Database, sessionId: string): Promise<
 
 export async function issueAuthCode(
   db: D1Database,
-  input: { userId: string; clientId: string; redirectUri: string; challenge: string; nonce: string; scope: string; now: number },
+  input: {
+    userId: string;
+    clientId: string;
+    redirectUri: string;
+    challenge: string;
+    nonce: string;
+    scope: string;
+    now: number;
+    resource?: string;
+    authTime?: number;
+  },
 ): Promise<string> {
   const code = toBase64Url(randomBytes(32));
   const codeHash = await sha256Hex(code);
   await db
     .prepare(
-      "INSERT INTO auth_codes (id, code_hash, user_id, client_id, redirect_uri, code_challenge, nonce, scope, expires_at, used_at, family_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)",
+      "INSERT INTO auth_codes (id, code_hash, user_id, client_id, redirect_uri, code_challenge, nonce, scope, expires_at, used_at, family_id, resource, auth_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)",
     )
     .bind(
       randomId("code"),
@@ -144,6 +167,8 @@ export async function issueAuthCode(
       input.nonce,
       input.scope,
       input.now + CODE_TTL_MS,
+      input.resource ?? null,
+      input.authTime ?? Math.floor(input.now / 1000),
     )
     .run();
   return code;
@@ -176,16 +201,26 @@ export async function attachCodeFamily(db: D1Database, codeId: string, familyId:
 
 export async function issueRefresh(
   db: D1Database,
-  input: { userId: string; clientId: string; scope: string; familyId?: string; now: number },
+  input: { userId: string; clientId: string; scope: string; familyId?: string; now: number; resource?: string | null; authTime?: number | null },
 ): Promise<{ token: string; id: string; familyId: string }> {
   const token = toBase64Url(randomBytes(32));
   const id = randomId("rt");
   const familyId = input.familyId ?? randomId("fam");
   await db
     .prepare(
-      "INSERT INTO refresh_tokens (id, token_hash, family_id, user_id, client_id, scope, expires_at, revoked_at, replaced_by) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL)",
+      "INSERT INTO refresh_tokens (id, token_hash, family_id, user_id, client_id, scope, expires_at, revoked_at, replaced_by, resource, auth_time) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)",
     )
-    .bind(id, await sha256Hex(token), familyId, input.userId, input.clientId, input.scope, input.now + REFRESH_TTL_MS)
+    .bind(
+      id,
+      await sha256Hex(token),
+      familyId,
+      input.userId,
+      input.clientId,
+      input.scope,
+      input.now + REFRESH_TTL_MS,
+      input.resource ?? null,
+      input.authTime ?? null,
+    )
     .run();
   return { token, id, familyId };
 }
@@ -207,9 +242,21 @@ export async function rotateRefreshAtomic(
       .bind(now, id, row.id, now),
     db
       .prepare(
-        "INSERT INTO refresh_tokens (id, token_hash, family_id, user_id, client_id, scope, expires_at, revoked_at, replaced_by) SELECT ?, ?, ?, ?, ?, ?, ?, NULL, NULL WHERE EXISTS (SELECT 1 FROM refresh_tokens WHERE id = ? AND replaced_by = ?)",
+        "INSERT INTO refresh_tokens (id, token_hash, family_id, user_id, client_id, scope, expires_at, revoked_at, replaced_by, resource, auth_time) SELECT ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ? WHERE EXISTS (SELECT 1 FROM refresh_tokens WHERE id = ? AND replaced_by = ?)",
       )
-      .bind(id, await sha256Hex(token), row.family_id, row.user_id, row.client_id, row.scope, now + REFRESH_TTL_MS, row.id, id),
+      .bind(
+        id,
+        await sha256Hex(token),
+        row.family_id,
+        row.user_id,
+        row.client_id,
+        row.scope,
+        now + REFRESH_TTL_MS,
+        row.resource ?? null,
+        row.auth_time ?? null,
+        row.id,
+        id,
+      ),
   ]);
   if ((results[0]?.meta.changes ?? 0) !== 1) {
     await revokeFamily(db, row.family_id, now);
@@ -235,7 +282,10 @@ export async function listApps(db: D1Database): Promise<AppRow[]> {
   return result.results ?? [];
 }
 
-export async function purgeExpired(db: D1Database, now: number): Promise<{ users: number; codes: number; sessions: number; refresh: number }> {
+export async function purgeExpired(
+  db: D1Database,
+  now: number,
+): Promise<{ users: number; codes: number; sessions: number; refresh: number; extras: number }> {
   const results = await db.batch([
     db.prepare("DELETE FROM auth_codes WHERE expires_at < ? OR (used_at IS NOT NULL AND used_at < ?)").bind(now, now - 3600_000),
     db.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(now),
@@ -244,12 +294,25 @@ export async function purgeExpired(db: D1Database, now: number): Promise<{ users
     db.prepare("DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE expires_at < ?)").bind(now),
     db.prepare("DELETE FROM refresh_tokens WHERE user_id IN (SELECT id FROM users WHERE expires_at < ?)").bind(now),
     db.prepare("DELETE FROM users WHERE expires_at < ?").bind(now),
+    db.prepare("DELETE FROM device_grants WHERE expires_at < ?").bind(now),
+    db.prepare("DELETE FROM par_requests WHERE expires_at < ?").bind(now),
+    db.prepare("DELETE FROM revoked_jtis WHERE expires_at < ?").bind(now),
+    db.prepare("DELETE FROM consents WHERE expires_at < ?").bind(now),
+    db.prepare("DELETE FROM apps WHERE expires_at IS NOT NULL AND expires_at < ? AND client_id NOT IN ('melody-sample', 'melody-machine')").bind(now),
+    db.prepare("DELETE FROM fed_states WHERE expires_at < ?").bind(now),
   ]);
   return {
     codes: (results[0]?.meta.changes ?? 0) + (results[3]?.meta.changes ?? 0),
     sessions: (results[1]?.meta.changes ?? 0) + (results[4]?.meta.changes ?? 0),
     refresh: (results[2]?.meta.changes ?? 0) + (results[5]?.meta.changes ?? 0),
     users: results[6]?.meta.changes ?? 0,
+    extras:
+      (results[7]?.meta.changes ?? 0) +
+      (results[8]?.meta.changes ?? 0) +
+      (results[9]?.meta.changes ?? 0) +
+      (results[10]?.meta.changes ?? 0) +
+      (results[11]?.meta.changes ?? 0) +
+      (results[12]?.meta.changes ?? 0),
   };
 }
 

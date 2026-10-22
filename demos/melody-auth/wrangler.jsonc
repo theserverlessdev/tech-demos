@@ -24,22 +24,32 @@
       "id": "24dc62b3e8d94d139a8c5d63fdca1a1b"
     }
   ],
-  // 7481 authorize POST, 7482 token, 7483 admin, 7484 userinfo/logout, 7485 authorize GET.
-  // Unused elsewhere (7480 is goodvibes CONNECT_LIMIT).
+  // 7481–7485 existing. 7486–7492 unused elsewhere (7480 is goodvibes CONNECT_LIMIT).
   "ratelimits": [
     { "name": "AUTH_LIMIT", "namespace_id": "7481", "simple": { "limit": 8, "period": 60 } },
     { "name": "TOKEN_LIMIT", "namespace_id": "7482", "simple": { "limit": 20, "period": 60 } },
     { "name": "ADMIN_LIMIT", "namespace_id": "7483", "simple": { "limit": 60, "period": 60 } },
     { "name": "SESSION_LIMIT", "namespace_id": "7484", "simple": { "limit": 30, "period": 60 } },
-    { "name": "PAGE_LIMIT", "namespace_id": "7485", "simple": { "limit": 30, "period": 60 } }
+    { "name": "PAGE_LIMIT", "namespace_id": "7485", "simple": { "limit": 30, "period": 60 } },
+    { "name": "REG_LIMIT", "namespace_id": "7486", "simple": { "limit": 8, "period": 60 } },
+    { "name": "DEVICE_LIMIT", "namespace_id": "7487", "simple": { "limit": 20, "period": 60 } },
+    { "name": "INTROSPECT_LIMIT", "namespace_id": "7488", "simple": { "limit": 30, "period": 60 } },
+    { "name": "REVOKE_LIMIT", "namespace_id": "7489", "simple": { "limit": 20, "period": 60 } },
+    { "name": "FED_LIMIT", "namespace_id": "7490", "simple": { "limit": 12, "period": 60 } },
+    { "name": "PAR_LIMIT", "namespace_id": "7491", "simple": { "limit": 20, "period": 60 } },
+    { "name": "PLAY_LIMIT", "namespace_id": "7492", "simple": { "limit": 30, "period": 60 } }
   ],
   "vars": {
     // Empty in production. .dev.vars sets "local" so the Turnstile test secret
     // works under wrangler dev, which rewrites Host to the first route.
     "ENVIRONMENT": "",
-    // PLACEHOLDER — owner must mint a dedicated Turnstile widget for
-    // melody-auth.tech-demos.theserverless.dev. Do not reuse another demo's live key.
-    "TURNSTILE_SITE_KEY": "0x4AAAAAAFYQUTxFgredOxQl"
+    // Live widget for melody-auth.tech-demos.theserverless.dev.
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFYQUTxFgredOxQl",
+    "GOOGLE_CLIENT_ID": "",
+    "GITHUB_CLIENT_ID": "",
+    "MICROSOFT_CLIENT_ID": "",
+    "OIDC_ISSUER": "",
+    "OIDC_CLIENT_ID": ""
   },
   "secrets": { "required": ["TURNSTILE_SECRET", "AUTH_PRIVATE_JWK"] },
   "triggers": { "crons": ["*/15 * * * *"] },

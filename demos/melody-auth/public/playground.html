@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="theme-color" content="#0e0e11" />
+  <title>OAuth playground · Melody Auth</title>
+  <meta name="description" content="Step-by-step OAuth 2.1 / OIDC playground: auth code + PKCE, client credentials, device code, introspect, revoke, refresh." />
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,560..760&family=Hanken+Grotesk:wght@420..680&family=JetBrains+Mono:wght@440;560&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./assets/app.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="https://tech-demos.theserverless.dev/" aria-label="Tech Demos gallery">
+      <svg class="brand__mark" width="26" height="26" viewBox="0 -3 128 128" aria-hidden="true">
+        <g stroke="currentColor" stroke-width="6" stroke-linecap="round" opacity="0.45"><line x1="4" y1="58" x2="20" y2="58"/><line x1="1" y1="72" x2="19" y2="72"/><line x1="6" y1="86" x2="22" y2="86"/></g>
+        <path d="M44 92 C31 92 20 82 20 69 C20 57 29 47 41 46 C45 33 57 24 70 24 C85 24 98 35 100 51 C110 53 118 62 118 72 C118 83 109 92 97 92 Z" fill="none" stroke="currentColor" stroke-width="7.5" stroke-linejoin="round"/>
+        <path d="M69 36 L50 71 L63 71 L57 102 L88 60 L72 60 L80 36 Z" fill="currentColor"/>
+      </svg>
+      <span>Tech Demos</span>
+    </a>
+    <div class="topbar__title">
+      <h1>Melody Auth</h1>
+      <p>OAuth playground</p>
+    </div>
+    <div class="topbar__actions">
+      <a class="btn" href="./">Sample</a>
+      <a class="btn btn-ghost" href="./admin">Admin</a>
+    </div>
+  </header>
+
+  <div class="strip" role="status">
+    <span class="strip__dot"></span>
+    <span class="strip__copy"><strong>What it proves</strong> A Worker can be a full OAuth 2.1 / OIDC server. <strong>What to try</strong> Run each grant and read the request/response. <strong>What you could build</strong> Plug Melody into Auth.js, Grafana, or oauth2-proxy.</span>
+  </div>
+
+  <main>
+    <section class="card">
+      <p class="eyebrow">Flows</p>
+      <h2>Pick a grant. Watch every hop.</h2>
+      <p class="lede">Authorization code + PKCE (the Google web/native flow), client credentials (machine-to-machine), device code (TV/CLI), then introspect, refresh, and revoke. Implicit and password grants are rejected on purpose — OAuth 2.1 removed them.</p>
+      <div class="actions" role="tablist">
+        <button class="btn btn-primary" type="button" data-flow="pkce">Auth code + PKCE</button>
+        <button class="btn" type="button" data-flow="cc">Client credentials</button>
+        <button class="btn" type="button" data-flow="device">Device code</button>
+        <button class="btn" type="button" data-flow="ops">Introspect / revoke</button>
+      </div>
+    </section>
+
+    <section class="card" id="flow-pkce">
+      <p class="eyebrow">authorization_code + PKCE S256</p>
+      <h2>Sign in, then exchange the code</h2>
+      <ol class="steps">
+        <li>Use the public client <span class="mono">melody-sample</span>.</li>
+        <li>Redirect to <span class="mono">/authorize</span> with S256.</li>
+        <li>Consent, then POST <span class="mono">/token</span>.</li>
+      </ol>
+      <div class="actions">
+        <button class="btn btn-primary" id="pkce-start" type="button">Start PKCE</button>
+        <button class="btn" id="pkce-refresh" type="button">Refresh</button>
+      </div>
+    </section>
+
+    <section class="card" id="flow-cc" hidden>
+      <p class="eyebrow">client_credentials</p>
+      <h2>Machine-to-machine</h2>
+      <p class="lede">POST <span class="mono">grant_type=client_credentials</span> with the seeded machine client. Public dynamic registration cannot mint this grant. The access token is <span class="mono">at+jwt</span> (RFC 9068).</p>
+      <p class="fine" id="cc-local" hidden>Local only: client id <span class="mono">melody-machine</span>, secret <span class="mono">melody-machine-secret</span> from <span class="mono">.dev.vars</span>.</p>
+      <label>Client id
+        <input id="cc-id" value="melody-machine" autocomplete="off" />
+      </label>
+      <label>Client secret
+        <input id="cc-secret" type="password" autocomplete="off" />
+      </label>
+      <div class="actions">
+        <button class="btn btn-primary" id="cc-token" type="button">Request token</button>
+      </div>
+    </section>
+
+    <section class="card" id="flow-device" hidden>
+      <p class="eyebrow">RFC 8628</p>
+      <h2>Device authorization</h2>
+      <p class="lede">Start a device grant, open <span class="mono">/device</span>, type the user code, approve, then poll. Polling too fast returns <span class="mono">slow_down</span>.</p>
+      <p class="device-code" id="device-code">————</p>
+      <div class="actions">
+        <button class="btn btn-primary" id="device-start" type="button">Start device grant</button>
+        <a class="btn" id="device-open" href="./device">Open /device</a>
+        <button class="btn" id="device-poll" type="button">Poll token</button>
+      </div>
+    </section>
+
+    <section class="card" id="flow-ops" hidden>
+      <p class="eyebrow">RFC 7662 / 7009</p>
+      <h2>Introspect and revoke</h2>
+      <p class="lede">Introspection stays confidential: <span class="mono">active:false</span> means this client cannot see the token, not that the token is dead. A public client can revoke its own token. Revoking someone else's token returns 200 and is ignored. An ID token is not an access token.</p>
+      <div class="actions">
+        <button class="btn btn-primary" id="ops-introspect" type="button">Introspect last token</button>
+        <button class="btn" id="ops-revoke" type="button">Revoke last token</button>
+        <button class="btn" id="ops-password" type="button">Try password grant</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <p class="eyebrow">Request / response</p>
+      <h2>Viewer</h2>
+      <pre class="pre" id="viewer">Pick a flow. Each step prints the HTTP request and JSON body here.</pre>
+      <p class="hint" id="play-error" role="status"></p>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <p>Implicit and password grants are not implemented — they were removed in OAuth 2.1. Use authorization code + PKCE instead.</p>
+  </footer>
+  <script type="module" src="./assets/playground.js"></script>
+</body>
+</html>
