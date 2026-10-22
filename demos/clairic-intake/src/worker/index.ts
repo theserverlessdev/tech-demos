@@ -1,6 +1,6 @@
-import { cleanupExpired, failInbox } from "./db";
+import { cleanupExpired } from "./db";
 import { errorResponse, handleApi } from "./api";
-import { handleQueueMessage, MAX_QUEUE_ATTEMPTS } from "./batch";
+import { handleQueueMessage, queueMessageId } from "./batch";
 import { isLocalHost } from "./turnstile";
 
 const BASE_PATH = "/demos/clairic-intake";
@@ -76,20 +76,13 @@ export default {
           if (outcome.action === "retry") message.retry(outcome.delaySeconds === undefined ? undefined : { delaySeconds: outcome.delaySeconds });
           else message.ack();
         } catch (err) {
-          console.warn(JSON.stringify({ event: "queue_message_failed", error: err instanceof Error ? err.message : "error" }));
-          if (message.attempts >= MAX_QUEUE_ATTEMPTS) {
-            const id = message.body && typeof message.body === "object" && typeof (message.body as { id?: unknown }).id === "string" ? (message.body as { id: string }).id : "";
-            if (/^[a-f0-9]{32}$/.test(id)) {
-              try {
-                await failInbox(env, id, "extract_failed", Date.now());
-              } catch {
-                /* The row stays running until cleanup if this write also fails. */
-              }
-            }
-            message.ack();
-          } else {
-            message.retry();
-          }
+          console.warn(JSON.stringify({
+            event: "queue_message_failed",
+            id: queueMessageId(message.body),
+            attempts: message.attempts,
+            error: err instanceof Error ? err.message : "error",
+          }));
+          message.retry();
         }
       }),
     );

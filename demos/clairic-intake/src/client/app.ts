@@ -58,8 +58,11 @@ function boot() {
   $("batch").addEventListener("click", () => void runBatch());
   $("refresh").addEventListener("click", () => void loadReview(false));
   void (async () => {
-    await loadConfig();
-    await loadReview(false);
+    try {
+      await loadConfig();
+    } finally {
+      await loadReview(false);
+    }
   })();
 }
 
@@ -281,7 +284,8 @@ async function runExtract() {
   const fields = currentFields();
   if (!fields) return;
   const state = ($("state") as HTMLTextAreaElement).value;
-  if (!state.trim() && !image) {
+  const submitted = { compare: ($("compare") as HTMLInputElement).checked, hasText: state.trim().length > 0 };
+  if (!submitted.hasText && !image) {
     showError("form-error", "Paste a document or upload an image.");
     return;
   }
@@ -298,14 +302,14 @@ async function runExtract() {
         turnstileToken: tokens.extract,
         state,
         fields,
-        compare: ($("compare") as HTMLInputElement).checked,
+        compare: submitted.compare,
         ...(image ? { image: { content_type: image.content_type, base64: image.base64 } } : {}),
       }),
     });
     const body = await readBody(res);
     if (!res.ok) throw new Error(errorMessage(body));
     last = body as Extraction;
-    renderExtraction(last, fields);
+    renderExtraction(last, fields, submitted);
     $("decision").hidden = false;
     tokens.extract = "";
     ($("extract") as HTMLButtonElement).disabled = true;
@@ -316,7 +320,7 @@ async function runExtract() {
   }
 }
 
-function renderExtraction(result: Extraction, fields: Record<string, FieldSpec>) {
+function renderExtraction(result: Extraction, fields: Record<string, FieldSpec>, submitted: { compare: boolean; hasText: boolean }) {
   const panel = $("results");
   panel.hidden = false;
   panel.replaceChildren();
@@ -356,7 +360,7 @@ function renderExtraction(result: Extraction, fields: Record<string, FieldSpec>)
   meta.className = "meta";
   text(meta, `${result.model} · ${result.latencyMs} ms · est. ${usd(result.costUsd)} · ${result.usage.input_tokens} input tokens`);
   panel.append(meta);
-  renderComparison(result, fields);
+  renderComparison(result, fields, submitted);
   panel.scrollIntoView({ block: "start" });
 }
 
@@ -474,14 +478,12 @@ function chartEl(points: { median: number; p10: number; p90: number }[]): SVGSVG
   return svg;
 }
 
-function renderComparison(result: Extraction, fields: Record<string, FieldSpec>) {
+function renderComparison(result: Extraction, fields: Record<string, FieldSpec>, submitted: { compare: boolean; hasText: boolean }) {
   const panel = $("comparison");
   const comparison = result.comparison;
   if (!comparison) {
-    const wantsCompare = ($("compare") as HTMLInputElement).checked;
-    const hasText = ($("state") as HTMLTextAreaElement).value.trim().length > 0;
     panel.replaceChildren();
-    if (wantsCompare && !hasText) {
+    if (submitted.compare && !submitted.hasText) {
       panel.hidden = false;
       const note = document.createElement("p");
       note.className = "hint";

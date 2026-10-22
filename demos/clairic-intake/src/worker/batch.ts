@@ -1,8 +1,9 @@
+import { LIMITS } from "../shared/limits";
 import { bundledInbox } from "../shared/samples";
 import { PRESETS } from "../shared/presets";
 import { validateFields } from "../shared/schema";
 import type { Answer } from "../shared/types";
-import { claimInbox, failInbox, failInboxIds, getInbox, inboxInsert, releaseInbox, reserveCalls, saveInboxResult } from "./db";
+import { claimInbox, failInbox, failInboxIds, getInbox, inboxInsert, refundCalls, releaseInbox, reserveCalls, saveInboxResult } from "./db";
 import { runClairic, useMock } from "./models";
 
 const ERROR_TEXT: Record<string, string> = {
@@ -52,6 +53,7 @@ export async function enqueueBundledInbox(env: Env, visitorId: string, ipKey: st
   } catch (err) {
     if (useMock(env)) return ids;
     await failInboxIds(env, ids, "queue_send_failed", now);
+    await refundCalls(env.DB, ipKey, now, ids.length);
     throw err;
   }
   return ids;
@@ -106,14 +108,20 @@ async function reserveRetry(env: Env, ipKey: string, now: number): Promise<"ok" 
 
 /** One delivery plus max_retries 3. The fourth delivery is the last. */
 export const MAX_QUEUE_ATTEMPTS = 4;
-/** Longer than the 60s lease, so the next delivery can claim the row. */
-export const LEASE_RETRY_DELAY_SECONDS = 65;
+/** Five seconds past the claim lease, so the next delivery can claim the row. */
+export const LEASE_RETRY_DELAY_SECONDS = Math.ceil(LIMITS.leaseMs / 1000) + 5;
 
 export type QueueOutcome = { action: "ack" } | { action: "retry"; delaySeconds?: number };
 
+export function queueMessageId(body: unknown): string {
+  if (!body || typeof body !== "object") return "";
+  const id = (body as { id?: unknown }).id;
+  return typeof id === "string" && /^[a-f0-9]{32}$/.test(id) ? id : "";
+}
+
 export async function handleQueueMessage(env: Env, body: unknown, attempts: number, now = Date.now()): Promise<QueueOutcome> {
-  const id = body && typeof body === "object" && typeof (body as { id?: unknown }).id === "string" ? (body as { id: string }).id : "";
-  if (!/^[a-f0-9]{32}$/.test(id)) return { action: "ack" };
+  const id = queueMessageId(body);
+  if (!id) return { action: "ack" };
   try {
     const outcome = await processInboxItem(env, id, now, attempts);
     if (outcome === "lease" || outcome === "retry") return retryOrFail(env, id, outcome, attempts, now);

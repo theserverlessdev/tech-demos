@@ -64,8 +64,12 @@ describe("budget and rate limit", () => {
   });
 
   test("the body cap covers a 1.5 MB image plus the text field", () => {
-    const floor = Math.ceil((LIMITS.maxImageBytes * 4) / 3) + LIMITS.maxStateChars * 6 + 64 * 1024;
-    expect(LIMITS.maxBodyBytes).toBeGreaterThanOrEqual(floor);
+    expect(LIMITS.maxImageBytes).toBe(1_500_000);
+    expect(LIMITS.maxStateChars).toBe(12_000);
+    const base64Image = Math.ceil((1_500_000 * 4) / 3);
+    const textField = 12_000 * 6;
+    const overhead = 64 * 1024;
+    expect(LIMITS.maxBodyBytes).toBe(base64Image + textField + overhead);
   });
 
   test("the guard rejects a remote image, a huge body, and a failed check before the model", () => {

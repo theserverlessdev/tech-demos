@@ -5,7 +5,7 @@ import { SAMPLES } from "../shared/samples";
 import { parseCorrections, validateFields, validateImage, validateState } from "../shared/schema";
 import type { Answer } from "../shared/types";
 import { enqueueBundledInbox, newId, publicInbox } from "./batch";
-import { insertUpload, listInbox, refundCalls, reserveCalls, reviewInbox, spendUsed, type ReserveResult } from "./db";
+import { insertUpload, listInbox, reserveCalls, reviewInbox, spendUsed, type ReserveResult } from "./db";
 import { clientIp, hashIp } from "./ip";
 import { runClairic, runCompare, runDecide, useMock } from "./models";
 import { isLocalRequest, isTestSiteKey, resolveTurnstileSecret, verifyTurnstile, type TurnstileAction } from "./turnstile";
@@ -155,7 +155,6 @@ async function batch(request: Request, env: Env): Promise<Response> {
     return json({ ids, labelled: useMock(env) }, 202, visitor, request);
   } catch (err) {
     console.warn(JSON.stringify({ event: "batch_failed", error: err instanceof Error ? err.message : "error" }));
-    if (!useMock(env)) await refundCalls(env.DB, ipKey, now, count);
     throw new HttpError(502, "queue_failed", "The inbox could not be queued.");
   }
 }

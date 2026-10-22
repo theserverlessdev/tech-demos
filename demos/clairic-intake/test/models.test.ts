@@ -59,6 +59,57 @@ function liveEnv(run: (model: string) => unknown): Env {
   } as unknown as Env;
 }
 
+test("Clairic keeps list, estimate, forecast, and duration answers", async () => {
+  const richFields: Record<string, FieldSpec> = {
+    contacts: { type: "list", items: "text" },
+    days_to_pay: { type: "estimate", unit: "days", min: 0, max: 120 },
+    weekly_payout: { type: "forecast", unit: "USD", horizon: 4, interval: "week" },
+    days_since_delivery: { type: "duration", unit: "days", integer: true },
+  };
+  const result = await runClairic(
+    liveEnv(() => ({
+      result: {
+        answers: {
+          contacts: { type: "list", value: ["Dana Ruiz", "Priya Shah"], spans: [[40, 49], [51, 61]], confidence: 0.9, p_null: 0.01 },
+          days_to_pay: { type: "estimate", value: null, median: 30, p10: 21, p90: 37.5, mean: 29, unit: "days", confidence: 0.8, p_null: 0.2 },
+          weekly_payout: {
+            type: "forecast",
+            value: [100, 80, 40, 0],
+            median: [100, 80, 40, 0],
+            p10: [50, 40, 10, 0],
+            p90: [150, 120, 80, 20],
+            steps: [{ type: "number", value: 100 }],
+            unit: "USD",
+            confidence: 0.7,
+          },
+          days_since_delivery: { type: "duration", value: 11, unit: "days", confidence: 0.95, p_null: 0.02 },
+        },
+        truncated: true,
+        usage: { state_tokens: 10, image_tokens: 0, schema_tokens: 20, input_tokens: 30, output_tokens: 0, passes: 1 },
+        state_text: "Dana Ruiz, Priya Shah",
+      },
+      success: true,
+    })),
+    "Dana Ruiz, Priya Shah",
+    richFields,
+    null,
+    Date.parse("2026-10-22T00:00:00Z"),
+  );
+  expect(result.truncated).toBe(true);
+  expect(result.answers.contacts.value).toEqual(["Dana Ruiz", "Priya Shah"]);
+  expect(result.answers.contacts.spans).toEqual([[40, 49], [51, 61]]);
+  expect(result.answers.days_to_pay.median).toBe(30);
+  expect(result.answers.days_to_pay.p10).toBe(21);
+  expect(result.answers.days_to_pay.p90).toBe(37.5);
+  expect(result.answers.days_to_pay.mean).toBe(29);
+  expect(result.answers.days_to_pay.unit).toBe("days");
+  expect(result.answers.weekly_payout.value).toEqual([100, 80, 40, 0]);
+  expect(result.answers.weekly_payout.median).toEqual([100, 80, 40, 0]);
+  expect(result.answers.weekly_payout.steps?.[0]?.value).toBe(100);
+  expect(result.answers.days_since_delivery.value).toBe(11);
+  expect(result.answers.days_since_delivery.unit).toBe("days");
+});
+
 test("a real Clairic result keeps spans, usage, state text, and cost", async () => {
   const result = await runClairic(liveEnv(() => clairicBody), stateText, fields, null, Date.parse("2026-10-22T00:00:00Z"));
   expect(result.answers.invoice_number.value).toBe("#INV-2041");

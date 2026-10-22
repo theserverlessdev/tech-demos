@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.3
+
+- A queue handler error retries the message, including the last attempt, so Queues can move it to the dead-letter queue.
+- The lease retry waits five seconds longer than the one-minute claim. A failed queue send refunds the reserved calls only after the rows are marked failed.
+- The consumer waits 30 seconds between retries.
+
 ## 0.1.2
 
 - A live inbox lease is retried after 65 seconds. The fourth delivery marks the row failed and acknowledges the message. Messages that still fail go to `tech-demos-clairic-intake-dlq`.

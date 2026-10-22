@@ -73,7 +73,7 @@ The D1 id in `wrangler.jsonc` is a placeholder (`00000000-0000-4000-8000-0000000
 2. **R2.** `wrangler r2 bucket create tech-demos-clairic-intake`, then the one-day lifecycle (not a wrangler.jsonc field):
    `wrangler r2 bucket lifecycle add tech-demos-clairic-intake intake-expiry intake/ --expire-days 1`
    The hourly cron also deletes objects older than a day.
-3. **Queue.** `wrangler queues create tech-demos-clairic-intake` and `wrangler queues create tech-demos-clairic-intake-dlq`. The producer binding is `INTAKE`. The consumer reads the same queue and sends exhausted messages to the dead-letter queue.
+3. **Queue.** `wrangler queues create tech-demos-clairic-intake` and `wrangler queues create tech-demos-clairic-intake-dlq`. The producer binding is `INTAKE`. The consumer reads the same queue, waits 30 seconds between retries, and sends exhausted messages to the dead-letter queue. Nothing reads that queue. Inspect it in the dashboard within 4 days; messages there are deleted after that.
 4. **Secrets.** `wrangler secret put TURNSTILE_SECRET` and `wrangler secret put IP_HASH_SECRET` (32 or more random bytes).
 5. **Turnstile.** Create a widget whose hostname is `clairic-intake.tech-demos.theserverless.dev`. Put its site key in `TURNSTILE_SITE_KEY`. The widget actions are `extract`, `decide`, and `batch`.
 6. **DNS.** Add a proxied record for `clairic-intake.tech-demos.theserverless.dev`, or switch that route to a `custom_domain`.

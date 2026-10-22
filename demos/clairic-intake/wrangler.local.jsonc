@@ -32,6 +32,7 @@
         "max_batch_size": 4,
         "max_batch_timeout": 2,
         "max_retries": 3,
+        "retry_delay": 30,
         "dead_letter_queue": "tech-demos-clairic-intake-dlq"
       }
     ]
