@@ -1,0 +1,10 @@
+# Changelog
+
+## 0.1.0
+
+- Intake desk for `@cf/cloudflare/clairic`: paste a document or upload one receipt photo, edit a typed field schema, and read spans, confidence, nulls, estimate bands, and a forecast chart.
+- Side-by-side JSON extraction with `@cf/meta/llama-3.2-3b-instruct` (latency, schema validity, estimated cost).
+- Optional `@cf/cloudflare/clef` decision: refund, escalate, or approve, from the typed values.
+- Twelve bundled documents run through a Queue into D1. The review list can accept or correct a value.
+- Turnstile on every model-calling path. Rate-limit namespaces 7503–7509. Per-IP daily budget of 40 paid calls.
+- `bun run dev` is a labelled mock. `bun run dev:live` is the path that calls Workers AI.

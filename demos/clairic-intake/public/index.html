@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark light" />
+  <meta name="theme-color" content="#0e0e11" />
+  <title>Clairic Intake · Tech Demos · theserverless.dev</title>
+  <meta name="description" content="Clairic turns a support email or a receipt into typed fields with source spans, confidence, and honest nulls." />
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Hanken+Grotesk:wght@400..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script src="./assets/theme.js"></script>
+  <link rel="stylesheet" href="./assets/app.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="https://tech-demos.theserverless.dev/" aria-label="Tech Demos gallery">
+      <svg class="brand__mark" width="26" height="26" viewBox="0 -3 128 128" aria-hidden="true">
+        <g stroke="currentColor" stroke-width="6" stroke-linecap="round" opacity="0.45"><line x1="4" y1="58" x2="20" y2="58"/><line x1="1" y1="72" x2="19" y2="72"/><line x1="6" y1="86" x2="22" y2="86"/></g>
+        <path d="M44 92 C31 92 20 82 20 69 C20 57 29 47 41 46 C45 33 57 24 70 24 C85 24 98 35 100 51 C110 53 118 62 118 72 C118 83 109 92 97 92 Z" fill="none" stroke="currentColor" stroke-width="7.5" stroke-linejoin="round"/>
+        <path d="M69 36 L50 71 L63 71 L57 102 L88 60 L72 60 L80 36 Z" fill="currentColor"/>
+      </svg>
+      <span>Tech Demos</span>
+    </a>
+    <div class="topbar__title">
+      <h1>Clairic Intake</h1>
+      <p>Typed values from a messy email or a receipt</p>
+    </div>
+    <div class="topbar__actions">
+      <a class="btn btn-ghost" href="https://theserverless.dev/contact" rel="noopener">Contact</a>
+      <button class="btn btn-ghost btn-icon" id="theme" type="button" aria-label="Switch colour theme">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9Z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <p class="shows"><span class="shows__k">What this proves</span> Reliable typed data from messy documents on Workers alone, with provenance and honest nulls. Clairic returns a value of the type you asked for, or null, plus the span and the confidence.</p>
+
+  <section class="can" aria-labelledby="can-title">
+    <h2 id="can-title">What to try</h2>
+    <ul>
+      <li>Paste the support email or upload the receipt photo.</li>
+      <li>Switch the invoice, support ticket, or insurance claim preset, or add a field.</li>
+      <li>Read the highlights, the nulls, the estimate band, and the forecast chart.</li>
+      <li>Compare the same text with a small instruct model.</li>
+      <li>Ask Clef to refund, escalate, or approve.</li>
+      <li>Run the sample inbox and accept or correct a row.</li>
+    </ul>
+  </section>
+  <section class="can" aria-labelledby="build-title">
+    <h2 id="build-title">What you could build</h2>
+    <ul>
+      <li>Invoice intake that files a total only when the span and the confidence agree.</li>
+      <li>Support triage that sends low-confidence or null fields to a person.</li>
+      <li>Claims processing that estimates a reserve and forecasts the next payouts.</li>
+    </ul>
+  </section>
+
+  <p class="strip" id="banner" role="status">Uploads stay in R2 for one day. The desk does not fetch URLs. Model text is untrusted and escaped.</p>
+
+  <main class="layout">
+    <section class="panel" aria-label="Document">
+      <p class="eyebrow">Document</p>
+      <div id="samples" class="samples"></div>
+      <label class="stack" for="state">Email, invoice, or claim
+        <textarea id="state" rows="8" maxlength="12000" placeholder="Paste a support email or an invoice…"></textarea>
+      </label>
+      <div class="files">
+        <label class="btn btn-ghost file">Upload a receipt or invoice
+          <input id="file" type="file" accept="image/png,image/jpeg,image/webp" />
+        </label>
+        <button class="btn btn-ghost" id="clear-image" type="button" hidden>Remove photo</button>
+      </div>
+      <p class="hint">PNG, JPEG, or WebP, up to 1.5 MB. One photo. Nothing is fetched from a link in the text.</p>
+      <div class="preview" id="preview" hidden></div>
+    </section>
+
+    <section class="panel" aria-label="Field schema">
+      <p class="eyebrow">Field schema</p>
+      <div id="presets" class="samples"></div>
+      <div id="fields"></div>
+      <button class="btn btn-ghost" id="add-field" type="button">Add a field</button>
+      <label class="check">
+        <input id="compare" type="checkbox" checked />
+        <span>Also extract with Llama 3.2 3B and compare</span>
+      </label>
+      <div class="submit-row">
+        <div id="turnstile-extract" class="turnstile"></div>
+        <button class="btn btn-primary" id="extract" type="button" disabled>Extract with Clairic</button>
+      </div>
+      <p class="hint" id="form-error" role="alert" hidden></p>
+    </section>
+
+    <section class="panel results" id="results" hidden aria-live="polite" aria-label="Highlighted results"></section>
+    <section class="panel" id="comparison" hidden aria-label="Model comparison"></section>
+    <section class="panel" id="decision" hidden aria-label="Clef decision">
+      <p class="eyebrow">Decision</p>
+      <p class="hint">Clef sees the typed values, not the raw document. It returns probabilities. The reason is the policy line for the winning option.</p>
+      <div id="decision-body"></div>
+      <div class="submit-row">
+        <div id="turnstile-decide" class="turnstile"></div>
+        <button class="btn btn-primary" id="decide" type="button" disabled>Decide with Clef</button>
+      </div>
+      <p class="hint" id="decide-error" role="alert" hidden></p>
+    </section>
+
+    <section class="panel" aria-label="Review queue">
+      <p class="eyebrow">Review queue</p>
+      <h2>Sample inbox</h2>
+      <p class="hint">Twelve bundled documents go through a Queue into D1. Accept a row, or correct a value. This does not fetch anything.</p>
+      <div class="submit-row">
+        <div id="turnstile-batch" class="turnstile"></div>
+        <button class="btn btn-primary" id="batch" type="button" disabled>Run the inbox</button>
+      </div>
+      <p class="hint" id="batch-note" role="status"></p>
+      <div id="review"></div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <p>
+      Clairic, Llama 3.2 3B, and Clef on Workers AI.
+      <a href="https://developers.cloudflare.com/workers-ai/models/clairic/" rel="noopener">Clairic model page</a>.
+      <a href="https://blog.cloudflare.com/clairic-extraction-model/" rel="noopener">Blog</a>.
+      <a href="https://theserverless.dev/contact" rel="noopener">Contact</a>.
+    </p>
+    <p class="hint" id="test-note" hidden>This page is using Cloudflare’s always-pass Turnstile test widget. Extractions are labelled.</p>
+  </footer>
+
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" defer></script>
+  <script type="module" src="./assets/app.js"></script>
+</body>
+</html>
