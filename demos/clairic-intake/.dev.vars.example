@@ -1,0 +1,6 @@
+# Cloudflare's published always-pass Turnstile test secret. Localhost only.
+# Production secrets are set with `wrangler secret put`, not this file.
+# Do not set ENVIRONMENT here. `bun run dev` takes ENVIRONMENT=local from
+# wrangler.local.jsonc. `bun run dev:live` leaves it empty so Clairic runs.
+TURNSTILE_SECRET=1x0000000000000000000000000000000AA
+IP_HASH_SECRET=dev-clairic-intake-ip-hash

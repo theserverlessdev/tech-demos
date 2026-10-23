@@ -95,7 +95,34 @@ const edgeBrowserFallbackSource = standalone("edge-browser");
 // The zone route 308s /demos/melody-auth* to the subdomain issuer. This source only redirects if that route is missing.
 const melodyAuthFallbackSource = standalone("melody-auth");
 
+// clairic-intake is a standalone Worker (ASSETS, AI, DB, BUCKET, INTAKE queue, extract/compare/decide/batch/upload/read/review limits, cron, Turnstile).
+// The zone route wins, and this source only redirects if that route is missing.
+const clairicIntakeFallbackSource = standalone("clairic-intake");
+
 export const demos: DemoEntry[] = [
+  {
+    slug: "clairic-intake",
+    title: "Clairic Intake",
+    description: "Paste a support email or a receipt. Clairic returns typed fields with spans, confidence, and honest nulls.",
+    demonstrates:
+      "Reliable typed data from messy documents on Workers alone, with provenance and honest nulls. @cf/cloudflare/clairic reads text or one image and returns a value per field, or null, plus source spans and confidence. A small instruct model runs beside it. Clef can refund, escalate, or approve from the typed values. A sample inbox runs through a Queue into D1.",
+    capabilities: [
+      "Paste the support email or upload the receipt photo",
+      "Switch the invoice, support ticket, or insurance claim preset, or add a field",
+      "Read highlights, nulls, an estimate band, and a forecast chart",
+      "Compare latency, schema-valid output, and estimated cost with Llama 3.2 3B",
+      "Ask Clef to refund, escalate, or approve",
+      "Run the sample inbox and accept or correct a row",
+    ],
+    useCases: [
+      "Invoice intake that files a total only when the span and the confidence agree",
+      "Support triage that sends low-confidence or null fields to a person",
+      "Claims processing that estimates a reserve and forecasts the next payouts",
+    ],
+    tags: ["workers-ai", "clairic", "d1", "r2", "queues", "turnstile"],
+    kind: "standalone",
+    source: clairicIntakeFallbackSource,
+  },
   {
     slug: "melody-auth",
     title: "Melody Auth",

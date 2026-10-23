@@ -1,0 +1,72 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tech-demos-clairic-intake",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none"
+  },
+  "ai": { "binding": "AI" },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "tech-demos-clairic-intake",
+      "database_id": "472d5bac-dea1-4710-90d9-7b5738178b68",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "BUCKET",
+      "bucket_name": "tech-demos-clairic-intake"
+      // Lifecycle is not a wrangler.jsonc field. Rule "intake-expiry" (intake/, 1 day) is set on the bucket.
+    }
+  ],
+  "queues": {
+    "producers": [{ "binding": "INTAKE", "queue": "tech-demos-clairic-intake" }],
+    "consumers": [
+      {
+        "queue": "tech-demos-clairic-intake",
+        "max_batch_size": 4,
+        "max_batch_timeout": 2,
+        "max_retries": 2,
+        "retry_delay": 30,
+        "dead_letter_queue": "tech-demos-clairic-intake-dlq"
+      }
+    ]
+  },
+  // 7501 and 7502 are partyserver. Next free ids in this repo are 7503–7509.
+  "ratelimits": [
+    { "name": "EXTRACT_LIMIT", "namespace_id": "7503", "simple": { "limit": 8, "period": 60 } },
+    { "name": "COMPARE_LIMIT", "namespace_id": "7504", "simple": { "limit": 4, "period": 60 } },
+    { "name": "DECIDE_LIMIT", "namespace_id": "7505", "simple": { "limit": 6, "period": 60 } },
+    { "name": "BATCH_LIMIT", "namespace_id": "7506", "simple": { "limit": 2, "period": 60 } },
+    { "name": "UPLOAD_LIMIT", "namespace_id": "7507", "simple": { "limit": 8, "period": 60 } },
+    { "name": "READ_LIMIT", "namespace_id": "7508", "simple": { "limit": 60, "period": 60 } },
+    { "name": "REVIEW_LIMIT", "namespace_id": "7509", "simple": { "limit": 30, "period": 60 } }
+  ],
+  "triggers": { "crons": ["17 * * * *"] },
+  "vars": {
+    "CLAIRIC_MODEL": "@cf/cloudflare/clairic",
+    "COMPARE_MODEL": "@cf/meta/llama-3.2-3b-instruct",
+    "CLEF_MODEL": "@cf/cloudflare/clef",
+    "ENVIRONMENT": "",
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFRUoj5qDpf7XyIW"
+  },
+  "secrets": { "required": ["TURNSTILE_SECRET", "IP_HASH_SECRET"] },
+  "routes": [
+    { "pattern": "tech-demos.theserverless.dev/demos/clairic-intake*", "zone_name": "theserverless.dev" },
+    { "pattern": "clairic-intake.tech-demos.theserverless.dev/*", "zone_name": "theserverless.dev" }
+  ],
+  "workers_dev": false,
+  "limits": { "cpu_ms": 5000 },
+  "observability": {
+    "enabled": true,
+    "logs": { "enabled": true, "head_sampling_rate": 1 },
+    "traces": { "enabled": true, "head_sampling_rate": 1 }
+  }
+}
