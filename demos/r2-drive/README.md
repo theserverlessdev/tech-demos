@@ -1,8 +1,35 @@
 # R2 Drive
 
-A short-lived sandbox for testing WebDAV with small documents. The pattern is a stateful file protocol running properly at the edge: Class 1 and Class 2 (including `LOCK` / `UNLOCK`) against an isolated R2 prefix, with lock state in a SQLite Durable Object. Only text, PDF and office documents are accepted. Drives are private and wiped within an hour. Misuse can be reported, and drives can be frozen.
+A short-lived sandbox for testing WebDAV with small documents. Class 1 and Class 2 (including `LOCK` / `UNLOCK`) run against an isolated R2 prefix, with lock state in a SQLite Durable Object. Only text, PDF and office documents are accepted. Drives are private and wiped within an hour. Misuse can be reported, and drives can be frozen.
 
-What you can try: verify an email, accept the notice, and mount the drive from macOS Finder, Windows Explorer, rclone, or Obsidian Remotely Save. The page also uploads, renames, moves, deletes, and previews text and PDF, and it shows the lock owner, timeout, and depth on a live request log.
+What you can try: verify an email, accept the notice, and mount the drive from macOS Finder, Windows Explorer, rclone, or Obsidian Remotely Save. The page also uploads, renames, deletes, and previews text and PDF, and it shows the lock owner, timeout, and depth on a live request log.
+
+```mermaid
+sequenceDiagram
+  participant Browser
+  participant Worker
+  participant Turnstile
+  participant Email
+  participant DO as DriveObject
+  participant D1
+  participant R2
+  Browser->>Worker: POST /api/mint
+  Worker->>Turnstile: siteverify
+  Turnstile-->>Worker: hostname check
+  Worker->>Email: magic link
+  Browser->>Worker: POST /api/verify
+  Worker->>D1: insert drive, count the daily mint
+  Worker->>DO: schedule(expiresAt)
+  Browser->>Worker: WebDAV
+  Worker->>Worker: credential, per-drive limit, global DAV ceiling
+  Worker->>DO: authed request
+  DO->>DO: serialise the write, reserve quota
+  DO->>R2: put or delete
+  DO->>D1: audit row, usage when it changed
+  DO->>R2: alarm wipe at expiresAt
+  Worker->>R2: cron wipe of expired drives
+  Note over R2: lifecycle.json deletes drives/ after one day
+```
 
 What you could build with the same pattern: a personal Dropbox-style drive, an Obsidian or Zotero sync target, or a backup destination for rclone.
 
@@ -40,21 +67,25 @@ Nothing here is deployed. Replace these before a real deploy:
 | Audit | secrets `AUDIT_KEY` and `AUDIT_HMAC_KEY`, each 32 bytes hex |
 | Admin | secret `ADMIN_TOKEN` |
 
-`MINT_ENABLED` defaults to off in code (`envMintEnabled` is true only for the string `"true"`). `wrangler.jsonc` sets it to `"true"` for this demo's deploy config. An admin can still turn minting off at runtime.
+`MINT_ENABLED` is `"false"` in `wrangler.jsonc`. `envMintEnabled` is true only for the string `"true"`. Local `bun run dev` passes `--var MINT_ENABLED:true`. Turn it on in the deploy environment when the placeholders below are real. An admin can still turn minting off at runtime, and cannot turn it on while the env value is not `"true"`.
 
-Apply the R2 backstop after the bucket exists:
+Deploy applies the R2 backstop after the Worker upload. Replace the bucket name first:
 
 ```sh
-npx wrangler r2 bucket lifecycle set r2-drive-placeholder --file lifecycle.json
+bun run --filter @tech-demos/r2-drive deploy
 ```
+
+That runs `bunx wrangler r2 bucket lifecycle set r2-drive-placeholder --file lifecycle.json`. The same command is `bun run --filter @tech-demos/r2-drive lifecycle`.
 
 The rule expires objects under `drives/` after one day. R2 lifecycle is day-scale, so the hour is enforced by the request path, the Durable Object alarm, and the `*/5` cron. The lifecycle rule is the backstop if those miss. Bytes can linger until the daily rule runs; they are not readable without the dead credential.
 
 ## Caps and content
 
-25 MB per drive, 5 MB per file, 200 objects, one hour. `PUT` walks one list in `src/shared/content-policy.ts` and checks magic bytes. Text, Markdown, JSON, CSV, PDF, and small Office documents are allowed. Images, video, audio, archives (zip, 7z, rar, tar, gz), and encrypted or unknown binaries are rejected with 415. A Word file is a zip; only an Office package with no media parts gets through.
+25 MB per drive, 5 MB per file, 200 objects, one hour. `PUT` walks one list in `src/shared/content-policy.ts`. Text, Markdown, JSON, CSV, and PDF are allowed. Office files are allowed only when every ZIP part is `.xml` or `.rels`, inflates under 1 MB, and is UTF-8 XML. Images, video, audio, archives, OLE, and encrypted or unknown binaries are rejected with 415. Finder's `._*` and `.DS_Store` files are stored only when they are under 64 KB, so a macOS mount can write them.
 
-The disposable-domain check uses a vendored copy of [disposable-email-domains](https://github.com/disposable-email-domains/disposable-email-domains) (`disposable_email_blocklist.conf`, CC0). It is a **soft signal**: the list is incomplete and it can mis-label a real domain. Matching is exact, so a subdomain of a listed domain is not implied.
+A PDF must end with `%%EOF` and must not contain an archive, executable, or media signature, or `/EmbeddedFile`, `/JavaScript`, `/JS`, `/Launch`, or `/RichMedia`. Flate streams inside a PDF can still carry bytes that do not show those signatures in the clear. That is the remaining gap.
+
+The disposable-domain check uses a vendored copy of [disposable-email-domains](https://github.com/disposable-email-domains/disposable-email-domains) (`disposable_email_blocklist.conf`, CC0) plus a local denylist that includes `lomvic.com` (the temp-email demo). It is a **soft signal**: the list is incomplete and it can mis-label a real domain. A parent domain match counts, so `a.mailinator.com` and `email.lomvic.com` are rejected.
 
 ## Litmus
 
@@ -62,4 +93,4 @@ The disposable-domain check uses a vendored copy of [disposable-email-domains](h
 
 ## Mount
 
-After verify, the page prints snippets for Finder, `net use`, rclone, and Obsidian. The username is the drive id. The password is shown once. There is no public URL for a file.
+After verify, the page prints snippets for Finder, `net use`, rclone, and Obsidian. The username is the drive id. The password is shown once on that page and is not saved in the browser. There is no public URL for a file. `/demos/r2-drive*` on the shared host redirects to `https://r2-drive.tech-demos.theserverless.dev` with 308. The session cookie is `__Host-r2drive_session`.

@@ -1,3 +1,5 @@
+import { FROZEN_KEEP_MS } from "../shared/constants";
+
 export type DriveStatus = "active" | "frozen" | "wiped";
 
 export type DriveRow = {
@@ -43,7 +45,7 @@ export type ObjectRow = {
 export interface DriveRepo {
   mintKilled(): Promise<boolean>;
   setMintKilled(killed: boolean): Promise<void>;
-  tryIncrementDaily(day: string, cap: number): Promise<boolean>;
+  tryIncrementDaily(kind: "mint" | "email", day: string, cap: number): Promise<boolean>;
   insertVerification(row: VerificationRow): Promise<void>;
   deleteVerification(tokenHash: string): Promise<void>;
   takeVerification(tokenHash: string, now: number): Promise<VerificationRow | null>;
@@ -81,10 +83,11 @@ export class MemoryRepo implements DriveRepo {
   async setMintKilled(killed: boolean): Promise<void> {
     this.killed = killed;
   }
-  async tryIncrementDaily(day: string, cap: number): Promise<boolean> {
-    const count = this.daily.get(day) ?? 0;
+  async tryIncrementDaily(kind: "mint" | "email", day: string, cap: number): Promise<boolean> {
+    const key = `${kind}:${day}`;
+    const count = this.daily.get(key) ?? 0;
     if (count >= cap) return false;
-    this.daily.set(day, count + 1);
+    this.daily.set(key, count + 1);
     return true;
   }
   async insertVerification(row: VerificationRow): Promise<void> {
@@ -107,10 +110,10 @@ export class MemoryRepo implements DriveRepo {
     return null;
   }
   async findLiveByEmail(emailHmac: string, now: number): Promise<DriveRow | null> {
-    return this.drives.find((row) => row.emailHmac === emailHmac && row.status !== "wiped" && row.expiresAt > now) ?? null;
+    return this.drives.find((row) => row.emailHmac === emailHmac && holdsSlot(row, now)) ?? null;
   }
   async findExpiredByEmail(emailHmac: string, now: number): Promise<DriveRow | null> {
-    return this.drives.find((row) => row.emailHmac === emailHmac && row.status !== "wiped" && row.expiresAt <= now) ?? null;
+    return this.drives.find((row) => row.emailHmac === emailHmac && row.status === "active" && row.expiresAt <= now) ?? null;
   }
   async insertDrive(row: DriveRow): Promise<void> {
     if (this.drives.some((item) => item.emailHmac === row.emailHmac && item.status !== "wiped")) {
@@ -154,7 +157,7 @@ export class MemoryRepo implements DriveRepo {
     return this.objects.filter((row) => row.driveId === driveId);
   }
   async listExpired(now: number): Promise<DriveRow[]> {
-    return this.drives.filter((row) => row.status !== "wiped" && row.expiresAt <= now);
+    return this.drives.filter((row) => dueForWipe(row, now));
   }
   async purge(before: number): Promise<void> {
     const ids = new Set(this.drives.filter((row) => row.wipedAt !== null && row.wipedAt < before).map((row) => row.id));
@@ -193,10 +196,11 @@ export class D1Repo implements DriveRepo {
       .bind(killed ? "1" : "0")
       .run();
   }
-  async tryIncrementDaily(day: string, cap: number): Promise<boolean> {
+  async tryIncrementDaily(kind: "mint" | "email", day: string, cap: number): Promise<boolean> {
+    const table = kind === "mint" ? "mint_daily" : "email_daily";
     const row = await this.db
       .prepare(
-        `INSERT INTO mint_daily (day, count) VALUES (?1, 1)
+        `INSERT INTO ${table} (day, count) VALUES (?1, 1)
          ON CONFLICT(day) DO UPDATE SET count = count + 1 WHERE count < ?2
          RETURNING count`,
       )
@@ -237,14 +241,19 @@ export class D1Repo implements DriveRepo {
   }
   async findLiveByEmail(emailHmac: string, now: number): Promise<DriveRow | null> {
     const row = await this.db
-      .prepare("SELECT * FROM drives WHERE email_hmac = ?1 AND status != 'wiped' AND expires_at > ?2 LIMIT 1")
-      .bind(emailHmac, now)
+      .prepare(
+        `SELECT * FROM drives WHERE email_hmac = ?1 AND (
+           (status = 'active' AND expires_at > ?2) OR
+           (status = 'frozen' AND frozen_at IS NOT NULL AND frozen_at + ?3 > ?2)
+         ) LIMIT 1`,
+      )
+      .bind(emailHmac, now, FROZEN_KEEP_MS)
       .first<Record<string, D1Value>>();
     return row ? mapDrive(row) : null;
   }
   async findExpiredByEmail(emailHmac: string, now: number): Promise<DriveRow | null> {
     const row = await this.db
-      .prepare("SELECT * FROM drives WHERE email_hmac = ?1 AND status != 'wiped' AND expires_at <= ?2 LIMIT 1")
+      .prepare("SELECT * FROM drives WHERE email_hmac = ?1 AND status = 'active' AND expires_at <= ?2 LIMIT 1")
       .bind(emailHmac, now)
       .first<Record<string, D1Value>>();
     return row ? mapDrive(row) : null;
@@ -316,7 +325,14 @@ export class D1Repo implements DriveRepo {
     return result.results.map(mapObject);
   }
   async listExpired(now: number): Promise<DriveRow[]> {
-    const result = await this.db.prepare("SELECT * FROM drives WHERE status != 'wiped' AND expires_at <= ?1").bind(now).all<Record<string, D1Value>>();
+    const result = await this.db
+      .prepare(
+        `SELECT * FROM drives WHERE
+           (status = 'active' AND expires_at <= ?1) OR
+           (status = 'frozen' AND frozen_at IS NOT NULL AND frozen_at <= ?2)`,
+      )
+      .bind(now, now - FROZEN_KEEP_MS)
+      .all<Record<string, D1Value>>();
     return result.results.map(mapDrive);
   }
   async purge(before: number): Promise<void> {
@@ -357,6 +373,18 @@ function num(value: D1Value): number {
 
 function str(value: D1Value): string {
   return typeof value === "string" ? value : "";
+}
+
+function holdsSlot(row: DriveRow, now: number): boolean {
+  if (row.status === "active") return row.expiresAt > now;
+  if (row.status === "frozen") return row.frozenAt !== null && row.frozenAt + FROZEN_KEEP_MS > now;
+  return false;
+}
+
+function dueForWipe(row: DriveRow, now: number): boolean {
+  if (row.status === "active") return row.expiresAt <= now;
+  if (row.status === "frozen") return row.frozenAt !== null && row.frozenAt + FROZEN_KEEP_MS <= now;
+  return false;
 }
 
 function mapDrive(row: Record<string, D1Value>): DriveRow {

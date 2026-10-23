@@ -47,7 +47,7 @@
         </article>
         <article>
           <h2>What you can try</h2>
-          <p>Verify an email, accept the notice, and mount the drive from macOS, Windows, rclone, or Obsidian. Or use the browser to upload, rename, move, delete, and preview a text or PDF file.</p>
+          <p>Verify an email, accept the notice, and mount the drive from macOS, Windows, rclone, or Obsidian. Or use the browser to upload, rename, delete, and preview. Allowed uploads are text, Markdown, JSON, CSV, PDF, and Office documents whose parts are XML.</p>
         </article>
         <article>
           <h2>What you could build</h2>
@@ -89,9 +89,9 @@
         </div>
         <p class="hint" id="expires"></p>
         <div id="secret" hidden>
-          <label for="password">Password, shown once</label>
+          <label for="password">Password, shown once on this page</label>
           <input id="password" readonly />
-          <p class="hint">Copy it into your WebDAV client now. The browser keeps its own session cookie.</p>
+          <p class="hint">Copy it now. It is not saved in this browser. A refresh keeps the file list via the session cookie and drops the password.</p>
         </div>
         <h3>Mount</h3>
         <div class="snippets" id="snippets"></div>

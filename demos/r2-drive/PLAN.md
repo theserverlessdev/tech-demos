@@ -29,7 +29,7 @@ Show that a stateful file protocol (WebDAV Class 1 and Class 2, including LOCK a
 ## Stack
 
 - Workers + Static Assets + R2 + D1 + SQLite Durable Objects + Rate Limiting + Turnstile + Email Sending: the protocol, the locks, the audit log, and the magic link all fit on Workers Paid.
-- `@xmldom/xmldom` 0.8.11: same XML parser as upstream, so PROPFIND and LOCK bodies stay compatible.
+- `@xmldom/xmldom` 0.9.12: same XML parser family as upstream, so PROPFIND and LOCK bodies stay compatible. 0.9 reports parse errors through `onError` instead of an error-handler object.
 - Disposable domains vendored from disposable-email-domains (CC0): a soft signal, not a guarantee.
 - Bun test with in-memory bucket and lock store: the protocol tests do not need a live account.
 

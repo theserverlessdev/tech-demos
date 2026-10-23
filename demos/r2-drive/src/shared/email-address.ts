@@ -1,5 +1,8 @@
 import { DISPOSABLE_LIST } from "./disposable-list";
 
+/** Domains this repo hands out, plus anything that should never receive a magic link. */
+const LOCAL_DENY = ["lomvic.com"];
+
 let disposable: Set<string> | null = null;
 
 export function disposableDomains(): Set<string> {
@@ -37,8 +40,17 @@ export function normalizeEmail(raw: string): string | null {
   return `${local}@${domain}`;
 }
 
-/** Exact domain match against the vendored list. Subdomains are not implied. */
+/**
+ * The vendored list plus `LOCAL_DENY`. A hit on the domain or any parent
+ * (a.mailinator.com, email.lomvic.com) is enough. The list is still a soft signal.
+ */
 export function isDisposableEmail(normalized: string): boolean {
-  const domain = normalized.slice(normalized.indexOf("@") + 1);
-  return disposableDomains().has(domain);
+  const domain = normalized.slice(normalized.lastIndexOf("@") + 1);
+  const listed = disposableDomains();
+  const labels = domain.split(".");
+  for (let i = 0; i < labels.length - 1; i++) {
+    const suffix = labels.slice(i).join(".");
+    if (listed.has(suffix) || LOCAL_DENY.includes(suffix)) return true;
+  }
+  return false;
 }

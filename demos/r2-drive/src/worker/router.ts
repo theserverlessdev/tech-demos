@@ -1,33 +1,36 @@
-import { AUP_TEXT, AUP_VERSION, DAILY_MINT_CAP, DRIVE_TTL_MS, MAX_DRIVE_BYTES, MAX_FILE_BYTES, MAX_FILES, RATE_LIMIT_IDS, VERIFY_TTL_MS, type LimitName } from "../shared/constants";
+import { AUP_TEXT, AUP_VERSION, DAILY_EMAIL_CAP, DAILY_MINT_CAP, DRIVE_TTL_MS, MAX_DRIVE_BYTES, MAX_FILE_BYTES, MAX_FILES, VERIFY_TTL_MS, type LimitName } from "../shared/constants";
 import { isDisposableEmail, normalizeEmail } from "../shared/email-address";
 import { LITMUS_RESULTS } from "../shared/litmus-results";
 import { basePrefix, splitDavPath, type DavTarget } from "../shared/paths";
 import type { Caps, LogEvent, PublicLock, SessionView } from "../shared/types";
-import { hashSession, newPasswordRecord, parseBasic, passwordMatches, readCookie, sessionCookie } from "./auth";
+import { SESSION_COOKIE, hashSession, newPasswordRecord, parseBasic, passwordMatches, readCookie, sessionCookie } from "./auth";
 import { deletePrefix, type DavBucket } from "./bucket";
 import { bytesToB64Url, bytesToHex, decryptString, encryptString, hexToBytes, hmacHex, randomBytes, sha256Hex, timingSafeEqual, tokensMatch } from "./crypto";
+import { withDavCsp } from "./drive-session";
 import { clientIp, clientNetwork, rateLimitIp } from "./ip";
-import { handleWebdav } from "./webdav";
-import type { LockRecord, LockStore } from "./locks";
-import { GuardedBucket } from "./quota";
-import { PrefixBucket } from "./bucket";
+import type { LockRecord } from "./locks";
 import type { DriveRepo, DriveRow } from "./repo";
 
 const encoder = new TextEncoder();
 const WRITE_METHODS = new Set(["PUT", "DELETE", "MKCOL", "MOVE", "COPY", "LOCK", "UNLOCK", "PROPPATCH"]);
 
+export type DriveControl = {
+  list(now: number): Promise<LockRecord[]>;
+  wipe(now: number): Promise<void>;
+};
+
 export type Deps = {
   repo: DriveRepo;
   bucket: DavBucket;
-  locksFor: (driveId: string) => LockStore;
+  locksFor: (driveId: string) => DriveControl;
   limit: (name: LimitName, key: string) => Promise<boolean>;
   verifyTurnstile: (token: string, request: Request) => Promise<boolean>;
   sendEmail: (message: { to: string; subject: string; text: string }) => Promise<void>;
   now: () => number;
   mintEnabledEnv: boolean;
   adminToken: string;
-  auditKey: CryptoKey;
-  auditHmac: CryptoKey;
+  auditKey: CryptoKey | null;
+  auditHmac: CryptoKey | null;
   mailFrom: string;
   publicOrigin: string;
   devOutbox: boolean;
@@ -36,10 +39,22 @@ export type Deps = {
   recent: (driveId: string) => LogEvent[] | Promise<LogEvent[]>;
   note: (driveId: string, event: LogEvent) => void;
   forwardDav?: (request: Request, drive: DriveRow, target: DavTarget) => Promise<Response>;
+  serveDav?: (request: Request, drive: DriveRow, target: DavTarget, now: number) => Promise<Response>;
   openSocket?: (request: Request, driveId: string) => Promise<Response>;
   scheduleWipe?: (driveId: string, expiresAt: number) => Promise<void>;
   assets?: (request: Request, path: string) => Promise<Response>;
 };
+
+const HUB_PREFIX = "/demos/r2-drive";
+const DEMO_ORIGIN = "https://r2-drive.tech-demos.theserverless.dev";
+
+/** Hub and workers.dev paths on the shared origin go to this demo's host. */
+export function hubRedirectTarget(url: URL): string | null {
+  const path = url.pathname;
+  if (path !== HUB_PREFIX && !path.startsWith(`${HUB_PREFIX}/`)) return null;
+  const rest = path.slice(HUB_PREFIX.length) || "/";
+  return `${DEMO_ORIGIN}${rest}${url.search}`;
+}
 
 /** Anything other than the string "true" leaves minting off. */
 export function envMintEnabled(value: string | undefined): boolean {
@@ -68,6 +83,8 @@ export function caps(): Caps {
 
 export async function handleRequest(request: Request, deps: Deps): Promise<Response> {
   const url = new URL(request.url);
+  const redirect = hubRedirectTarget(url);
+  if (redirect) return Response.redirect(redirect, 308);
   const path = routePath(url.pathname);
   const name = limitName(request.method, path);
   const allowed = await deps.limit(name, name === "MINT_IP" ? clientNetwork(clientIp(request)) : rateLimitIp(clientIp(request)));
@@ -89,7 +106,6 @@ export async function handleRequest(request: Request, deps: Deps): Promise<Respo
         aup: AUP_TEXT,
         aupVersion: AUP_VERSION,
         caps: caps(),
-        rateLimits: RATE_LIMIT_IDS,
       }),
     );
   }
@@ -113,8 +129,8 @@ export async function handleRequest(request: Request, deps: Deps): Promise<Respo
 }
 
 export async function wipeDrive(deps: Deps, drive: DriveRow, now: number): Promise<void> {
+  await deps.locksFor(drive.id).wipe(now);
   await deletePrefix(deps.bucket, `drives/${drive.id}/`);
-  await deps.locksFor(drive.id).clear();
   await deps.repo.markWiped(drive.id, now);
 }
 
@@ -127,8 +143,12 @@ export async function wipeExpired(deps: Deps): Promise<number> {
 }
 
 async function handleDav(request: Request, deps: Deps, target: DavTarget): Promise<Response> {
+  return withDavCsp(await handleDavInner(request, deps, target));
+}
+
+async function handleDavInner(request: Request, deps: Deps, target: DavTarget): Promise<Response> {
   const basic = parseBasic(request.headers.get("authorization"));
-  const cookie = readCookie(request.headers.get("cookie"), "r2drive_session");
+  const cookie = readCookie(request.headers.get("cookie"), SESSION_COOKIE);
   if (!basic && !cookie) return unauthorized();
   const drive = await deps.repo.getDrive(target.driveId);
   if (basic) {
@@ -156,33 +176,18 @@ async function handleDav(request: Request, deps: Deps, target: DavTarget): Promi
     await wipeDrive(deps, drive, now);
     return unauthorized();
   }
+  if (!(await deps.limit("DAV_DRIVE", drive.id)) || !(await deps.limit("DAV_GLOBAL", "global"))) {
+    return error(429, "rate_limited", "Too many requests. Wait a minute.");
+  }
   if (deps.forwardDav) return deps.forwardDav(request, drive, target);
-  const quota = { bytes: drive.bytesUsed, files: drive.fileCount };
-  const guarded = new GuardedBucket(new PrefixBucket(deps.bucket, `drives/${drive.id}/`), quota, async (info) => {
-    await deps.repo.addObject({
-      driveId: drive.id,
-      key: `drives/${drive.id}/${info.key}`,
-      sha256: info.sha256,
-      size: info.size,
-      firstSeen: deps.now(),
-    });
-  });
-  const response = await handleWebdav(request, {
-    bucket: guarded,
-    locks: deps.locksFor(drive.id),
-    now,
-    mountPath: target.mountPath,
-    key: target.key,
-  });
-  await deps.repo.updateUsage(drive.id, quota.bytes, quota.files);
-  drive.bytesUsed = quota.bytes;
-  drive.fileCount = quota.files;
-  deps.note(drive.id, { at: now, method: request.method, path: target.key || "/", status: response.status });
-  return response;
+  if (!deps.serveDav) return error(500, "no_drive", "The drive is not available in this process.");
+  return deps.serveDav(request, drive, target, now);
 }
 
 async function mint(request: Request, deps: Deps): Promise<Response> {
-  if (!deps.configured || !deps.mailFrom) return error(503, "not_configured", "This demo is not configured.");
+  const keys = secrets(deps);
+  if (keys instanceof Response) return keys;
+  if (!deps.mailFrom) return error(503, "not_configured", "This demo is not configured.");
   const body = await readJson(request);
   if (body instanceof Response) return body;
   if (body.aup !== true) return error(400, "aup_required", "Accept the notice to mint a drive.");
@@ -196,9 +201,9 @@ async function mint(request: Request, deps: Deps): Promise<Response> {
   }
   if (!resolveMintEnabled(deps.mintEnabledEnv, await deps.repo.mintKilled())) return error(403, "mint_disabled", "Minting is turned off.");
   const ip = clientIp(request);
-  const emailHmac = await hmacHex(deps.auditHmac, email);
-  const networkHmac = await hmacHex(deps.auditHmac, clientNetwork(ip));
-  const ipHmac = await hmacHex(deps.auditHmac, rateLimitIp(ip));
+  const emailHmac = await hmacHex(keys.auditHmac, email);
+  const networkHmac = await hmacHex(keys.auditHmac, clientNetwork(ip));
+  const ipHmac = await hmacHex(keys.auditHmac, rateLimitIp(ip));
   if ((await deps.repo.blocked("email", emailHmac)) || (await deps.repo.blocked("network", networkHmac))) {
     return error(403, "blocked", "This email or network is blocked.");
   }
@@ -206,7 +211,9 @@ async function mint(request: Request, deps: Deps): Promise<Response> {
     return error(429, "rate_limited", "Too many requests. Wait a minute.");
   }
   const day = new Date(deps.now()).toISOString().slice(0, 10);
-  if (!(await deps.repo.tryIncrementDaily(day, DAILY_MINT_CAP))) return error(429, "daily_cap", "The demo has reached its mint cap for today.");
+  if (!(await deps.repo.tryIncrementDaily("email", day, DAILY_EMAIL_CAP))) {
+    return error(429, "daily_email_cap", "The demo has reached its email cap for today.");
+  }
   const expired = await deps.repo.findExpiredByEmail(emailHmac, deps.now());
   if (expired) await wipeDrive(deps, expired, deps.now());
   if (await deps.repo.findLiveByEmail(emailHmac, deps.now())) {
@@ -218,7 +225,7 @@ async function mint(request: Request, deps: Deps): Promise<Response> {
   await deps.repo.insertVerification({
     tokenHash,
     emailHmac,
-    emailEnc: await encryptString(deps.auditKey, email),
+    emailEnc: await encryptString(keys.auditKey, email),
     ipHmac,
     networkHmac,
     createdAt: now,
@@ -242,13 +249,18 @@ async function mint(request: Request, deps: Deps): Promise<Response> {
 }
 
 async function verify(request: Request, deps: Deps, url: URL): Promise<Response> {
-  if (!deps.configured) return error(503, "not_configured", "This demo is not configured.");
+  const keys = secrets(deps);
+  if (keys instanceof Response) return keys;
   const body = await readJson(request);
   if (body instanceof Response) return body;
   const token = typeof body.token === "string" ? body.token : "";
   if (!token || token.length > 200) return error(400, "bad_token", "That link is invalid or expired.");
   const row = await deps.repo.takeVerification(await sha256Hex(encoder.encode(token)), deps.now());
   if (!row) return error(400, "bad_token", "That link is invalid or expired.");
+  const day = new Date(deps.now()).toISOString().slice(0, 10);
+  if (!(await deps.repo.tryIncrementDaily("mint", day, DAILY_MINT_CAP))) {
+    return error(429, "daily_cap", "The demo has reached its mint cap for today.");
+  }
   if (!resolveMintEnabled(deps.mintEnabledEnv, await deps.repo.mintKilled())) return error(403, "mint_disabled", "Minting is turned off.");
   if ((await deps.repo.blocked("email", row.emailHmac)) || (await deps.repo.blocked("network", row.networkHmac))) {
     return error(403, "blocked", "This email or network is blocked.");
@@ -328,6 +340,8 @@ async function handleLive(request: Request, deps: Deps, url: URL): Promise<Respo
 }
 
 async function report(request: Request, deps: Deps): Promise<Response> {
+  const keys = secrets(deps);
+  if (keys instanceof Response) return keys;
   const body = await readJson(request);
   if (body instanceof Response) return body;
   if (!(await deps.verifyTurnstile(typeof body.turnstileToken === "string" ? body.turnstileToken : "", request))) {
@@ -346,13 +360,13 @@ async function report(request: Request, deps: Deps): Promise<Response> {
   let contactEnc: string | null = null;
   if (typeof body.contact === "string" && body.contact.trim()) {
     const contact = normalizeEmail(body.contact);
-    if (contact) contactEnc = await encryptString(deps.auditKey, contact);
+    if (contact) contactEnc = await encryptString(keys.auditKey, contact);
   }
   await deps.repo.addReport({
     driveId: drive?.id ?? null,
     reason,
     contactEnc,
-    ipHmac: await hmacHex(deps.auditHmac, rateLimitIp(clientIp(request))),
+    ipHmac: await hmacHex(keys.auditHmac, rateLimitIp(clientIp(request))),
     createdAt: deps.now(),
   });
   return json({ ok: true, frozen }, 202);
@@ -378,6 +392,8 @@ function devOutboxOpen(request: Request, deps: Deps, url: URL): boolean {
 
 async function admin(request: Request, deps: Deps, path: string): Promise<Response> {
   if (request.method !== "POST") return error(405, "method", "Method not allowed.");
+  const keys = secrets(deps);
+  if (keys instanceof Response) return keys;
   if (!deps.adminToken) return error(503, "not_configured", "The admin token is not configured.");
   const header = request.headers.get("authorization") ?? "";
   const token = header.startsWith("Bearer ") ? header.slice("Bearer ".length) : "";
@@ -394,17 +410,24 @@ async function admin(request: Request, deps: Deps, path: string): Promise<Respon
     const ok = await deps.repo.freeze(driveId, deps.now());
     return json({ ok });
   }
+  if (path === "/api/admin/release") {
+    const driveId = typeof body.driveId === "string" ? body.driveId : "";
+    const drive = await deps.repo.getDrive(driveId);
+    if (!drive || drive.status === "wiped") return json({ ok: false });
+    await wipeDrive(deps, drive, deps.now());
+    return json({ ok: true });
+  }
   if (path === "/api/admin/block" || path === "/api/admin/unblock") {
     const email = typeof body.email === "string" ? normalizeEmail(body.email) : null;
     const ip = typeof body.ip === "string" ? body.ip : "";
     if (!email && !ip) return error(400, "bad_block", "Provide an email or an IP address.");
     if (email) {
-      const hmac = await hmacHex(deps.auditHmac, email);
+      const hmac = await hmacHex(keys.auditHmac, email);
       if (path.endsWith("/block")) await deps.repo.block("email", hmac, "admin", deps.now());
       else await deps.repo.unblock("email", hmac);
     }
     if (ip) {
-      const hmac = await hmacHex(deps.auditHmac, clientNetwork(ip));
+      const hmac = await hmacHex(keys.auditHmac, clientNetwork(ip));
       if (path.endsWith("/block")) await deps.repo.block("network", hmac, "admin", deps.now());
       else await deps.repo.unblock("network", hmac);
     }
@@ -416,7 +439,7 @@ async function admin(request: Request, deps: Deps, path: string): Promise<Respon
     if (!drive) return error(404, "not_found", "No drive with that id.");
     return json({
       driveId: drive.id,
-      email: await decryptString(deps.auditKey, drive.emailEnc),
+      email: await decryptString(keys.auditKey, drive.emailEnc),
       createdAt: drive.createdAt,
       expiresAt: drive.expiresAt,
       status: drive.status,
@@ -427,7 +450,7 @@ async function admin(request: Request, deps: Deps, path: string): Promise<Respon
 }
 
 async function sessionDrive(request: Request, deps: Deps): Promise<DriveRow | Response> {
-  const cookie = readCookie(request.headers.get("cookie"), "r2drive_session");
+  const cookie = readCookie(request.headers.get("cookie"), SESSION_COOKIE);
   if (!cookie) return error(401, "unauthorized", "Unauthorized.");
   const presentedHex = await hashSession(cookie);
   const presented = hexToBytes(presentedHex);
@@ -520,15 +543,49 @@ function json(data: unknown, status = 200, extra?: Headers): Response {
   return new Response(JSON.stringify(data), { status, headers });
 }
 
+async function readCapped(request: Request, max: number): Promise<Uint8Array | Response> {
+  const declared = request.headers.get("content-length");
+  if (declared !== null) {
+    const size = Number(declared);
+    if (!Number.isFinite(size) || size < 0) return error(400, "bad_json", "Expected a JSON object.");
+    if (size > max) return error(413, "too_large", "The request body is too large.");
+  }
+  if (!request.body) return new Uint8Array();
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const step = await reader.read();
+    if (step.done) break;
+    total += step.value.byteLength;
+    if (total > max) {
+      await reader.cancel();
+      return error(413, "too_large", "The request body is too large.");
+    }
+    chunks.push(step.value);
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
+}
+
 function error(status: number, code: string, message: string): Response {
   return json({ error: { code, message } }, status);
 }
 
+function secrets(deps: Deps): { auditKey: CryptoKey; auditHmac: CryptoKey } | Response {
+  if (!deps.configured || !deps.auditKey || !deps.auditHmac) return error(503, "not_configured", "This demo is not configured.");
+  return { auditKey: deps.auditKey, auditHmac: deps.auditHmac };
+}
+
 async function readJson(request: Request): Promise<Record<string, unknown> | Response> {
-  const declared = request.headers.get("content-length");
-  if (declared && Number(declared) > 32 * 1024) return error(413, "too_large", "The request body is too large.");
-  const text = await request.text();
-  if (text.length > 32 * 1024) return error(413, "too_large", "The request body is too large.");
+  const limited = await readCapped(request, 32 * 1024);
+  if (limited instanceof Response) return limited;
+  const text = new TextDecoder().decode(limited);
   try {
     const parsed: unknown = JSON.parse(text || "{}");
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return error(400, "bad_json", "Expected a JSON object.");

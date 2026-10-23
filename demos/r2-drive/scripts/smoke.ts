@@ -82,6 +82,8 @@ if (drive.driveId && drive.password) {
     body: png,
   });
   check("png rejected", rejected.response.status === 415, rejected.text);
+  const authed = await call(`/dav/${drive.driveId}/note.txt`, { headers: { authorization: auth } });
+  check("authenticated get", authed.response.status === 200 && authed.text === "hello from smoke", authed.text);
   const open = await call(`/dav/${drive.driveId}/note.txt`);
   check("file stays private", open.response.status === 401 && !open.text.includes("hello"), open.text);
 }

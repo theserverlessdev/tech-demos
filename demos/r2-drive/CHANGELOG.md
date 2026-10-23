@@ -18,10 +18,13 @@ Port of [abersheeran/r2-webdav](https://github.com/abersheeran/r2-webdav) (Apach
 - No CORS. Responses send `Cache-Control: private, no-store`. There is no anonymous read and no share link.
 - `creationdate` is ISO 8601. `getlastmodified` stays RFC 1123. `MS-Author-Via: DAV` is set for Explorer.
 - `COPY` and `MOVE` run sequentially. `Destination` must be the same origin and the same drive mount.
-- `PUT` replaces the client `Content-Type` with the sniffed type. Office downloads are attachments. Text, JSON, and PDF are inline.
-- Quotas: 5 MB per file, 25 MB per drive, 200 objects, 1 hour TTL.
+- `PUT` replaces the client `Content-Type` with the sniffed type. Office and PDF downloads are attachments. Text and JSON are inline.
+- Quotas: 5 MB per file, 25 MB per drive, 200 objects, 1 hour TTL. The counter is an atomic SQLite update on the Durable Object, and writes for one drive run one at a time.
 - Content allow-list by magic bytes (`src/shared/content-policy.ts`).
 - Minting requires Turnstile, an accepted use notice, and a magic link from Cloudflare Email Sending. One live drive per normalised email.
 - D1 keeps an audit row (HMAC email, encrypted email, IP hash, network hash, object key, sha256, size) for 30 days after the wipe.
 - Admin token can freeze a drive or disable minting. `MINT_ENABLED` is off unless the env value is the string `true`.
-- The litmus page shows a suite only when `src/shared/litmus-results.ts` contains that suite's raw output. The recorded run is litmus 0.13 on 2026-10-23: basic 16/16 (one fragment warning), copymove 13/13, props 30/30, locks 41/41. The `http` suite was not run.
+- The litmus page shows a suite only when `src/shared/litmus-results.ts` contains that suite's raw output.
+- `LICENSE` line 1 matches upstream `abersheeran/r2-webdav` (`Copyright 2026 abersheeran`).
+
+The quota, content checks, and hosting notes in `SAFETY.md` describe the current behaviour, including the PDF Flate-stream gap and the 30-day freeze retention.

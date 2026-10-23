@@ -8,9 +8,22 @@ export const DRIVE_TTL_MS = 60 * 60 * 1000;
 export const VERIFY_TTL_MS = 15 * 60 * 1000;
 export const AUDIT_KEEP_MS = 30 * 24 * 60 * 60 * 1000;
 
-/** Global mint cap stored in D1. The rate-limit binding window is one minute. */
+/** Drives created at verify time. Emails sent are counted separately. */
 export const DAILY_MINT_CAP = 40;
+export const DAILY_EMAIL_CAP = 40;
+
+/** A frozen drive stays for evidence until an admin releases it, or this long. */
+export const FROZEN_KEEP_MS = 30 * 24 * 60 * 60 * 1000;
+
 export const AUP_VERSION = "2026-10-23";
+
+/** Relative object keys longer than this are rejected with 414. R2's limit is 1024. */
+export const MAX_KEY_BYTES = 900;
+
+/** AppleDouble and .DS_Store writes are accepted only under this size. */
+export const FINDER_MAX_BYTES = 64 * 1024;
+
+export const DAV_CSP = "default-src 'none'; sandbox";
 
 /**
  * Rate-limit namespace ids. Checked against the other demos on 2026-10-23.
@@ -23,11 +36,13 @@ export const RATE_LIMIT_IDS = {
   DAV_READ: "7604",
   DAV_WRITE: "7605",
   PAGE: "7606",
+  DAV_GLOBAL: "7607",
   REPORT: "7608",
   ADMIN: "7609",
   VERIFY: "7610",
   WS: "7611",
   READ: "7612",
+  DAV_DRIVE: "7613",
 } as const;
 
 export type LimitName = keyof typeof RATE_LIMIT_IDS;

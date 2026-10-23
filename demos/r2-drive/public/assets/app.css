@@ -110,6 +110,7 @@ textarea { min-height: 96px; resize: vertical; }
   display: flex; gap: 8px; align-items: center; justify-content: space-between;
   padding: 8px 0; border-top: 1px solid var(--line); flex-wrap: wrap;
 }
+.locks li, .lock-line { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
 .file-name { overflow-wrap: anywhere; }
 .file-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .empty { color: var(--muted); }

@@ -133,37 +133,24 @@ async function verify(token: string) {
     note("mint-note", body.error?.message ?? "That link is invalid or expired.", "bad");
     return;
   }
-  sessionStorage.setItem("r2drive-password", JSON.stringify({ driveId: body.driveId, password: body.password, mountPath: body.mountPath, expiresAt: body.expiresAt }));
   state.drive = body;
-  note("mint-note", "Drive ready.", "ok");
+  note("mint-note", "Drive ready. Copy the password now. It is not saved.", "ok");
   showDrive(body.password);
-}
-
-function savedPassword(driveId: string): string {
-  const raw = sessionStorage.getItem("r2drive-password");
-  if (!raw) return "";
-  try {
-    const parsed = JSON.parse(raw) as { driveId?: string; password?: string };
-    return parsed.driveId === driveId ? parsed.password ?? "" : "";
-  } catch {
-    return "";
-  }
 }
 
 async function restoreSession() {
   const response = await fetch(`${basePath()}/api/session`);
   if (!response.ok) return;
   const session = (await response.json()) as SessionView;
-  const password = savedPassword(session.driveId);
   state.drive = {
     driveId: session.driveId,
     username: session.driveId,
-    password,
+    password: "",
     expiresAt: session.expiresAt,
     mountPath: `${basePath()}/dav/${session.driveId}/`,
     caps: session.caps,
   };
-  showDrive(password);
+  showDrive("");
 }
 
 function showDrive(password: string) {
@@ -183,7 +170,7 @@ function showDrive(password: string) {
 function renderSnippets(password: string) {
   const root = davRoot();
   const id = state.drive?.driveId ?? "";
-  const pass = password || "<password shown once>";
+  const pass = password || "<copy it from this page; it is not saved>";
   const blocks = [
     ["macOS Finder", `Server address:\n${root}/\nUsername: ${id}\nPassword: ${pass}`],
     ["Windows Explorer", `net use * ${root}/ /user:${id} ${pass}`],
@@ -330,6 +317,7 @@ async function refreshLocks() {
   list.replaceChildren(
     ...body.locks.map((lock) => {
       const item = document.createElement("li");
+      item.className = "lock-line";
       item.textContent = `${lock.path || "/"} · ${lock.owner ?? "no owner"} · ${lock.scope} · depth ${lock.depth} · ${lock.timeout}`;
       return item;
     }),

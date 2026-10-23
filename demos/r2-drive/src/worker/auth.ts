@@ -74,8 +74,9 @@ export function readCookie(header: string | null, name: string): string | null {
   return null;
 }
 
-export function sessionCookie(token: string, secure: boolean, maxAge: number): string {
-  const parts = [`r2drive_session=${token}`, "HttpOnly", "Path=/", "SameSite=Lax", `Max-Age=${maxAge}`];
-  if (secure) parts.push("Secure");
-  return parts.join("; ");
+/** __Host- cookies are Secure, Path=/, and have no Domain attribute. */
+export const SESSION_COOKIE = "__Host-r2drive_session";
+
+export function sessionCookie(token: string, _secure: boolean, maxAge: number): string {
+  return [`${SESSION_COOKIE}=${token}`, "HttpOnly", "Path=/", "SameSite=Lax", "Secure", `Max-Age=${maxAge}`].join("; ");
 }

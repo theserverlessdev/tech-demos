@@ -1,8 +1,8 @@
 import { DurableObject } from "cloudflare:workers";
 import { D1Repo } from "./repo";
-import { adaptR2, deletePrefix, PrefixBucket } from "./bucket";
-import { handleWebdav } from "./webdav";
-import { GuardedBucket, type Quota } from "./quota";
+import { adaptR2, PrefixBucket } from "./bucket";
+import { DriveSession } from "./drive-session";
+import { completeWipe } from "./drive-wipe";
 import { splitDavPath } from "../shared/paths";
 import type { LockRecord, LockStore } from "./locks";
 import type { LogEvent, PublicLock } from "../shared/types";
@@ -24,6 +24,8 @@ type LockRow = {
 };
 
 export class DriveObject extends DurableObject<DriveEnv> {
+  private session: DriveSession | null = null;
+
   constructor(ctx: DurableObjectState, env: DriveEnv) {
     super(ctx, env);
     ctx.blockConcurrencyWhile(async () => {
@@ -53,6 +55,10 @@ export class DriveObject extends DurableObject<DriveEnv> {
   }
 
   async schedule(expiresAt: number): Promise<void> {
+    const name = this.ctx.id.name;
+    if (!name) console.error(JSON.stringify({ event: "schedule_missing_name" }));
+    else await this.ctx.storage.put("driveId", name);
+    await this.ctx.storage.put("expiresAt", expiresAt);
     const current = await this.ctx.storage.getAlarm();
     if (current === null || expiresAt < current) await this.ctx.storage.setAlarm(expiresAt);
   }
@@ -62,14 +68,16 @@ export class DriveObject extends DurableObject<DriveEnv> {
   }
 
   async wipe(now: number): Promise<void> {
-    const name = this.ctx.id.name;
-    if (!name) return;
-    await deletePrefix(adaptR2(this.env.BUCKET), `drives/${name}/`);
-    this.ctx.storage.sql.exec("DELETE FROM locks");
-    this.ctx.storage.sql.exec("DELETE FROM quota");
-    this.ctx.storage.sql.exec("DELETE FROM events");
-    await new D1Repo(this.env.DB).markWiped(name, now);
-    this.broadcast({ type: "wiped" });
+    const storedId = await this.ctx.storage.get<string>("driveId");
+    const wiped = await completeWipe({
+      name: this.ctx.id.name,
+      storedId: storedId ?? undefined,
+      bucket: adaptR2(this.env.BUCKET),
+      markWiped: (id, at) => new D1Repo(this.env.DB).markWiped(id, at),
+      deleteAll: () => this.ctx.storage.deleteAll(),
+      now,
+    });
+    if (wiped) this.broadcast({ type: "wiped" });
   }
 
   async listLocks(): Promise<LockRecord[]> {
@@ -85,7 +93,9 @@ export class DriveObject extends DurableObject<DriveEnv> {
   }
 
   async fetch(request: Request): Promise<Response> {
-    const name = this.ctx.id.name ?? "";
+    const storedId = await this.ctx.storage.get<string>("driveId");
+    const name = this.ctx.id.name || storedId || "";
+    if (!this.ctx.id.name) console.error(JSON.stringify({ event: "drive_missing_name", storedId: storedId ?? null }));
     if (request.headers.get("x-r2drive-authed") !== "1" || !name) return new Response("Forbidden", { status: 403 });
     if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
       const pair = new WebSocketPair();
@@ -95,42 +105,37 @@ export class DriveObject extends DurableObject<DriveEnv> {
     }
     const target = splitDavPath(new URL(request.url).pathname);
     if (target === null || target === "bad" || target.driveId !== name) return new Response("Forbidden", { status: 403 });
-    const quota = this.readQuota();
-    const guarded = new GuardedBucket(new PrefixBucket(adaptR2(this.env.BUCKET), `drives/${name}/`), quota, async (info) => {
-      await new D1Repo(this.env.DB).addObject({
-        driveId: name,
-        key: `drives/${name}/${info.key}`,
-        sha256: info.sha256,
-        size: info.size,
-        firstSeen: Date.now(),
-      });
-    });
-    const response = await handleWebdav(request, {
-      bucket: guarded,
-      locks: new SqliteLocks(this.ctx.storage.sql),
-      now: Date.now(),
-      mountPath: target.mountPath,
-      key: target.key,
-    });
-    this.writeQuota(quota);
-    await new D1Repo(this.env.DB).updateUsage(name, quota.bytes, quota.files);
+    const expiresAt = (await this.ctx.storage.get<number>("expiresAt")) ?? null;
+    const session = this.driveSession(name);
+    const before = session.quota.snapshot();
+    const response = await session.handle(request, target.mountPath, target.key, Date.now(), expiresAt);
+    const after = session.quota.snapshot();
+    if (before.bytes !== after.bytes || before.files !== after.files) {
+      await new D1Repo(this.env.DB).updateUsage(name, after.bytes, after.files);
+    }
     this.ctx.storage.sql.exec("INSERT INTO events (at, method, path, status) VALUES (?, ?, ?, ?)", Date.now(), request.method, target.key || "/", response.status);
     this.ctx.storage.sql.exec("DELETE FROM events WHERE id <= (SELECT COALESCE(MAX(id), 0) FROM events) - 50");
     this.broadcast({ type: "event", event: { at: Date.now(), method: request.method, path: target.key || "/", status: response.status }, locks: this.publicLocks(await this.listLocks()) });
     return response;
   }
 
-  private readQuota(): Quota {
-    const row = this.ctx.storage.sql.exec<{ bytes: number; files: number }>("SELECT bytes, files FROM quota WHERE id = 1").toArray()[0];
-    return { bytes: row?.bytes ?? 0, files: row?.files ?? 0 };
-  }
-
-  private writeQuota(quota: Quota): void {
-    this.ctx.storage.sql.exec(
-      "INSERT INTO quota (id, bytes, files) VALUES (1, ?, ?) ON CONFLICT(id) DO UPDATE SET bytes = excluded.bytes, files = excluded.files",
-      quota.bytes,
-      quota.files,
-    );
+  private driveSession(name: string): DriveSession {
+    if (this.session) return this.session;
+    this.session = new DriveSession({
+      sql: this.ctx.storage.sql,
+      bucket: new PrefixBucket(adaptR2(this.env.BUCKET), `drives/${name}/`),
+      locks: new SqliteLocks(this.ctx.storage.sql),
+      audit: async (info) => {
+        await new D1Repo(this.env.DB).addObject({
+          driveId: name,
+          key: `drives/${name}/${info.key}`,
+          sha256: info.sha256,
+          size: info.size,
+          firstSeen: Date.now(),
+        });
+      },
+    });
+    return this.session;
   }
 
   private lockRows(now: number): LockRecord[] {

@@ -205,19 +205,20 @@ export async function heldLockTokens(store: LockStore, path: string, now: number
 const DEFAULT_LOCK_SECONDS = 3600;
 const MAX_LOCK_SECONDS = 365 * 24 * 60 * 60;
 
-export function parseTimeout(header: string | null, now: number): { timeout: string; expiresAt: number } {
-  if (!header) return { timeout: `Second-${DEFAULT_LOCK_SECONDS}`, expiresAt: now + DEFAULT_LOCK_SECONDS * 1000 };
+export function parseTimeout(header: string | null, now: number, driveExpiresAt?: number): { timeout: string; expiresAt: number } {
+  const remainingMs = driveExpiresAt === undefined ? DEFAULT_LOCK_SECONDS * 1000 : Math.max(1000, driveExpiresAt - now);
+  const capSeconds = Math.max(1, Math.min(MAX_LOCK_SECONDS, Math.floor(remainingMs / 1000)));
+  const finish = (seconds: number) => {
+    const capped = Math.min(seconds, capSeconds);
+    return { timeout: `Second-${capped}`, expiresAt: now + capped * 1000 };
+  };
+  if (!header) return finish(Math.min(DEFAULT_LOCK_SECONDS, capSeconds));
   for (const item of header.split(",").map((value) => value.trim())) {
-    if (item.toLowerCase() === "infinite") {
-      return { timeout: "Infinite", expiresAt: now + MAX_LOCK_SECONDS * 1000 };
-    }
+    if (item.toLowerCase() === "infinite") return finish(capSeconds);
     const seconds = Number(/^Second-(\d+)$/i.exec(item)?.[1] ?? NaN);
-    if (Number.isFinite(seconds) && seconds > 0) {
-      const capped = Math.min(seconds, MAX_LOCK_SECONDS);
-      return { timeout: `Second-${capped}`, expiresAt: now + capped * 1000 };
-    }
+    if (Number.isFinite(seconds) && seconds > 0) return finish(seconds);
   }
-  return { timeout: `Second-${DEFAULT_LOCK_SECONDS}`, expiresAt: now + DEFAULT_LOCK_SECONDS * 1000 };
+  return finish(Math.min(DEFAULT_LOCK_SECONDS, capSeconds));
 }
 
 export function lockDiscovery(locks: LockRecord[]): string {

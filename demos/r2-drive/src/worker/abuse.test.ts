@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { DAILY_MINT_CAP } from "../shared/constants";
+import { DAILY_EMAIL_CAP } from "../shared/constants";
 import { createTestApp, davUrl, mintDrive } from "./test-app";
 
 const ORIGIN = "http://127.0.0.1:8808";
@@ -72,7 +72,9 @@ test("a verified email can mint one drive", async () => {
   const body = (await verified.json()) as { driveId: string; password: string };
   expect(body.driveId.startsWith("drv_")).toBe(true);
   expect(body.password.length).toBeGreaterThan(10);
-  expect(verified.headers.get("set-cookie")).toContain("r2drive_session=");
+  expect(verified.headers.get("set-cookie")?.startsWith("__Host-r2drive_session=")).toBe(true);
+  expect(verified.headers.get("set-cookie")).toContain("Secure");
+  expect(verified.headers.get("set-cookie")).not.toContain("Domain=");
   expect((await post(app, "/api/verify", { token })).status).toBe(400);
   const again = await post(app, "/api/mint", { email: "ada.lovelace@gmail.com", aup: true, turnstileToken: "ok" });
   expect(again.status).toBe(409);
@@ -149,7 +151,7 @@ test("the kill switch freezes a drive and stops minting", async () => {
   const day = new Date(reported.clock.t).toISOString().slice(0, 10);
   await reported.repo.setMintKilled(false);
   reported.repo.daily.clear();
-  for (let i = 0; i < DAILY_MINT_CAP; i++) expect(await reported.repo.tryIncrementDaily(day, DAILY_MINT_CAP)).toBe(true);
+  for (let i = 0; i < DAILY_EMAIL_CAP; i++) expect(await reported.repo.tryIncrementDaily("email", day, DAILY_EMAIL_CAP)).toBe(true);
   const capped = await post(
     reported,
     "/api/mint",

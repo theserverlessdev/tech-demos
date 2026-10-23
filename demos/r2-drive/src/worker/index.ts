@@ -2,9 +2,8 @@ import { adaptR2 } from "./bucket";
 import { hexToBytes, importAesKey, importHmacKey } from "./crypto";
 import { DriveObject } from "./drive";
 import { D1Repo } from "./repo";
-import { envMintEnabled, handleRequest, wipeExpired, type Deps } from "./router";
+import { envMintEnabled, handleRequest, hubRedirectTarget, wipeExpired, type Deps } from "./router";
 import type { LimitName } from "../shared/constants";
-import type { LockStore } from "./locks";
 import { verifyTurnstile } from "./turnstile";
 
 export { DriveObject };
@@ -70,8 +69,8 @@ async function buildDeps(env: Env): Promise<Deps> {
     now: () => Date.now(),
     mintEnabledEnv: envMintEnabled(env.MINT_ENABLED),
     adminToken: env.ADMIN_TOKEN ?? "",
-    auditKey: keys?.aes ?? (await importAesKey(new Uint8Array(32))),
-    auditHmac: keys?.hmac ?? (await importHmacKey(new Uint8Array(32))),
+    auditKey: keys?.aes ?? null,
+    auditHmac: keys?.hmac ?? null,
     mailFrom: env.MAIL_FROM ?? "",
     publicOrigin: env.PUBLIC_ORIGIN ?? "",
     devOutbox: sink,
@@ -86,19 +85,11 @@ async function buildDeps(env: Env): Promise<Deps> {
   };
 }
 
-function driveLocks(env: Env, driveId: string): LockStore {
+function driveLocks(env: Env, driveId: string) {
   const stub = env.DRIVE.getByName(driveId);
   return {
-    async get() {
-      return [];
-    },
-    async set() {
-      return undefined;
-    },
-    list: () => stub.listLocks(),
-    clear: async () => {
-      await stub.wipe(Date.now());
-    },
+    list: (now: number) => stub.listLocks().then((locks) => locks.filter((lock) => lock.expiresAt > now)),
+    wipe: (now: number) => stub.wipe(now),
   };
 }
 
@@ -120,10 +111,8 @@ async function serveAsset(env: Env, request: Request, path: string): Promise<Res
 export default {
   async fetch(request, env): Promise<Response> {
     const url = new URL(request.url);
-    if (url.pathname === "/demos/r2-drive") {
-      url.pathname = "/demos/r2-drive/";
-      return Response.redirect(url.toString(), 308);
-    }
+    const redirect = hubRedirectTarget(url);
+    if (redirect) return Response.redirect(redirect, 308);
     const incoming = new Request(request, { headers: stripInternal(request.headers) });
     try {
       return await handleRequest(incoming, await buildDeps(env));

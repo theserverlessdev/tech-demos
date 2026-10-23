@@ -9,5 +9,5 @@
     "src/shared/**/*.ts",
     "worker-configuration.d.ts"
   ],
-  "exclude": ["src/**/*.test.ts"]
+  "exclude": ["src/**/*.test.ts", "src/worker/test-app.ts", "src/worker/sqlite-bun.ts"]
 }

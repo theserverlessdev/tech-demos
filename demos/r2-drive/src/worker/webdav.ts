@@ -62,6 +62,7 @@ export type DavCtx = {
   now: number;
   mountPath: string;
   key: string;
+  driveExpiresAt?: number;
 };
 
 export async function handleWebdav(request: Request, ctx: DavCtx): Promise<Response> {
@@ -362,11 +363,14 @@ async function transfer(request: Request, ctx: DavCtx, move: boolean): Promise<R
   const header = request.headers.get("Destination");
   if (!header) return new Response("Bad Request", { status: 400 });
   const destination = destinationKey(header, request.url, ctx.mountPath);
-  if (destination === null || destination === ctx.key || destination.startsWith(`${ctx.key}/`)) {
+  if (destination === null || destination === ctx.key || destination.startsWith(`${ctx.key}/`) || ctx.key.startsWith(`${destination}/`)) {
     return new Response("Bad Request", { status: 400 });
   }
   const sourceLock = await requireWritable(request, ctx, ctx.key);
   if (sourceLock && move) return sourceLock;
+  if (move && (await descendantBlocks(ctx.locks, ctx.key, lockTokensFrom(request), ctx.now))) {
+    return new Response("Locked", { status: 423 });
+  }
   const destLock = await requireWritable(request, ctx, destination);
   if (destLock) return destLock;
   if (!(await hasCollection(ctx.bucket, parentKey(destination)))) return new Response("Conflict", { status: 409 });
@@ -433,7 +437,7 @@ async function handleLock(request: Request, ctx: DavCtx): Promise<Response> {
     ignoreSharedLocksOnTarget: body !== "" && requestedScope === "shared",
   });
   if (locked) return locked;
-  const { timeout, expiresAt } = parseTimeout(request.headers.get("Timeout"), ctx.now);
+  const { timeout, expiresAt } = parseTimeout(request.headers.get("Timeout"), ctx.now, ctx.driveExpiresAt);
   const owner = extractOwner(body);
   const refresh = body === "" ? await findHeldLock(ctx, ctx.key, tokens) : null;
   let resource = refresh ? await ctx.bucket.head(refresh.path) : await ctx.bucket.head(ctx.key);
@@ -600,8 +604,9 @@ function deadKey(property: DeadProperty): string {
 }
 
 function metadataSize(metadata: Record<string, string>): number {
+  const encoder = new TextEncoder();
   let size = 0;
-  for (const [key, value] of Object.entries(metadata)) size += key.length + value.length;
+  for (const [key, value] of Object.entries(metadata)) size += encoder.encode(key).byteLength + encoder.encode(value).byteLength;
   return size;
 }
 

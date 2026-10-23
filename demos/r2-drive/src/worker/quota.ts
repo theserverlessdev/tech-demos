@@ -1,16 +1,70 @@
-import { contentDisposition, safeFilename, sniff } from "../shared/content-policy";
-import { MAX_DRIVE_BYTES, MAX_FILE_BYTES, MAX_FILES } from "../shared/constants";
+import { contentDisposition, isFinderNoise, safeFilename, sniff } from "../shared/content-policy";
+import { FINDER_MAX_BYTES, MAX_DRIVE_BYTES, MAX_FILE_BYTES, MAX_FILES, MAX_KEY_BYTES } from "../shared/constants";
 import { DavStatus, type DavBucket, type DavObject, type PutOptions } from "./bucket";
 import { sha256Hex } from "./crypto";
 
 export type Quota = { bytes: number; files: number };
 
 const COLLECTION = "<collection />";
+const encoder = new TextEncoder();
+
+export type SqlRunner = {
+  exec(query: string, ...bindings: unknown[]): { toArray(): Record<string, unknown>[] };
+};
+
+export function ensureQuotaTable(sql: SqlRunner): void {
+  sql.exec(`CREATE TABLE IF NOT EXISTS quota (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    bytes INTEGER NOT NULL,
+    files INTEGER NOT NULL
+  )`);
+}
+
+/**
+ * One SQLite update reserves or releases. The WHERE clause is the cap.
+ * A failed statement changes nothing.
+ */
+export class SqliteQuota {
+  constructor(private readonly sql: SqlRunner) {
+    ensureQuotaTable(sql);
+    this.sql.exec("INSERT INTO quota (id, bytes, files) VALUES (1, 0, 0) ON CONFLICT(id) DO NOTHING");
+  }
+
+  apply(bytes: number, files: number): boolean {
+    if (bytes === 0 && files === 0) return true;
+    if (!Number.isSafeInteger(bytes) || !Number.isSafeInteger(files)) return false;
+    const rows = this.sql
+      .exec(
+        `UPDATE quota SET bytes = bytes + ?, files = files + ?
+         WHERE id = 1
+           AND bytes + ? <= ?
+           AND files + ? <= ?
+           AND bytes + ? >= 0
+           AND files + ? >= 0
+         RETURNING bytes, files`,
+        bytes,
+        files,
+        bytes,
+        MAX_DRIVE_BYTES,
+        files,
+        MAX_FILES,
+        bytes,
+        files,
+      )
+      .toArray() as Quota[];
+    return rows.length === 1;
+  }
+
+  snapshot(): Quota {
+    const row = this.sql.exec("SELECT bytes, files FROM quota WHERE id = 1").toArray()[0] as Quota | undefined;
+    return { bytes: row?.bytes ?? 0, files: row?.files ?? 0 };
+  }
+}
 
 export class GuardedBucket implements DavBucket {
   constructor(
     private readonly inner: DavBucket,
-    private readonly quota: Quota,
+    private readonly quota: SqliteQuota,
     private readonly audit: (row: { key: string; sha256: string; size: number }) => Promise<void>,
   ) {}
 
@@ -27,11 +81,19 @@ export class GuardedBucket implements DavBucket {
   }
 
   async put(key: string, body: Uint8Array, options?: PutOptions): Promise<DavObject | null> {
+    if (encoder.encode(key).byteLength > MAX_KEY_BYTES) throw new DavStatus(414, "URI Too Long");
     if (body.byteLength > MAX_FILE_BYTES) throw new DavStatus(413, "File is over 5 MB");
     const collection = options?.customMetadata?.resourcetype === COLLECTION;
+    const finder = !collection && isFinderNoise(key);
     let httpMetadata = options?.httpMetadata;
-    if (!collection) {
-      const decision = sniff(body);
+    if (finder) {
+      if (body.byteLength > FINDER_MAX_BYTES) throw new DavStatus(413, "Finder metadata is too large");
+      httpMetadata = {
+        contentType: "application/octet-stream",
+        contentDisposition: contentDisposition(safeFilename(key), false),
+      };
+    } else if (!collection) {
+      const decision = await sniff(body);
       if (!decision.ok) throw new DavStatus(415, decision.reason);
       httpMetadata = {
         contentType: decision.mediaType,
@@ -39,41 +101,76 @@ export class GuardedBucket implements DavBucket {
       };
     }
     const existing = await this.inner.head(key);
+    const previous = existing ? await this.inner.get(key) : null;
+    const previousBytes = previous ? await objectBytes(previous) : null;
     const credit = options?.quotaCredit ?? { bytes: 0, files: 0 };
-    const nextBytes = this.quota.bytes - (existing?.size ?? 0) - credit.bytes + body.byteLength;
-    const nextFiles = this.quota.files - (existing ? 1 : 0) - credit.files + 1;
-    if (nextBytes > MAX_DRIVE_BYTES) throw new DavStatus(413, "Drive is over the 25 MB cap");
-    if (nextFiles > MAX_FILES) throw new DavStatus(413, "Drive is over the 200 file cap");
-    if (nextBytes < 0 || nextFiles < 0) throw new DavStatus(400, "Bad quota");
-    const stored = await this.inner.put(key, body, { ...options, httpMetadata });
-    if (!stored) return null;
+    const deltaBytes = body.byteLength - (existing?.size ?? 0) - credit.bytes;
+    const deltaFiles = (existing ? 0 : 1) - credit.files;
+    const reserveBytes = Math.max(0, deltaBytes);
+    const reserveFiles = Math.max(0, deltaFiles);
+    if ((reserveBytes || reserveFiles) && !this.quota.apply(reserveBytes, reserveFiles)) {
+      const snap = this.quota.snapshot();
+      if (snap.bytes + reserveBytes > MAX_DRIVE_BYTES) throw new DavStatus(413, "Drive is over the 25 MB cap");
+      throw new DavStatus(413, "Drive is over the 200 file cap");
+    }
+    let stored: DavObject | null = null;
     try {
+      stored = await this.inner.put(key, body, { ...options, httpMetadata });
+      if (!stored) {
+        this.release(reserveBytes, reserveFiles);
+        return null;
+      }
       await this.audit({ key, sha256: await sha256Hex(body), size: body.byteLength });
     } catch (error) {
-      await this.inner.delete(key);
-      if (existing) {
-        await this.inner.put(key, existing.body instanceof Uint8Array ? existing.body : new Uint8Array(), {
-          httpMetadata: existing.httpMetadata,
-          customMetadata: existing.customMetadata,
-        });
+      if (stored) {
+        await this.inner.delete(key);
+        if (existing && previousBytes) {
+          await this.inner.put(key, previousBytes, {
+            httpMetadata: existing.httpMetadata,
+            customMetadata: existing.customMetadata,
+          });
+        }
       }
+      this.release(reserveBytes, reserveFiles);
       throw error;
     }
-    this.quota.bytes = nextBytes;
-    this.quota.files = nextFiles;
+    const releaseBytes = Math.max(0, -deltaBytes);
+    const releaseFiles = Math.max(0, -deltaFiles);
+    if ((releaseBytes || releaseFiles) && !this.quota.apply(-releaseBytes, -releaseFiles)) {
+      console.error(JSON.stringify({ event: "quota_release_failed", key }));
+    }
     return stored;
   }
 
   async delete(keys: string | string[], skipQuota = false): Promise<void> {
     const list = Array.isArray(keys) ? keys : [keys];
+    let bytes = 0;
+    let files = 0;
     if (!skipQuota) {
       for (const key of list) {
         const existing = await this.inner.head(key);
         if (!existing) continue;
-        this.quota.bytes = Math.max(0, this.quota.bytes - existing.size);
-        this.quota.files = Math.max(0, this.quota.files - 1);
+        bytes += existing.size;
+        files += 1;
       }
+      if ((bytes || files) && !this.quota.apply(-bytes, -files)) throw new DavStatus(400, "Bad quota");
     }
-    await this.inner.delete(list);
+    try {
+      await this.inner.delete(list);
+    } catch (error) {
+      if (!skipQuota) this.release(-bytes, -files);
+      throw error;
+    }
   }
+
+  private release(bytes: number, files: number): void {
+    if (!bytes && !files) return;
+    if (!this.quota.apply(-bytes, -files)) console.error(JSON.stringify({ event: "quota_release_failed", bytes, files }));
+  }
+}
+
+async function objectBytes(object: DavObject): Promise<Uint8Array> {
+  if (object.body instanceof Uint8Array) return object.body;
+  if (object.body) return new Uint8Array(await new Response(object.body).arrayBuffer());
+  return new Uint8Array();
 }

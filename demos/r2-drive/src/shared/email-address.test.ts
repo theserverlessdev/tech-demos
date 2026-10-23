@@ -8,8 +8,10 @@ test("normalise strips plus tags and gmail dots", () => {
   expect(normalizeEmail("not an email")).toBeNull();
 });
 
-test("disposable domains are an exact soft match", () => {
+test("disposable domains match the domain and its parents", () => {
   expect(isDisposableEmail("person@mailinator.com")).toBe(true);
   expect(isDisposableEmail("person@example.com")).toBe(false);
-  expect(isDisposableEmail("person@sub.mailinator.com")).toBe(false);
+  expect(isDisposableEmail("x@a.mailinator.com")).toBe(true);
+  expect(isDisposableEmail("x@email.lomvic.com")).toBe(true);
+  expect(isDisposableEmail("x@gmail.com")).toBe(false);
 });
