@@ -16,6 +16,23 @@ function dav(app: TestApp, minted: Awaited<ReturnType<typeof mintDrive>>, method
   return app.fetch(davUrl(minted.driveId, key), init);
 }
 
+test("an empty If list and DAV:no-lock do not authorize a write", async () => {
+  const { app, minted } = await drive();
+  expect((await dav(app, minted, "PUT", "note.txt", "one")).status).toBe(201);
+  expect((await dav(app, minted, "PUT", "note.txt", "two", { If: "()" })).status).toBe(412);
+  expect((await dav(app, minted, "PUT", "note.txt", "two", { If: "(<DAV:no-lock>)" })).status).toBe(412);
+  const locked = await dav(
+    app,
+    minted,
+    "LOCK",
+    "note.txt",
+    `<?xml version="1.0"?><lockinfo xmlns="DAV:"><lockscope><exclusive/></lockscope><locktype><write/></locktype></lockinfo>`,
+  );
+  const token = locked.headers.get("lock-token") ?? "";
+  expect((await dav(app, minted, "PUT", "note.txt", "two", { If: `(${token}) (Not <DAV:no-lock>)` })).status).toBe(204);
+  expect(await (await dav(app, minted, "GET", "note.txt")).text()).toBe("two");
+});
+
 test("class 1 methods create, copy, move, and delete a file", async () => {
   const { app, minted } = await drive();
   const options = await dav(app, minted, "OPTIONS", "");
@@ -158,7 +175,8 @@ test("two drives cannot read or move into each other", async () => {
   });
   expect(moved.status).toBe(400);
   const escaped = await app.fetch(`${ORIGIN}/dav/${ada.driveId}/%2e%2e/${byron.driveId}/secret.txt`, { headers: authHeaders(ada) });
-  expect(escaped.status).toBe(400);
+  expect(escaped.status).toBe(401);
+  expect(await escaped.text()).toBe("Unauthorized");
   const listed = await app.bucket.list();
   expect(listed.objects.length).toBeGreaterThan(0);
   for (const object of listed.objects) expect(object.key.startsWith(`drives/${ada.driveId}/`)).toBe(true);
@@ -175,7 +193,7 @@ test("caps stop a large file, a large drive, and the 201st object", async () => 
   expect(huge.status).toBe(413);
 
   const five = new Uint8Array(MAX_FILE_BYTES);
-  five[0] = 0x68;
+  five.fill(0x61);
   for (let i = 0; i < 5; i++) expect((await dav(app, minted, "PUT", `part-${i}.txt`, five)).status).toBe(201);
   expect((await dav(app, minted, "PUT", "overflow.txt", "x")).status).toBe(413);
 

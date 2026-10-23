@@ -2,6 +2,7 @@
 import { TURNSTILE_DUMMY_TOKEN } from "../src/worker/turnstile";
 
 const base = (process.argv.find((arg) => arg.startsWith("http")) ?? "http://127.0.0.1:8808").replace(/\/$/, "");
+const smokeIp = `203.0.${(Date.now() % 200) + 20}.10`;
 let failures = 0;
 
 function check(label: string, ok: unknown, detail?: unknown) {
@@ -10,7 +11,9 @@ function check(label: string, ok: unknown, detail?: unknown) {
 }
 
 async function call(path: string, init: RequestInit = {}) {
-  const response = await fetch(`${base}${path}`, init);
+  const headers = new Headers(init.headers);
+  if (!headers.has("cf-connecting-ip")) headers.set("cf-connecting-ip", smokeIp);
+  const response = await fetch(`${base}${path}`, { ...init, headers });
   const text = await response.text();
   let json: unknown = null;
   try {
@@ -50,7 +53,7 @@ check("anonymous read is private", (anon.response.headers.get("cache-control") ?
 const minted = await call("/api/mint", {
   method: "POST",
   headers: { "content-type": "application/json" },
-  body: JSON.stringify({ email: "ada@example.com", aup: true, turnstileToken: TURNSTILE_DUMMY_TOKEN }),
+  body: JSON.stringify({ email: `smoke-${Date.now()}@example.com`, aup: true, turnstileToken: TURNSTILE_DUMMY_TOKEN }),
 });
 check("mint accepted", minted.response.ok, minted.text);
 const outbox = await call("/api/dev/outbox");

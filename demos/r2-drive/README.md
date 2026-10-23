@@ -56,6 +56,10 @@ The rule expires objects under `drives/` after one day. R2 lifecycle is day-scal
 
 The disposable-domain check uses a vendored copy of [disposable-email-domains](https://github.com/disposable-email-domains/disposable-email-domains) (`disposable_email_blocklist.conf`, CC0). It is a **soft signal**: the list is incomplete and it can mis-label a real domain. Matching is exact, so a subdomain of a listed domain is not implied.
 
+## Litmus
+
+`src/shared/litmus-results.ts` holds a real run of litmus 0.13 (Ubuntu 0.13-5build2) against `wrangler dev` on 2026-10-23. The suites were invoked one at a time. `basic` was 16/16 with one warning (DELETE of a collection whose Request-URI included a fragment), `copymove` 13/13, `props` 30/30, and `locks` 41/41. The `http` suite was not run. Upstream skips it because `Expect: 100-continue` times out on local Workers. The page prints those counts and the note; it does not invent a suite that has no raw output.
+
 ## Mount
 
 After verify, the page prints snippets for Finder, `net use`, rclone, and Obsidian. The username is the drive id. The password is shown once. There is no public URL for a file.

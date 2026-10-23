@@ -131,7 +131,7 @@ function decodeText(bytes: Uint8Array): string | null {
   if (bytes.byteLength >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) view = bytes.subarray(3);
   let value: string;
   try {
-    value = new TextDecoder("utf-8", { fatal: true }).decode(view);
+    value = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(view);
   } catch {
     return null;
   }
@@ -202,7 +202,7 @@ function walkZip(bytes: Uint8Array): { ok: true; names: string[] } | { ok: false
     if (nameAt + nameLen + extraLen > bytes.byteLength) return { ok: false, reason: "Rejected archive: zip" };
     let name: string;
     try {
-      name = new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(nameAt, nameAt + nameLen));
+      name = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes.subarray(nameAt, nameAt + nameLen));
     } catch {
       return { ok: false, reason: "Rejected archive: zip" };
     }

@@ -283,11 +283,11 @@ async function verify(request: Request, deps: Deps, url: URL): Promise<Response>
       fileCount: 0,
       aupVersion: row.aupVersion,
     });
-  } catch (error) {
+  } catch (caught) {
     if (await deps.repo.findLiveByEmail(row.emailHmac, now)) {
       return error(409, "drive_exists", "This email already has a drive. Wait until it expires.");
     }
-    throw error;
+    throw caught;
   }
   await deps.scheduleWipe?.(driveId, expiresAt);
   const base = basePrefix(url.pathname);
@@ -366,7 +366,14 @@ async function outbox(request: Request, deps: Deps, url: URL): Promise<Response>
 function devOutboxOpen(request: Request, deps: Deps, url: URL): boolean {
   if (!deps.devOutbox) return false;
   const host = (request.headers.get("host") ?? "").replace(/:\d+$/, "");
-  return loopback(url.hostname) || loopback(host);
+  if (loopback(url.hostname) || loopback(host)) return true;
+  // `wrangler dev` rewrites the request host to the zone route. The sink stays
+  // closed in a real deploy because PUBLIC_ORIGIN is not a loopback address.
+  try {
+    return loopback(new URL(deps.publicOrigin).hostname);
+  } catch {
+    return false;
+  }
 }
 
 async function admin(request: Request, deps: Deps, path: string): Promise<Response> {

@@ -54,7 +54,9 @@ function authed(request: Request): Request {
 
 async function buildDeps(env: Env): Promise<Deps> {
   const keys = await keysFor(env);
-  const sink = env.EMAIL_SINK === "1" && env.TURNSTILE_LOCAL === "1";
+  const emailSink: string = env.EMAIL_SINK;
+  const turnstileLocal: string = env.TURNSTILE_LOCAL;
+  const sink = emailSink === "1" && turnstileLocal === "1";
   return {
     repo: new D1Repo(env.DB),
     bucket: adaptR2(env.BUCKET),

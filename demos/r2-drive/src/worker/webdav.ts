@@ -17,8 +17,9 @@ import { DOMParser } from "@xmldom/xmldom";
 import { destinationKey, parentKey, resourceHref } from "../shared/paths";
 import { DavStatus, type DavBucket, type DavObject } from "./bucket";
 import {
-  alwaysFalseIf,
   assertWritable,
+  heldLockTokens,
+  ifHeaderAllows,
   descendantBlocks,
   escapeXml,
   lockDiscovery,
@@ -173,7 +174,16 @@ function isCollection(object: DavObject | null, key: string): boolean {
 }
 
 async function requireWritable(request: Request, ctx: DavCtx, key: string, options?: { ignoreSharedLocksOnTarget?: boolean }): Promise<Response | null> {
-  if (alwaysFalseIf(request)) return new Response("Precondition Failed", { status: 412 });
+  const resource = key === "" ? null : await ctx.bucket.head(key);
+  const resourcePath = resourceHref(ctx.mountPath, key, isCollection(resource, key));
+  const allowed = ifHeaderAllows(
+    request.headers.get("If"),
+    await heldLockTokens(ctx.locks, key, ctx.now),
+    resource?.etag,
+    request.url,
+    resourcePath,
+  );
+  if (!allowed) return new Response("Precondition Failed", { status: 412 });
   const ok = await assertWritable(ctx.locks, key, lockTokensFrom(request), ctx.now, options);
   return ok ? null : new Response("Locked", { status: 423 });
 }
@@ -216,13 +226,13 @@ async function handleGet(request: Request, ctx: DavCtx): Promise<Response> {
 
 async function handlePut(request: Request, ctx: DavCtx): Promise<Response> {
   if (ctx.key === "" || new URL(request.url).pathname.endsWith("/")) return new Response("Method Not Allowed", { status: 405 });
+  const body = await readLimited(request, 5 * 1024 * 1024);
+  if (body instanceof Response) return body;
   const locked = await requireWritable(request, ctx, ctx.key);
   if (locked) return locked;
   const existing = await ctx.bucket.head(ctx.key);
   if (existing?.customMetadata?.resourcetype === COLLECTION) return new Response("Conflict", { status: 409 });
   if (!(await hasCollection(ctx.bucket, parentKey(ctx.key)))) return new Response("Conflict", { status: 409 });
-  const body = await readLimited(request, 5 * 1024 * 1024);
-  if (body instanceof Response) return body;
   const stored = await ctx.bucket.put(ctx.key, body, { onlyIf: request.headers, customMetadata: deadOnly(existing?.customMetadata) });
   if (!stored) return new Response("Precondition Failed", { status: 412 });
   return new Response(existing ? null : "", { status: existing ? 204 : 201 });
@@ -290,12 +300,12 @@ async function handlePropfind(request: Request, ctx: DavCtx): Promise<Response> 
 }
 
 async function handleProppatch(request: Request, ctx: DavCtx): Promise<Response> {
+  const raw = await readLimited(request, 64 * 1024);
+  if (raw instanceof Response) return raw;
   const locked = await requireWritable(request, ctx, ctx.key);
   if (locked) return locked;
   const object = await ctx.bucket.head(ctx.key);
   if (!object || ctx.key === "") return new Response("Not Found", { status: 404 });
-  const raw = await readLimited(request, 64 * 1024);
-  if (raw instanceof Response) return raw;
   const parsed = parseProppatch(new TextDecoder().decode(raw));
   if (!parsed) return new Response("Bad Request", { status: 400 });
   const metadata = deadOnly(object.customMetadata);
@@ -634,16 +644,18 @@ function extractOwner(body: string): string | undefined {
 
 function parseXml(body: string): XmlLike | null {
   if (!body.trim()) return null;
-  const errors: string[] = [];
-  const document = new DOMParser({
-    errorHandler: {
-      warning: () => undefined,
-      error: (message: string) => errors.push(message),
-      fatalError: (message: string) => errors.push(message),
-    },
-  }).parseFromString(body, "application/xml");
-  if (errors.length > 0) return null;
-  return document.documentElement as unknown as XmlLike;
+  try {
+    const errors: string[] = [];
+    const document = new DOMParser({
+      onError: (level: string, message: string) => {
+        if (level !== "warning") errors.push(message);
+      },
+    }).parseFromString(body, "application/xml");
+    if (errors.length > 0 || !document.documentElement) return null;
+    return document.documentElement as unknown as XmlLike;
+  } catch {
+    return null;
+  }
 }
 
 function children(node: XmlLike): XmlLike[] {

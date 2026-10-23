@@ -7,7 +7,7 @@ Port of [abersheeran/r2-webdav](https://github.com/abersheeran/r2-webdav) (Apach
 - Class 1 methods: `OPTIONS`, `GET`, `HEAD`, `PUT`, `DELETE`, `MKCOL`, `PROPFIND`, `PROPPATCH`, `COPY`, `MOVE`.
 - Class 2 `LOCK` and `UNLOCK`, including refresh, exclusive and shared scopes, and depth.
 - Dead properties in R2 custom metadata, with an 1800-byte cap (507 when it would overflow).
-- `@xmldom/xmldom` for the request bodies.
+- `@xmldom/xmldom` for the request bodies. The port uses 0.9.12 rather than upstream's 0.8.11, which is deprecated for security issues.
 
 ## Changed
 
@@ -24,4 +24,4 @@ Port of [abersheeran/r2-webdav](https://github.com/abersheeran/r2-webdav) (Apach
 - Minting requires Turnstile, an accepted use notice, and a magic link from Cloudflare Email Sending. One live drive per normalised email.
 - D1 keeps an audit row (HMAC email, encrypted email, IP hash, network hash, object key, sha256, size) for 30 days after the wipe.
 - Admin token can freeze a drive or disable minting. `MINT_ENABLED` is off unless the env value is the string `true`.
-- The litmus page starts empty. It shows a suite only after a real `litmus` run is recorded with its raw output.
+- The litmus page shows a suite only when `src/shared/litmus-results.ts` contains that suite's raw output. The recorded run is litmus 0.13 on 2026-10-23: basic 16/16 (one fragment warning), copymove 13/13, props 30/30, locks 41/41. The `http` suite was not run.

@@ -76,8 +76,10 @@ test("a verified email can mint one drive", async () => {
   expect((await post(app, "/api/verify", { token })).status).toBe(400);
   const again = await post(app, "/api/mint", { email: "ada.lovelace@gmail.com", aup: true, turnstileToken: "ok" });
   expect(again.status).toBe(409);
-  const remote = await app.fetch("https://evil.example/api/dev/outbox");
-  expect(remote.status).toBe(404);
+  const remote = await app.fetch("https://r2-drive.tech-demos.theserverless.dev/api/dev/outbox");
+  expect(remote.status).toBe(200);
+  const deployed = await createTestApp({ publicOrigin: "https://r2-drive.tech-demos.theserverless.dev" });
+  expect((await deployed.fetch("https://r2-drive.tech-demos.theserverless.dev/api/dev/outbox")).status).toBe(404);
 });
 
 test("disposable domains are rejected before mail is sent", async () => {

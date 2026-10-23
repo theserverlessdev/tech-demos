@@ -104,9 +104,102 @@ export function lockTokensFrom(request: Request): string[] {
   return [...new Set(tokens)];
 }
 
-export function alwaysFalseIf(request: Request): boolean {
-  const header = request.headers.get("If") ?? "";
-  return header.includes("<DAV:no-lock>") && !header.includes("Not <DAV:no-lock>");
+type IfCondition = { not: boolean; token?: string; etag?: string };
+
+/** True when the If header is absent or one of its applicable lists matches. */
+export function ifHeaderAllows(header: string | null, heldTokens: string[], etag: string | undefined, requestUrl: string, resourcePath: string): boolean {
+  if (!header || !header.trim()) return true;
+  const lists = parseIfLists(header, requestUrl, resourcePath);
+  if (!lists) return false;
+  if (lists.length === 0) return true;
+  const held = new Set(heldTokens);
+  return lists.some((list) =>
+    list.length > 0 &&
+    list.every((condition) => {
+      let value = false;
+      if (condition.token !== undefined) {
+        // RFC 4918 §10.4.8: DAV:no-lock never names a current lock, so it does not match.
+        value = held.has(normalizeLockToken(condition.token));
+      } else if (condition.etag !== undefined) {
+        value = etag !== undefined && condition.etag === etag;
+      }
+      return condition.not ? !value : value;
+    }),
+  );
+}
+
+function parseIfLists(header: string, requestUrl: string, resourcePath: string): IfCondition[][] | null {
+  const lists: IfCondition[][] = [];
+  let applies = true;
+  let index = 0;
+  while (index < header.length) {
+    const char = header[index];
+    if (char === " " || char === "\t") {
+      index += 1;
+      continue;
+    }
+    if (char === "<") {
+      const end = header.indexOf(">", index);
+      if (end < 0) return null;
+      applies = tagApplies(header.slice(index + 1, end), requestUrl, resourcePath);
+      index = end + 1;
+      continue;
+    }
+    if (char !== "(") return null;
+    index += 1;
+    const conditions: IfCondition[] = [];
+    while (index < header.length && header[index] !== ")") {
+      while (header[index] === " ") index += 1;
+      if (header[index] === ")") break;
+      let inverted = false;
+      if (/^not(?=[ <[])/i.test(header.slice(index))) {
+        inverted = true;
+        index += 3;
+        while (header[index] === " ") index += 1;
+      } else if (/^not(?=\))/i.test(header.slice(index))) {
+        conditions.push({ not: false, token: "" });
+        index += 3;
+        continue;
+      }
+      if (header[index] === "<") {
+        const end = header.indexOf(">", index);
+        if (end < 0) return null;
+        conditions.push({ not: inverted, token: header.slice(index + 1, end) });
+        index = end + 1;
+      } else if (header[index] === "[") {
+        const end = header.indexOf("]", index);
+        if (end < 0) return null;
+        conditions.push({ not: inverted, etag: header.slice(index + 1, end).trim() });
+        index = end + 1;
+      } else return null;
+      while (header[index] === " ") index += 1;
+    }
+    if (header[index] !== ")") return null;
+    index += 1;
+    if (applies) lists.push(conditions);
+  }
+  return lists;
+}
+
+function tagApplies(tag: string, requestUrl: string, resourcePath: string): boolean {
+  try {
+    const url = new URL(tag, requestUrl);
+    const path = url.pathname.replace(/\/+$/, "");
+    const resource = resourcePath.replace(/\/+$/, "");
+    return path === resource;
+  } catch {
+    return false;
+  }
+}
+
+export async function heldLockTokens(store: LockStore, path: string, now: number): Promise<string[]> {
+  const tokens: string[] = [];
+  for (const candidate of ancestors(path)) {
+    for (const lock of await store.get(candidate, now)) {
+      if (candidate === path || lock.depth === "infinity") tokens.push(lock.token);
+    }
+  }
+  return tokens;
 }
 
 const DEFAULT_LOCK_SECONDS = 3600;

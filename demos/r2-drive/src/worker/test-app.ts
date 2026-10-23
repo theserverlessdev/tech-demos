@@ -16,7 +16,7 @@ export type TestApp = {
   setLimit: (fn: (name: LimitName, key: string) => Promise<boolean>) => void;
 };
 
-export async function createTestApp(options?: { mintEnabled?: boolean; now?: number }): Promise<TestApp> {
+export async function createTestApp(options?: { mintEnabled?: boolean; now?: number; publicOrigin?: string }): Promise<TestApp> {
   const repo = new MemoryRepo();
   const bucket = new MemoryBucket();
   const locks = new Map<string, LockStore>();
@@ -47,7 +47,7 @@ export async function createTestApp(options?: { mintEnabled?: boolean; now?: num
     auditKey,
     auditHmac,
     mailFrom: "drive@example.com",
-    publicOrigin: "http://127.0.0.1:8808",
+    publicOrigin: options?.publicOrigin ?? "http://127.0.0.1:8808",
     devOutbox: true,
     siteKey: "site-key",
     configured: true,

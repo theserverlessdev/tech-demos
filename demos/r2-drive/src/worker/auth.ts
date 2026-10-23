@@ -14,7 +14,7 @@ export function parseBasic(header: string | null): BasicCredentials | null {
     const binary = atob(match[1]);
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    decoded = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    decoded = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes);
   } catch {
     return null;
   }
