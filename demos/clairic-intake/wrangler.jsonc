@@ -15,9 +15,7 @@
     {
       "binding": "DB",
       "database_name": "tech-demos-clairic-intake",
-      // Placeholder. Not a live database. Create D1 on deploy and replace this id.
-      // Not all zeros: wrangler 4.45+ will not auto-create a database when the id is all zeros.
-      "database_id": "00000000-0000-4000-8000-000000007560",
+      "database_id": "472d5bac-dea1-4710-90d9-7b5738178b68",
       "migrations_dir": "migrations"
     }
   ],
@@ -25,8 +23,7 @@
     {
       "binding": "BUCKET",
       "bucket_name": "tech-demos-clairic-intake"
-      // Lifecycle is not a wrangler.jsonc field. After the bucket exists:
-      // wrangler r2 bucket lifecycle add tech-demos-clairic-intake intake-expiry intake/ --expire-days 1
+      // Lifecycle is not a wrangler.jsonc field. Rule "intake-expiry" (intake/, 1 day) is set on the bucket.
     }
   ],
   "queues": {
@@ -58,7 +55,7 @@
     "COMPARE_MODEL": "@cf/meta/llama-3.2-3b-instruct",
     "CLEF_MODEL": "@cf/cloudflare/clef",
     "ENVIRONMENT": "",
-    "TURNSTILE_SITE_KEY": "TURNSTILE_SITE_KEY"
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFRUoj5qDpf7XyIW"
   },
   "secrets": { "required": ["TURNSTILE_SECRET", "IP_HASH_SECRET"] },
   "routes": [
