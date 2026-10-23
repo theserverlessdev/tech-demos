@@ -67,9 +67,9 @@ bun run smoke
 
 ## Deploy checklist
 
-The D1 id in `wrangler.jsonc` is a placeholder (`00000000-0000-4000-8000-000000007560`). Replace it before the first deploy. Wrangler will not create a database whose id is all zeros; this placeholder is not all zeros, and it is not a live database.
+The D1 id in `wrangler.jsonc` is `472d5bac-dea1-4710-90d9-7b5738178b68` (`tech-demos-clairic-intake`). `wrangler.local.jsonc` and `wrangler.live.jsonc` keep `00000000-0000-4000-8000-000000007560` so local migrations apply without the remote database. Wrangler will not create a database whose id is all zeros; that local id is not all zeros.
 
-1. **D1.** `wrangler d1 create tech-demos-clairic-intake`, put the returned id in `database_id`, then `wrangler d1 migrations apply DB --remote`.
+1. **D1.** `tech-demos-clairic-intake` is already `472d5bac-dea1-4710-90d9-7b5738178b68` in `wrangler.jsonc`. On a new account, `wrangler d1 create tech-demos-clairic-intake`, put that id in `database_id`, then `wrangler d1 migrations apply DB --remote`.
 2. **R2.** `wrangler r2 bucket create tech-demos-clairic-intake`, then the one-day lifecycle (not a wrangler.jsonc field):
    `wrangler r2 bucket lifecycle add tech-demos-clairic-intake intake-expiry intake/ --expire-days 1`
    The hourly cron also deletes objects older than a day.

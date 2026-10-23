@@ -35,7 +35,7 @@ Ships:
 - Input caps. No URL fetching. Rendered text is escaped; highlights go through `escapeHtml` before `innerHTML`. Everything else uses `textContent`.
 - `ENVIRONMENT=local` uses a labelled mock. `bun run dev:live` is the only local path that calls Workers AI. Tests and smoke stay on the mock so they do not bill.
 
-Out of scope: accounts, Durable Objects, Workers for Platforms, fetching document URLs, a real Turnstile widget key, creating the remote D1/R2/Queue (placeholder id, deploy checklist in the README).
+Out of scope: accounts, Durable Objects, Workers for Platforms, fetching document URLs, a real Turnstile widget key. The production D1 id is committed in `wrangler.jsonc`. The deploy checklist in the README covers the rest of the account setup.
 
 ## Tasks
 
@@ -50,7 +50,7 @@ Out of scope: accounts, Durable Objects, Workers for Platforms, fetching documen
 
 - Workers + static assets, D1, R2, Queues, Workers AI, cron, rate limiting, Turnstile. No Workflow: each inbox doc is independent, so a Queue consumer is the smaller fit. No Containers, no Workers for Platforms.
 - Bun, TypeScript, the Graphite & Ember page the other demos use. No new UI kit.
-- Placeholder D1 id `00000000-0000-4000-8000-000000007560` (not all zeros, so local wrangler still applies migrations). Replace it on deploy.
+- Production D1 id `472d5bac-dea1-4710-90d9-7b5738178b68` is committed in `wrangler.jsonc`. `wrangler.local.jsonc` and `wrangler.live.jsonc` keep `00000000-0000-4000-8000-000000007560` (not all zeros, so local wrangler still applies migrations).
 
 ## Deferred
 
