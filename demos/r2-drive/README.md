@@ -23,6 +23,7 @@ sequenceDiagram
   Browser->>Worker: WebDAV
   Worker->>Worker: credential, per-drive limit, per-location DAV ceiling
   Worker->>DO: authed request
+  DO->>DO: charge the lifetime budget (one unit per request or socket, plus one per copied or moved file)
   DO->>DO: serialise the write, reserve quota
   DO->>R2: put or delete
   DO->>D1: audit row, usage when it changed
@@ -79,9 +80,11 @@ That runs `bunx wrangler r2 bucket lifecycle set r2-drive-placeholder --file lif
 
 The rule expires objects under `drives/` after one day. R2 lifecycle is day-scale, so the hour is enforced by the request path, the Durable Object alarm, and the `*/5` cron. The lifecycle rule is the backstop if those miss. Bytes can linger until the daily rule runs; they are not readable without the dead credential.
 
+Before a real deploy, add a billing notification in the Cloudflare dashboard (Notifications, then Billing) so a rise in Workers, R2, or Durable Object usage sends an email. This repository does not create that notification.
+
 ## Caps and content
 
-25 MB per drive, 5 MB per file, 200 objects, one hour, and 3000 authenticated requests for the life of the drive. `PUT` walks one list in `src/shared/content-policy.ts`. Text, Markdown, JSON, CSV, and PDF are allowed. Word, Excel, PowerPoint, and every other ZIP-based file are rejected with 415, as are images, video, audio, archives, OLE, and encrypted or unknown binaries.
+25 MB per drive, 5 MB per file, 200 objects, one hour, and 3000 request units for the life of the drive. The budget counts one unit per WebDAV request or live-log connection, plus one per file a COPY or MOVE writes. `PUT` walks one list in `src/shared/content-policy.ts`. Text, Markdown, JSON, CSV, and PDF are allowed. Word, Excel, PowerPoint, and every other ZIP-based file are rejected with 415, as are images, video, audio, archives, OLE, and encrypted or unknown binaries.
 
 Finder `._*` files must start with the AppleDouble magic `00 05 16 07`, and `.DS_Store` must start with `00 00 00 01 Bud1`. Either file can carry up to 64 KB of opaque binary after that header. A few blocked signatures are still rejected, including PNG and some JPEG markers.
 

@@ -4,7 +4,7 @@ import { MemoryLockStore } from "./locks";
 import { MemoryBucket, PrefixBucket } from "./bucket";
 import { DriveSession } from "./drive-session";
 import { completeWipe, runAlarm, type WipeDecision } from "./drive-wipe";
-import { takeRequest } from "./requests";
+import { chargeRequest, setUnitsUsed, unitsUsed as readUnits } from "./requests";
 import { bunSql } from "./sqlite-bun";
 import type { SqlRunner } from "./quota";
 import { MemoryRepo } from "./repo";
@@ -21,6 +21,8 @@ export type TestApp = {
   sweep: () => Promise<number>;
   alarm: (driveId: string) => Promise<WipeDecision>;
   setLimit: (fn: (name: LimitName, key: string) => Promise<boolean>) => void;
+  unitsUsed: (driveId: string) => number;
+  setUnitsUsed: (driveId: string, used: number) => void;
 };
 
 export async function createTestApp(options?: {
@@ -79,7 +81,8 @@ export async function createTestApp(options?: {
     },
     serveDav: async (request, drive, target) => {
       const runtime = runtimeFor(drive.id);
-      if (!takeRequest(runtime.sql)) return new Response("Too many requests", { status: 429 });
+      const budget = chargeRequest(runtime.sql);
+      if (budget) return budget;
       const before = runtime.session.quota.snapshot();
       const response = await runtime.session.handle(request, target.mountPath, target.key, () => clock.t, drive.expiresAt);
       const after = runtime.session.quota.snapshot();
@@ -150,6 +153,8 @@ export async function createTestApp(options?: {
     setLimit: (fn) => {
       limit = fn;
     },
+    unitsUsed: (driveId) => readUnits(runtimeFor(driveId).sql),
+    setUnitsUsed: (driveId, used) => setUnitsUsed(runtimeFor(driveId).sql, used),
   };
 }
 

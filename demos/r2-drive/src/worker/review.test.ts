@@ -7,6 +7,7 @@ import { completeWipe, wipeDecision } from "./drive-wipe";
 import { DriveSession } from "./drive-session";
 import { MemoryLockStore } from "./locks";
 import { bunSql } from "./sqlite-bun";
+import { BUDGET_EXHAUSTED_MESSAGE } from "./requests";
 import { authHeaders, createTestApp, davUrl, mintDrive, type TestApp } from "./test-app";
 
 const ORIGIN = "http://127.0.0.1:8808";
@@ -462,6 +463,46 @@ test("a second report leaves frozen_at unchanged", async () => {
   expect(app.repo.drives[0]?.frozenAt).toBe(frozenAt);
 });
 
+test("a 10-file MOVE uses 11 units", async () => {
+  const app = await createTestApp();
+  const minted = await mintDrive(app, "move10@example.com", "203.0.113.50");
+  expect((await dav(app, minted, "MKCOL", "folder")).status).toBe(201);
+  for (let index = 0; index < 10; index++) {
+    expect((await dav(app, minted, "PUT", `folder/n${index}.txt`, "x")).status).toBe(201);
+  }
+  const before = app.unitsUsed(minted.driveId);
+  const moved = await dav(app, minted, "MOVE", "folder", null, {
+    Destination: `${ORIGIN}/dav/${minted.driveId}/elsewhere`,
+  });
+  expect(moved.status).toBe(201);
+  expect(app.unitsUsed(minted.driveId) - before).toBe(11);
+  expect((await dav(app, minted, "GET", "elsewhere/n0.txt")).status).toBe(200);
+  expect((await dav(app, minted, "GET", "folder/n0.txt")).status).toBe(404);
+});
+
+test("a 20-file MOVE at 2990 units gets 429 and leaves the source", async () => {
+  const app = await createTestApp();
+  const minted = await mintDrive(app, "move20@example.com", "203.0.113.51");
+  expect((await dav(app, minted, "MKCOL", "folder")).status).toBe(201);
+  for (let index = 0; index < 20; index++) {
+    expect((await dav(app, minted, "PUT", `folder/n${index}.txt`, "x")).status).toBe(201);
+  }
+  app.setUnitsUsed(minted.driveId, 2990);
+  const logged = await capturingErrors(async () => {
+    const moved = await dav(app, minted, "MOVE", "folder", null, {
+      Destination: `${ORIGIN}/dav/${minted.driveId}/elsewhere`,
+    });
+    expect(moved.status).toBe(429);
+    expect(await moved.text()).toBe(BUDGET_EXHAUSTED_MESSAGE);
+    expect(app.unitsUsed(minted.driveId)).toBe(2991);
+  });
+  expect(logged).toContain("drive_budget_exhausted");
+  expect((await dav(app, minted, "GET", "folder/n0.txt")).status).toBe(200);
+  expect(await (await dav(app, minted, "GET", "folder/n0.txt")).text()).toBe("x");
+  expect((await dav(app, minted, "GET", "elsewhere/n0.txt")).status).toBe(404);
+  expect((await dav(app, minted, "GET", "elsewhere")).status).toBe(404);
+});
+
 test("request 3001 on a drive gets 429", async () => {
   const app = await createTestApp();
   const minted = await mintDrive(app);
@@ -469,8 +510,26 @@ test("request 3001 on a drive gets 429", async () => {
     const response = await app.fetch(davUrl(minted.driveId, "missing.txt"), { headers: authHeaders(minted) });
     expect(response.status).toBe(404);
   }
-  const over = await app.fetch(davUrl(minted.driveId, "missing.txt"), {
-    headers: authHeaders(minted, { "cf-connecting-ip": "198.51.100.40" }),
+  const logged = await capturingErrors(async () => {
+    const over = await app.fetch(davUrl(minted.driveId, "missing.txt"), {
+      headers: authHeaders(minted, { "cf-connecting-ip": "198.51.100.40" }),
+    });
+    expect(over.status).toBe(429);
+    expect(await over.text()).toBe(BUDGET_EXHAUSTED_MESSAGE);
   });
-  expect(over.status).toBe(429);
+  expect(logged).toContain("drive_budget_exhausted");
 });
+
+async function capturingErrors(run: () => Promise<void>): Promise<string> {
+  const lines: unknown[][] = [];
+  const original = console.error;
+  console.error = (...args: unknown[]) => {
+    lines.push(args);
+  };
+  try {
+    await run();
+  } finally {
+    console.error = original;
+  }
+  return JSON.stringify(lines);
+}

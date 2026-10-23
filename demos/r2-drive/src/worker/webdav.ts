@@ -33,7 +33,8 @@ import {
   type LockScope,
   type LockStore,
 } from "./locks";
-import type { GuardedBucket } from "./quota";
+import type { GuardedBucket, SqlRunner } from "./quota";
+import { budgetExhaustedResponse, takeUnits } from "./requests";
 
 const COLLECTION = "<collection />";
 const DAV = "DAV:";
@@ -64,6 +65,7 @@ export type DavCtx = {
   mountPath: string;
   key: string;
   driveExpiresAt?: number;
+  sql: SqlRunner;
 };
 
 export async function handleWebdav(request: Request, ctx: DavCtx): Promise<Response> {
@@ -380,13 +382,6 @@ async function transfer(request: Request, ctx: DavCtx, move: boolean): Promise<R
   if (existing && !overwrite) return new Response("Precondition Failed", { status: 412 });
   const source = await ctx.bucket.head(ctx.key);
   if (!source) return new Response("Not Found", { status: 404 });
-  if (existing) {
-    const removed = await handleDelete(new Request(request.url, { method: "DELETE", headers: lockHeaders(request) }), {
-      ...ctx,
-      key: destination,
-    });
-    if (!removed.ok && removed.status !== 404) return removed;
-  }
   const collection = source.customMetadata?.resourcetype === COLLECTION;
   const depth = request.headers.get("Depth") ?? "infinity";
   if (collection && move && depth !== "infinity") return new Response("Bad Request", { status: 400 });
@@ -394,6 +389,16 @@ async function transfer(request: Request, ctx: DavCtx, move: boolean): Promise<R
   const jobs: DavObject[] = [source];
   if (collection && depth === "infinity") {
     for await (const object of listAll(ctx.bucket, `${ctx.key}/`, true)) jobs.push(object);
+  }
+  // The request already paid for one unit. Each further object this COPY or MOVE writes costs another.
+  // A failed charge returns before the destination delete and before any put.
+  if (!takeUnits(ctx.sql, jobs.length - 1)) return budgetExhaustedResponse();
+  if (existing) {
+    const removed = await handleDelete(new Request(request.url, { method: "DELETE", headers: lockHeaders(request) }), {
+      ...ctx,
+      key: destination,
+    });
+    if (!removed.ok && removed.status !== 404) return removed;
   }
   for (const job of jobs) {
     const loaded = await ctx.bucket.get(job.key);

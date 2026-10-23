@@ -10,6 +10,7 @@ export class DriveSession {
   private tail: Promise<void> = Promise.resolve();
   readonly quota: SqliteQuota;
   readonly bucket: GuardedBucket;
+  private readonly sql: SqlRunner;
 
   constructor(options: {
     sql: SqlRunner;
@@ -17,6 +18,7 @@ export class DriveSession {
     locks: LockStore;
     audit: (row: { key: string; sha256: string; size: number }) => Promise<void>;
   }) {
+    this.sql = options.sql;
     this.quota = new SqliteQuota(options.sql);
     this.bucket = new GuardedBucket(options.bucket, this.quota, options.audit);
     this.locks = options.locks;
@@ -59,6 +61,7 @@ export class DriveSession {
       mountPath,
       key,
       driveExpiresAt: expiresAt ?? undefined,
+      sql: this.sql,
     });
     return withDavCsp(response);
   }
