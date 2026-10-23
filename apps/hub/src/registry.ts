@@ -99,7 +99,33 @@ const melodyAuthFallbackSource = standalone("melody-auth");
 // The zone route wins, and this source only redirects if that route is missing.
 const clairicIntakeFallbackSource = standalone("clairic-intake");
 
+// r2-drive is a standalone Worker (ASSETS, DRIVE, DB, BUCKET, EMAIL, mint/DAV/report limits, cron, Turnstile).
+// The zone route 308s /demos/r2-drive* to the subdomain. This source only redirects if that route is missing.
+const r2DriveFallbackSource = standalone("r2-drive");
+
 export const demos: DemoEntry[] = [
+  {
+    slug: "r2-drive",
+    title: "R2 Drive",
+    description: "A one-hour WebDAV drive you can mount. Isolated R2 prefix, SQLite locks, no share links.",
+    demonstrates:
+      "WebDAV Class 1 and Class 2 on Workers, including LOCK and UNLOCK, against an isolated R2 prefix with locks in a SQLite Durable Object and a cron that wipes the drive after an hour.",
+    capabilities: [
+      "Mint a drive with a verified email, Turnstile, and an accepted use notice",
+      "Mount it from macOS, Windows, rclone, or Obsidian Remotely Save",
+      "Upload, rename, delete, and preview from the browser",
+      "Watch the live log, including lock owner, timeout, and depth",
+      "Read the litmus page, which shows a suite only after a real run",
+    ],
+    useCases: [
+      "A personal Dropbox-style drive",
+      "Obsidian or Zotero sync",
+      "A backup target for rclone",
+    ],
+    tags: ["webdav", "r2", "durable-objects", "d1", "turnstile", "email"],
+    kind: "standalone",
+    source: r2DriveFallbackSource,
+  },
   {
     slug: "clairic-intake",
     title: "Clairic Intake",

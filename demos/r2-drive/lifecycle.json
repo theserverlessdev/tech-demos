@@ -1,0 +1,12 @@
+{
+  "rules": [
+    {
+      "id": "expire-drives-1d",
+      "enabled": true,
+      "conditions": { "prefix": "drives/" },
+      "deleteObjectsTransition": {
+        "condition": { "type": "Age", "maxAge": 86400 }
+      }
+    }
+  ]
+}

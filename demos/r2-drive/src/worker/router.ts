@@ -1,0 +1,600 @@
+import { AUP_TEXT, AUP_VERSION, DAILY_EMAIL_CAP, DAILY_MINT_CAP, DRIVE_TTL_MS, FROZEN_KEEP_MS, MAX_DRIVE_BYTES, MAX_FILE_BYTES, MAX_FILES, VERIFY_TTL_MS, type LimitName } from "../shared/constants";
+import { isDisposableEmail, normalizeEmail } from "../shared/email-address";
+import { LITMUS_RESULTS } from "../shared/litmus-results";
+import { basePrefix, splitDavPath, type DavTarget } from "../shared/paths";
+import type { Caps, LogEvent, PublicLock, SessionView } from "../shared/types";
+import { SESSION_COOKIE, hashSession, newPasswordRecord, parseBasic, passwordMatches, readCookie, sessionCookie } from "./auth";
+import { deletePrefix, type DavBucket } from "./bucket";
+import { bytesToB64Url, bytesToHex, decryptString, encryptString, hexToBytes, hmacHex, randomBytes, sha256Hex, timingSafeEqual, tokensMatch } from "./crypto";
+import { withDavCsp } from "./drive-session";
+import { wipeDecision } from "./drive-wipe";
+import { clientIp, clientNetwork, rateLimitIp } from "./ip";
+import type { LockRecord } from "./locks";
+import type { DriveRepo, DriveRow } from "./repo";
+
+const encoder = new TextEncoder();
+const WRITE_METHODS = new Set(["PUT", "DELETE", "MKCOL", "MOVE", "COPY", "LOCK", "UNLOCK", "PROPPATCH"]);
+
+export type DriveControl = {
+  list(now: number): Promise<LockRecord[]>;
+  wipe(now: number): Promise<void>;
+};
+
+export type Deps = {
+  repo: DriveRepo;
+  bucket: DavBucket;
+  locksFor: (driveId: string) => DriveControl;
+  limit: (name: LimitName, key: string) => Promise<boolean>;
+  verifyTurnstile: (token: string, request: Request) => Promise<boolean>;
+  sendEmail: (message: { to: string; subject: string; text: string }) => Promise<void>;
+  now: () => number;
+  mintEnabledEnv: boolean;
+  adminToken: string;
+  auditKey: CryptoKey | null;
+  auditHmac: CryptoKey | null;
+  mailFrom: string;
+  publicOrigin: string;
+  devOutbox: boolean;
+  siteKey: string;
+  configured: boolean;
+  recent: (driveId: string) => LogEvent[] | Promise<LogEvent[]>;
+  forwardDav?: (request: Request, drive: DriveRow, target: DavTarget) => Promise<Response>;
+  serveDav?: (request: Request, drive: DriveRow, target: DavTarget, now: number) => Promise<Response>;
+  openSocket?: (request: Request, driveId: string) => Promise<Response>;
+  scheduleWipe?: (driveId: string, expiresAt: number) => Promise<void>;
+  deferAlarm?: (driveId: string, until: number) => Promise<void>;
+  assets?: (request: Request, path: string) => Promise<Response>;
+};
+
+const HUB_PREFIX = "/demos/r2-drive";
+const DEMO_ORIGIN = "https://r2-drive.tech-demos.theserverless.dev";
+
+/** /demos/r2-drive* on the shared host redirects to this demo. workers.dev is off. */
+export function hubRedirectTarget(url: URL): string | null {
+  const path = url.pathname;
+  if (path !== HUB_PREFIX && !path.startsWith(`${HUB_PREFIX}/`)) return null;
+  const rest = path.slice(HUB_PREFIX.length) || "/";
+  return `${DEMO_ORIGIN}${rest}${url.search}`;
+}
+
+/** Anything other than the string "true" leaves minting off. */
+export function envMintEnabled(value: string | undefined): boolean {
+  return value === "true";
+}
+
+export function resolveMintEnabled(envFlag: boolean, killed: boolean): boolean {
+  return envFlag && !killed;
+}
+
+export function limitName(method: string, path: string): LimitName {
+  const bare = path.replace(/\/+$/, "") || "/";
+  if (bare === "/dav" || bare.startsWith("/dav/")) return WRITE_METHODS.has(method) ? "DAV_WRITE" : "DAV_READ";
+  if (bare === "/api/mint") return "MINT_IP";
+  if (bare === "/api/verify") return "VERIFY";
+  if (bare === "/api/report") return "REPORT";
+  if (bare.startsWith("/api/admin")) return "ADMIN";
+  if (bare === "/api/live") return "WS";
+  if (bare === "/api/session" || bare === "/api/locks" || bare === "/api/log") return "READ";
+  return "PAGE";
+}
+
+export function caps(): Caps {
+  return { maxFileBytes: MAX_FILE_BYTES, maxDriveBytes: MAX_DRIVE_BYTES, maxFiles: MAX_FILES, ttlMs: DRIVE_TTL_MS };
+}
+
+export async function handleRequest(request: Request, deps: Deps): Promise<Response> {
+  const url = new URL(request.url);
+  const redirect = hubRedirectTarget(url);
+  if (redirect) return Response.redirect(redirect, 308);
+  const path = routePath(url.pathname);
+  const name = limitName(request.method, path);
+  const allowed = await deps.limit(name, name === "MINT_IP" ? clientNetwork(clientIp(request)) : rateLimitIp(clientIp(request)));
+  if (!allowed) return seal(error(429, "rate_limited", "Too many requests. Wait a minute."));
+
+  const dav = splitDavPath(url.pathname);
+  if (dav === "bad") return seal(error(400, "bad_path", "That path is not valid."));
+  if (dav) return seal(await handleDav(request, deps, dav));
+
+  if (path === "/api/live") return await handleLive(request, deps, url);
+  if (path === "/api/health" && request.method === "GET") {
+    return seal(json({ ok: true, mintEnabled: resolveMintEnabled(deps.mintEnabledEnv, await deps.repo.mintKilled()) }));
+  }
+  if (path === "/api/config" && request.method === "GET") {
+    return seal(
+      json({
+        siteKey: deps.siteKey,
+        mintEnabled: resolveMintEnabled(deps.mintEnabledEnv, await deps.repo.mintKilled()),
+        aup: AUP_TEXT,
+        aupVersion: AUP_VERSION,
+        caps: caps(),
+      }),
+    );
+  }
+  if (path === "/api/litmus" && request.method === "GET") return seal(json(LITMUS_RESULTS));
+  if (path === "/api/mint" && request.method === "POST") return seal(await mint(request, deps));
+  if (path === "/api/verify" && request.method === "POST") return seal(await verify(request, deps, url));
+  if (path === "/api/session" && request.method === "GET") return seal(await session(request, deps));
+  if (path === "/api/locks" && request.method === "GET") return seal(await locks(request, deps));
+  if (path === "/api/log" && request.method === "GET") return seal(await log(request, deps));
+  if (path === "/api/report" && request.method === "POST") return seal(await report(request, deps));
+  if (path === "/api/dev/outbox" && request.method === "GET") return seal(await outbox(request, deps, url));
+  if (path.startsWith("/api/admin/")) return seal(await admin(request, deps, path));
+  if (path.startsWith("/api/")) return seal(error(404, "not_found", "Not found."));
+  if (request.method !== "GET" && request.method !== "HEAD") return seal(error(405, "method", "Method not allowed."));
+  if (!deps.assets) return seal(error(404, "not_found", "Not found."));
+  const assetPath = path === "/" ? "/index.html" : path;
+  if (assetPath !== "/index.html" && assetPath !== "/favicon.svg" && !assetPath.startsWith("/assets/")) {
+    return seal(error(404, "not_found", "Not found."));
+  }
+  return seal(await deps.assets(request, assetPath));
+}
+
+export async function wipeDrive(deps: Deps, drive: DriveRow, now: number): Promise<void> {
+  await deps.locksFor(drive.id).wipe(now);
+  await deletePrefix(deps.bucket, `drives/${drive.id}/`);
+  await deps.repo.markWiped(drive.id, now);
+}
+
+export async function wipeExpired(deps: Deps): Promise<number> {
+  const now = deps.now();
+  const rows = await deps.repo.listExpired(now);
+  for (const row of rows) await wipeDrive(deps, row, now);
+  await deps.repo.purge(now - 30 * 24 * 60 * 60 * 1000);
+  return rows.length;
+}
+
+async function handleDav(request: Request, deps: Deps, target: DavTarget): Promise<Response> {
+  return withDavCsp(await handleDavInner(request, deps, target));
+}
+
+async function handleDavInner(request: Request, deps: Deps, target: DavTarget): Promise<Response> {
+  const basic = parseBasic(request.headers.get("authorization"));
+  const cookie = readCookie(request.headers.get("cookie"), SESSION_COOKIE);
+  if (!basic && !cookie) return unauthorized();
+  const drive = await deps.repo.getDrive(target.driveId);
+  if (basic) {
+    if (basic.username !== target.driveId) {
+      await passwordMatches(basic.password, null, null);
+      return unauthorized();
+    }
+    const matches = await passwordMatches(basic.password, drive?.passwordSalt ?? null, drive?.passwordHash ?? null);
+    if (!drive || !matches || drive.status === "wiped") return unauthorized();
+  } else {
+    const presented = await hashSession(cookie ?? "");
+    const left = hexToBytes(presented);
+    const right = drive?.sessionHash ? hexToBytes(drive.sessionHash) : new Uint8Array(32);
+    if (!drive || !left || !right || !timingSafeEqual(left, right) || drive.status === "wiped") return unauthorized();
+    if (WRITE_METHODS.has(request.method) && !allowedPageOrigin(request, deps)) {
+      return error(403, "origin", "That origin cannot change this drive.");
+    }
+  }
+  if (!drive) return unauthorized();
+  const now = deps.now();
+  if (drive.status === "frozen" || (await deps.repo.blocked("email", drive.emailHmac)) || (await deps.repo.blocked("network", drive.networkHmac))) {
+    if (drive.status === "frozen" && wipeDecision(drive, now).action === "wipe") await wipeDrive(deps, drive, now);
+    return error(403, "frozen", "This drive is frozen.");
+  }
+  if (wipeDecision(drive, now).action === "wipe" || drive.status !== "active") {
+    if (wipeDecision(drive, now).action === "wipe") await wipeDrive(deps, drive, now);
+    return unauthorized();
+  }
+  if (!(await deps.limit("DAV_DRIVE", drive.id)) || !(await deps.limit("DAV_GLOBAL", "global"))) {
+    return error(429, "rate_limited", "Too many requests. Wait a minute.");
+  }
+  if (deps.forwardDav) return deps.forwardDav(request, drive, target);
+  if (!deps.serveDav) return error(500, "no_drive", "The drive is not available in this process.");
+  return deps.serveDav(request, drive, target, now);
+}
+
+async function mint(request: Request, deps: Deps): Promise<Response> {
+  const keys = secrets(deps);
+  if (keys instanceof Response) return keys;
+  if (!deps.mailFrom) return error(503, "not_configured", "This demo is not configured.");
+  const body = await readJson(request);
+  if (body instanceof Response) return body;
+  if (body.aup !== true) return error(400, "aup_required", "Accept the notice to mint a drive.");
+  const email = normalizeEmail(typeof body.email === "string" ? body.email : "");
+  if (!email) return error(400, "bad_email", "Enter a normal email address.");
+  if (isDisposableEmail(email)) {
+    return error(400, "disposable_email", "That email domain is on a disposable-domain list. The list is a soft signal and can be wrong. Use a regular mailbox.");
+  }
+  if (!(await deps.verifyTurnstile(typeof body.turnstileToken === "string" ? body.turnstileToken : "", request))) {
+    return error(403, "turnstile_failed", "The human check failed. Try again.");
+  }
+  if (!resolveMintEnabled(deps.mintEnabledEnv, await deps.repo.mintKilled())) return error(403, "mint_disabled", "Minting is turned off.");
+  const ip = clientIp(request);
+  const emailHmac = await hmacHex(keys.auditHmac, email);
+  const networkHmac = await hmacHex(keys.auditHmac, clientNetwork(ip));
+  const ipHmac = await hmacHex(keys.auditHmac, rateLimitIp(ip));
+  if ((await deps.repo.blocked("email", emailHmac)) || (await deps.repo.blocked("network", networkHmac))) {
+    return error(403, "blocked", "This email or network is blocked.");
+  }
+  if (!(await deps.limit("MINT_EMAIL", emailHmac)) || !(await deps.limit("MINT_GLOBAL", "global"))) {
+    return error(429, "rate_limited", "Too many requests. Wait a minute.");
+  }
+  const day = new Date(deps.now()).toISOString().slice(0, 10);
+  const expired = await deps.repo.findExpiredByEmail(emailHmac, deps.now());
+  if (expired) await wipeDrive(deps, expired, deps.now());
+  if (await deps.repo.findLiveByEmail(emailHmac, deps.now())) {
+    return error(409, "drive_exists", "This email already has a drive. Wait until it expires.");
+  }
+  if ((await deps.repo.dailyCount("email", day)) >= DAILY_EMAIL_CAP) {
+    return error(429, "daily_email_cap", "The demo has reached its email cap for today.");
+  }
+  const token = bytesToB64Url(randomBytes(32));
+  const tokenHash = await sha256Hex(encoder.encode(token));
+  const now = deps.now();
+  await deps.repo.insertVerification({
+    tokenHash,
+    emailHmac,
+    emailEnc: await encryptString(keys.auditKey, email),
+    ipHmac,
+    networkHmac,
+    createdAt: now,
+    expiresAt: now + VERIFY_TTL_MS,
+    usedAt: null,
+    aupVersion: AUP_VERSION,
+    devToken: deps.devOutbox ? token : null,
+  });
+  const link = `${deps.publicOrigin.replace(/\/$/, "")}/?verify=${encodeURIComponent(token)}`;
+  try {
+    await deps.sendEmail({
+      to: email,
+      subject: "Your R2 Drive link",
+      text: `Confirm your one-hour WebDAV drive.\n\n${link}\n\nThe link works once and expires in 15 minutes. If you did not ask for this, ignore it.`,
+    });
+  } catch {
+    await deps.repo.deleteVerification(tokenHash);
+    return error(502, "email_failed", "The confirmation email could not be sent.");
+  }
+  if (!(await deps.repo.tryIncrementDaily("email", day, DAILY_EMAIL_CAP))) {
+    return error(429, "daily_email_cap", "The demo has reached its email cap for today.");
+  }
+  return json({ ok: true, expiresInMinutes: 15 });
+}
+
+async function verify(request: Request, deps: Deps, url: URL): Promise<Response> {
+  const keys = secrets(deps);
+  if (keys instanceof Response) return keys;
+  const body = await readJson(request);
+  if (body instanceof Response) return body;
+  const token = typeof body.token === "string" ? body.token : "";
+  if (!token || token.length > 200) return error(400, "bad_token", "That link is invalid or expired.");
+  const row = await deps.repo.takeVerification(await sha256Hex(encoder.encode(token)), deps.now());
+  if (!row) return error(400, "bad_token", "That link is invalid or expired.");
+  const day = new Date(deps.now()).toISOString().slice(0, 10);
+  if (!(await deps.repo.tryIncrementDaily("mint", day, DAILY_MINT_CAP))) {
+    return error(429, "daily_cap", "The demo has reached its mint cap for today.");
+  }
+  if (!resolveMintEnabled(deps.mintEnabledEnv, await deps.repo.mintKilled())) return error(403, "mint_disabled", "Minting is turned off.");
+  if ((await deps.repo.blocked("email", row.emailHmac)) || (await deps.repo.blocked("network", row.networkHmac))) {
+    return error(403, "blocked", "This email or network is blocked.");
+  }
+  const expired = await deps.repo.findExpiredByEmail(row.emailHmac, deps.now());
+  if (expired) await wipeDrive(deps, expired, deps.now());
+  if (await deps.repo.findLiveByEmail(row.emailHmac, deps.now())) {
+    return error(409, "drive_exists", "This email already has a drive. Wait until it expires.");
+  }
+  const now = deps.now();
+  const password = bytesToB64Url(randomBytes(18));
+  const passwordRecord = await newPasswordRecord(password);
+  const session = bytesToB64Url(randomBytes(32));
+  const driveId = `drv_${bytesToHex(randomBytes(16))}`;
+  const expiresAt = now + DRIVE_TTL_MS;
+  try {
+    await deps.repo.insertDrive({
+      id: driveId,
+      emailHmac: row.emailHmac,
+      emailEnc: row.emailEnc,
+      ipHmac: row.ipHmac,
+      networkHmac: row.networkHmac,
+      createdAt: now,
+      expiresAt,
+      wipedAt: null,
+      frozenAt: null,
+      status: "active",
+      passwordHash: passwordRecord.hash,
+      passwordSalt: passwordRecord.salt,
+      sessionHash: await hashSession(session),
+      bytesUsed: 0,
+      fileCount: 0,
+      aupVersion: row.aupVersion,
+    });
+  } catch (caught) {
+    if (await deps.repo.findLiveByEmail(row.emailHmac, now)) {
+      return error(409, "drive_exists", "This email already has a drive. Wait until it expires.");
+    }
+    throw caught;
+  }
+  await deps.scheduleWipe?.(driveId, expiresAt);
+  const base = basePrefix(url.pathname);
+  const headers = new Headers({ "set-cookie": sessionCookie(session, Math.ceil(DRIVE_TTL_MS / 1000)) });
+  return json(
+    { driveId, username: driveId, password, expiresAt, mountPath: `${base}/dav/${driveId}/`, caps: caps() },
+    200,
+    headers,
+  );
+}
+
+async function session(request: Request, deps: Deps): Promise<Response> {
+  const drive = await sessionDrive(request, deps);
+  if (drive instanceof Response) return drive;
+  return json(sessionView(drive));
+}
+
+async function locks(request: Request, deps: Deps): Promise<Response> {
+  const drive = await sessionDrive(request, deps);
+  if (drive instanceof Response) return drive;
+  const rows = await deps.locksFor(drive.id).list(deps.now());
+  return json({ locks: rows.map(publicLock) });
+}
+
+async function log(request: Request, deps: Deps): Promise<Response> {
+  const drive = await sessionDrive(request, deps);
+  if (drive instanceof Response) return drive;
+  return json({ events: await deps.recent(drive.id) });
+}
+
+async function handleLive(request: Request, deps: Deps, url: URL): Promise<Response> {
+  if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return seal(error(426, "upgrade", "Expected a WebSocket."));
+  const drive = await sessionDrive(request, deps);
+  if (drive instanceof Response) return seal(drive);
+  if (!allowedPageOrigin(request, deps)) return seal(error(403, "origin", "That origin cannot watch this drive."));
+  if (!deps.openSocket) return seal(error(501, "no_socket", "The live log is not available in this process."));
+  return deps.openSocket(request, drive.id);
+}
+
+async function report(request: Request, deps: Deps): Promise<Response> {
+  const keys = secrets(deps);
+  if (keys instanceof Response) return keys;
+  const body = await readJson(request);
+  if (body instanceof Response) return body;
+  if (!(await deps.verifyTurnstile(typeof body.turnstileToken === "string" ? body.turnstileToken : "", request))) {
+    return error(403, "turnstile_failed", "The human check failed. Try again.");
+  }
+  const reason = typeof body.reason === "string" ? body.reason.trim() : "";
+  if (reason.length < 10 || reason.length > 2000) return error(400, "bad_reason", "Describe the problem in 10 to 2000 characters.");
+  const driveId = typeof body.driveId === "string" ? body.driveId : "";
+  const drive = /^drv_[a-f0-9]{32}$/.test(driveId) ? await deps.repo.getDrive(driveId) : null;
+  let frozen = false;
+  if (drive && drive.status !== "wiped") {
+    frozen = await deps.repo.freeze(drive.id, deps.now());
+    await deps.repo.block("email", drive.emailHmac, "report", deps.now());
+    await deps.repo.block("network", drive.networkHmac, "report", deps.now());
+  }
+  let contactEnc: string | null = null;
+  if (typeof body.contact === "string" && body.contact.trim()) {
+    const contact = normalizeEmail(body.contact);
+    if (contact) contactEnc = await encryptString(keys.auditKey, contact);
+  }
+  await deps.repo.addReport({
+    driveId: drive?.id ?? null,
+    reason,
+    contactEnc,
+    ipHmac: await hmacHex(keys.auditHmac, rateLimitIp(clientIp(request))),
+    createdAt: deps.now(),
+  });
+  return json({ ok: true, frozen }, 202);
+}
+
+async function outbox(request: Request, deps: Deps, url: URL): Promise<Response> {
+  if (!devOutboxOpen(request, deps, url)) return error(404, "not_found", "Not found.");
+  return json({ token: await deps.repo.latestDevToken() });
+}
+
+function devOutboxOpen(request: Request, deps: Deps, url: URL): boolean {
+  if (!deps.devOutbox) return false;
+  const host = (request.headers.get("host") ?? "").replace(/:\d+$/, "");
+  if (loopback(url.hostname) || loopback(host)) return true;
+  // `wrangler dev` rewrites the request host to the zone route. The sink stays
+  // closed in a real deploy because PUBLIC_ORIGIN is not a loopback address.
+  try {
+    return loopback(new URL(deps.publicOrigin).hostname);
+  } catch {
+    return false;
+  }
+}
+
+async function admin(request: Request, deps: Deps, path: string): Promise<Response> {
+  if (request.method !== "POST") return error(405, "method", "Method not allowed.");
+  const keys = secrets(deps);
+  if (keys instanceof Response) return keys;
+  if (!deps.adminToken) return error(503, "not_configured", "The admin token is not configured.");
+  const header = request.headers.get("authorization") ?? "";
+  const token = header.startsWith("Bearer ") ? header.slice("Bearer ".length) : "";
+  if (!(await tokensMatch(token, deps.adminToken))) return error(401, "unauthorized", "Unauthorized.");
+  const body = await readJson(request);
+  if (body instanceof Response) return body;
+  if (path === "/api/admin/mint") {
+    if (body.enabled === true && !deps.mintEnabledEnv) return error(409, "mint_disabled", "Minting is off in the Worker config.");
+    await deps.repo.setMintKilled(body.enabled !== true);
+    return json({ mintEnabled: resolveMintEnabled(deps.mintEnabledEnv, await deps.repo.mintKilled()) });
+  }
+  if (path === "/api/admin/freeze") {
+    const driveId = typeof body.driveId === "string" ? body.driveId : "";
+    const now = deps.now();
+    const ok = await deps.repo.freeze(driveId, now);
+    if (ok) await deps.deferAlarm?.(driveId, now + FROZEN_KEEP_MS);
+    return json({ ok });
+  }
+  if (path === "/api/admin/release") {
+    const driveId = typeof body.driveId === "string" ? body.driveId : "";
+    const drive = await deps.repo.getDrive(driveId);
+    const now = deps.now();
+    if (!drive || drive.status === "wiped" || wipeDecision(drive, now, { force: true }).action !== "wipe") return json({ ok: false });
+    await wipeDrive(deps, drive, now);
+    return json({ ok: true });
+  }
+  if (path === "/api/admin/block" || path === "/api/admin/unblock") {
+    const email = typeof body.email === "string" ? normalizeEmail(body.email) : null;
+    const ip = typeof body.ip === "string" ? body.ip : "";
+    if (!email && !ip) return error(400, "bad_block", "Provide an email or an IP address.");
+    if (email) {
+      const hmac = await hmacHex(keys.auditHmac, email);
+      if (path.endsWith("/block")) await deps.repo.block("email", hmac, "admin", deps.now());
+      else await deps.repo.unblock("email", hmac);
+    }
+    if (ip) {
+      const hmac = await hmacHex(keys.auditHmac, clientNetwork(ip));
+      if (path.endsWith("/block")) await deps.repo.block("network", hmac, "admin", deps.now());
+      else await deps.repo.unblock("network", hmac);
+    }
+    return json({ ok: true });
+  }
+  if (path === "/api/admin/audit") {
+    const driveId = typeof body.driveId === "string" ? body.driveId : "";
+    const drive = await deps.repo.getDrive(driveId);
+    if (!drive) return error(404, "not_found", "No drive with that id.");
+    return json({
+      driveId: drive.id,
+      email: await decryptString(keys.auditKey, drive.emailEnc),
+      createdAt: drive.createdAt,
+      expiresAt: drive.expiresAt,
+      status: drive.status,
+      objects: await deps.repo.listObjects(drive.id),
+    });
+  }
+  return error(404, "not_found", "Not found.");
+}
+
+async function sessionDrive(request: Request, deps: Deps): Promise<DriveRow | Response> {
+  const cookie = readCookie(request.headers.get("cookie"), SESSION_COOKIE);
+  if (!cookie) return error(401, "unauthorized", "Unauthorized.");
+  const presentedHex = await hashSession(cookie);
+  const presented = hexToBytes(presentedHex);
+  const drive = await deps.repo.findBySession(presentedHex);
+  const stored = drive?.sessionHash ? hexToBytes(drive.sessionHash) : new Uint8Array(32);
+  if (!drive || !presented || !stored || !timingSafeEqual(presented, stored)) return error(401, "unauthorized", "Unauthorized.");
+  const now = deps.now();
+  if (drive.status === "frozen") {
+    if (wipeDecision(drive, now).action === "wipe") await wipeDrive(deps, drive, now);
+    return error(403, "frozen", "This drive is frozen.");
+  }
+  if (wipeDecision(drive, now).action === "wipe") {
+    await wipeDrive(deps, drive, now);
+    return error(401, "unauthorized", "Unauthorized.");
+  }
+  if (drive.status !== "active") return error(401, "unauthorized", "Unauthorized.");
+  return drive;
+}
+
+function sessionView(drive: DriveRow): SessionView {
+  return {
+    driveId: drive.id,
+    expiresAt: drive.expiresAt,
+    bytesUsed: drive.bytesUsed,
+    fileCount: drive.fileCount,
+    status: drive.status,
+    caps: caps(),
+  };
+}
+
+function publicLock(lock: LockRecord): PublicLock {
+  return {
+    path: lock.path,
+    owner: lock.owner ?? null,
+    scope: lock.scope,
+    depth: lock.depth,
+    timeout: lock.timeout,
+    expiresAt: lock.expiresAt,
+  };
+}
+
+function routePath(pathname: string): string {
+  const base = basePrefix(pathname);
+  return base ? pathname.slice(base.length) || "/" : pathname;
+}
+
+function loopback(hostname: string): boolean {
+  return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "[::1]";
+}
+
+function allowedPageOrigin(request: Request, deps: Deps): boolean {
+  const site = request.headers.get("sec-fetch-site");
+  if (site === "cross-site") return false;
+  const origin = request.headers.get("origin");
+  if (!origin) return true;
+  if (origin === new URL(request.url).origin) return true;
+  try {
+    return origin === new URL(deps.publicOrigin).origin;
+  } catch {
+    return false;
+  }
+}
+
+function unauthorized(): Response {
+  return new Response("Unauthorized", {
+    status: 401,
+    headers: { "www-authenticate": 'Basic realm="r2-drive"', DAV: "1, 2", Allow: "OPTIONS, PROPFIND, PROPPATCH, MKCOL, GET, HEAD, PUT, DELETE, COPY, MOVE, LOCK, UNLOCK" },
+  });
+}
+
+export function seal(response: Response): Response {
+  if (response.status === 101) return response;
+  const headers = new Headers(response.headers);
+  headers.set("cache-control", "private, no-store");
+  headers.set("x-content-type-options", "nosniff");
+  headers.set("referrer-policy", "no-referrer");
+  for (const name of ["access-control-allow-origin", "access-control-allow-credentials", "access-control-allow-methods", "access-control-allow-headers"]) {
+    headers.delete(name);
+  }
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
+function json(data: unknown, status = 200, extra?: Headers): Response {
+  const headers = extra ?? new Headers();
+  headers.set("content-type", "application/json; charset=utf-8");
+  return new Response(JSON.stringify(data), { status, headers });
+}
+
+async function readCapped(request: Request, max: number): Promise<Uint8Array | Response> {
+  const declared = request.headers.get("content-length");
+  if (declared !== null) {
+    const size = Number(declared);
+    if (!Number.isFinite(size) || size < 0) return error(400, "bad_json", "Expected a JSON object.");
+    if (size > max) return error(413, "too_large", "The request body is too large.");
+  }
+  if (!request.body) return new Uint8Array();
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const step = await reader.read();
+    if (step.done) break;
+    total += step.value.byteLength;
+    if (total > max) {
+      await reader.cancel();
+      return error(413, "too_large", "The request body is too large.");
+    }
+    chunks.push(step.value);
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
+}
+
+function error(status: number, code: string, message: string): Response {
+  return json({ error: { code, message } }, status);
+}
+
+function secrets(deps: Deps): { auditKey: CryptoKey; auditHmac: CryptoKey } | Response {
+  if (!deps.configured || !deps.auditKey || !deps.auditHmac) return error(503, "not_configured", "This demo is not configured.");
+  return { auditKey: deps.auditKey, auditHmac: deps.auditHmac };
+}
+
+async function readJson(request: Request): Promise<Record<string, unknown> | Response> {
+  const limited = await readCapped(request, 32 * 1024);
+  if (limited instanceof Response) return limited;
+  const text = new TextDecoder().decode(limited);
+  try {
+    const parsed: unknown = JSON.parse(text || "{}");
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return error(400, "bad_json", "Expected a JSON object.");
+    return parsed as Record<string, unknown>;
+  } catch {
+    return error(400, "bad_json", "Expected a JSON object.");
+  }
+}

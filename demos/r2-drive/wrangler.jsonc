@@ -1,0 +1,73 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tech-demos-r2-drive",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-10-08",
+  "compatibility_flags": ["nodejs_compat"],
+  "dev": { "port": 8808 },
+  "limits": { "cpu_ms": 30000 },
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none"
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "DRIVE", "class_name": "DriveObject" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["DriveObject"] }],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "r2-drive-placeholder",
+      // Placeholder. Replace with a real database_id before deploy.
+      // Not all zeros: wrangler 4.45+ refuses to auto-create that id.
+      "database_id": "00000000-0000-4000-8000-0000000000d2",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "BUCKET",
+      "bucket_name": "r2-drive-placeholder"
+    }
+  ],
+  "send_email": [{ "name": "EMAIL" }],
+  // Ids 7601–7613. Checked against the other demos on 2026-10-23.
+  "ratelimits": [
+    { "name": "MINT_IP", "namespace_id": "7601", "simple": { "limit": 3, "period": 60 } },
+    { "name": "MINT_EMAIL", "namespace_id": "7602", "simple": { "limit": 3, "period": 60 } },
+    { "name": "MINT_GLOBAL", "namespace_id": "7603", "simple": { "limit": 10, "period": 60 } },
+    { "name": "DAV_READ", "namespace_id": "7604", "simple": { "limit": 600, "period": 60 } },
+    { "name": "DAV_WRITE", "namespace_id": "7605", "simple": { "limit": 120, "period": 60 } },
+    { "name": "PAGE", "namespace_id": "7606", "simple": { "limit": 180, "period": 60 } },
+    { "name": "DAV_GLOBAL", "namespace_id": "7607", "simple": { "limit": 600, "period": 60 } },
+    { "name": "REPORT", "namespace_id": "7608", "simple": { "limit": 5, "period": 60 } },
+    { "name": "ADMIN", "namespace_id": "7609", "simple": { "limit": 30, "period": 60 } },
+    { "name": "VERIFY", "namespace_id": "7610", "simple": { "limit": 10, "period": 60 } },
+    { "name": "WS", "namespace_id": "7611", "simple": { "limit": 20, "period": 60 } },
+    { "name": "READ", "namespace_id": "7612", "simple": { "limit": 120, "period": 60 } },
+    { "name": "DAV_DRIVE", "namespace_id": "7613", "simple": { "limit": 240, "period": 60 } }
+  ],
+  "triggers": { "crons": ["*/5 * * * *"] },
+  "vars": {
+    "MINT_ENABLED": "false",
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFRUoj5qDpf7XyIW",
+    "TURNSTILE_LOCAL": "0",
+    "EMAIL_SINK": "0",
+    "MAIL_FROM": "drive@example.invalid",
+    "PUBLIC_ORIGIN": "https://r2-drive.tech-demos.theserverless.dev"
+  },
+  "secrets": {
+    "required": ["TURNSTILE_SECRET", "ADMIN_TOKEN", "AUDIT_KEY", "AUDIT_HMAC_KEY"]
+  },
+  "routes": [
+    { "pattern": "tech-demos.theserverless.dev/demos/r2-drive*", "zone_name": "theserverless.dev" },
+    { "pattern": "r2-drive.tech-demos.theserverless.dev/*", "zone_name": "theserverless.dev" }
+  ],
+  "workers_dev": false,
+  "observability": {
+    "enabled": true,
+    "traces": { "enabled": true }
+  }
+}
