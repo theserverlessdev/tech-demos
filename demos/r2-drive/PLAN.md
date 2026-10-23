@@ -35,6 +35,5 @@ Show that a stateful file protocol (WebDAV Class 1 and Class 2, including LOCK a
 
 ## Deferred
 
-- Litmus `http` suite (upstream skips it; local Workers time out on `Expect: 100-continue`).
 - Sub-day R2 lifecycle. The lifecycle API is day-scale, so the hour is enforced in the Worker.
 - Decrypt-from-dashboard tooling. Admin audit is the support path.

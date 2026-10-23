@@ -24,7 +24,7 @@ Port of [abersheeran/r2-webdav](https://github.com/abersheeran/r2-webdav) (Apach
 - Minting requires Turnstile, an accepted use notice, and a magic link from Cloudflare Email Sending. One live drive per normalised email.
 - D1 keeps an audit row (HMAC email, encrypted email, IP hash, network hash, object key, sha256, size) for 30 days after the wipe.
 - Admin token can freeze a drive or disable minting. `MINT_ENABLED` is off unless the env value is the string `true`.
-- The litmus page shows a suite only when `src/shared/litmus-results.ts` contains that suite's raw output.
+- The litmus page shows a suite only when `src/shared/litmus-results.ts` contains that suite's raw output. The 2026-10-23 run records `basic` 16/16, `copymove` 13/13, `props` 30/30, `locks` 41/41, and `http` 4/4.
 - `LICENSE` line 1 matches upstream `abersheeran/r2-webdav` (`Copyright 2026 abersheeran`).
 
 The quota, content checks, and hosting notes in `SAFETY.md` describe the current behaviour, including the PDF Flate-stream gap and the 30-day freeze retention.

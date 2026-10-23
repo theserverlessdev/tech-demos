@@ -89,7 +89,7 @@ The disposable-domain check uses a vendored copy of [disposable-email-domains](h
 
 ## Litmus
 
-`src/shared/litmus-results.ts` holds a real run of litmus 0.13 (Ubuntu 0.13-5build2) against `wrangler dev` on 2026-10-23. The suites were invoked one at a time. `basic` was 16/16 with one warning (DELETE of a collection whose Request-URI included a fragment), `copymove` 13/13, `props` 30/30, and `locks` 41/41. The `http` suite was not run. Upstream skips it because `Expect: 100-continue` times out on local Workers. The page prints those counts and the note; it does not invent a suite that has no raw output.
+`src/shared/litmus-results.ts` holds a real run of litmus 0.13 (Ubuntu 0.13-5build2) against `wrangler dev` on 2026-10-23. The suites were invoked one at a time. `basic` was 16/16 with one warning (DELETE of a collection whose Request-URI included a fragment), `copymove` 13/13, `props` 30/30, `locks` 41/41, and `http` 4/4, including `expect100`. The page prints those counts and the raw output; it does not invent a suite that has no raw output.
 
 ## Mount
 
