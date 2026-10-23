@@ -1,4 +1,4 @@
-import { AUP_TEXT, AUP_VERSION, DAILY_EMAIL_CAP, DAILY_MINT_CAP, DRIVE_TTL_MS, MAX_DRIVE_BYTES, MAX_FILE_BYTES, MAX_FILES, VERIFY_TTL_MS, type LimitName } from "../shared/constants";
+import { AUP_TEXT, AUP_VERSION, DAILY_EMAIL_CAP, DAILY_MINT_CAP, DRIVE_TTL_MS, FROZEN_KEEP_MS, MAX_DRIVE_BYTES, MAX_FILE_BYTES, MAX_FILES, VERIFY_TTL_MS, type LimitName } from "../shared/constants";
 import { isDisposableEmail, normalizeEmail } from "../shared/email-address";
 import { LITMUS_RESULTS } from "../shared/litmus-results";
 import { basePrefix, splitDavPath, type DavTarget } from "../shared/paths";
@@ -7,6 +7,7 @@ import { SESSION_COOKIE, hashSession, newPasswordRecord, parseBasic, passwordMat
 import { deletePrefix, type DavBucket } from "./bucket";
 import { bytesToB64Url, bytesToHex, decryptString, encryptString, hexToBytes, hmacHex, randomBytes, sha256Hex, timingSafeEqual, tokensMatch } from "./crypto";
 import { withDavCsp } from "./drive-session";
+import { wipeDecision } from "./drive-wipe";
 import { clientIp, clientNetwork, rateLimitIp } from "./ip";
 import type { LockRecord } from "./locks";
 import type { DriveRepo, DriveRow } from "./repo";
@@ -37,18 +38,18 @@ export type Deps = {
   siteKey: string;
   configured: boolean;
   recent: (driveId: string) => LogEvent[] | Promise<LogEvent[]>;
-  note: (driveId: string, event: LogEvent) => void;
   forwardDav?: (request: Request, drive: DriveRow, target: DavTarget) => Promise<Response>;
   serveDav?: (request: Request, drive: DriveRow, target: DavTarget, now: number) => Promise<Response>;
   openSocket?: (request: Request, driveId: string) => Promise<Response>;
   scheduleWipe?: (driveId: string, expiresAt: number) => Promise<void>;
+  deferAlarm?: (driveId: string, until: number) => Promise<void>;
   assets?: (request: Request, path: string) => Promise<Response>;
 };
 
 const HUB_PREFIX = "/demos/r2-drive";
 const DEMO_ORIGIN = "https://r2-drive.tech-demos.theserverless.dev";
 
-/** Hub and workers.dev paths on the shared origin go to this demo's host. */
+/** /demos/r2-drive* on the shared host redirects to this demo. workers.dev is off. */
 export function hubRedirectTarget(url: URL): string | null {
   const path = url.pathname;
   if (path !== HUB_PREFIX && !path.startsWith(`${HUB_PREFIX}/`)) return null;
@@ -168,12 +169,13 @@ async function handleDavInner(request: Request, deps: Deps, target: DavTarget): 
     }
   }
   if (!drive) return unauthorized();
+  const now = deps.now();
   if (drive.status === "frozen" || (await deps.repo.blocked("email", drive.emailHmac)) || (await deps.repo.blocked("network", drive.networkHmac))) {
+    if (drive.status === "frozen" && wipeDecision(drive, now).action === "wipe") await wipeDrive(deps, drive, now);
     return error(403, "frozen", "This drive is frozen.");
   }
-  const now = deps.now();
-  if (drive.expiresAt <= now || drive.status !== "active") {
-    await wipeDrive(deps, drive, now);
+  if (wipeDecision(drive, now).action === "wipe" || drive.status !== "active") {
+    if (wipeDecision(drive, now).action === "wipe") await wipeDrive(deps, drive, now);
     return unauthorized();
   }
   if (!(await deps.limit("DAV_DRIVE", drive.id)) || !(await deps.limit("DAV_GLOBAL", "global"))) {
@@ -211,13 +213,13 @@ async function mint(request: Request, deps: Deps): Promise<Response> {
     return error(429, "rate_limited", "Too many requests. Wait a minute.");
   }
   const day = new Date(deps.now()).toISOString().slice(0, 10);
-  if (!(await deps.repo.tryIncrementDaily("email", day, DAILY_EMAIL_CAP))) {
-    return error(429, "daily_email_cap", "The demo has reached its email cap for today.");
-  }
   const expired = await deps.repo.findExpiredByEmail(emailHmac, deps.now());
   if (expired) await wipeDrive(deps, expired, deps.now());
   if (await deps.repo.findLiveByEmail(emailHmac, deps.now())) {
     return error(409, "drive_exists", "This email already has a drive. Wait until it expires.");
+  }
+  if ((await deps.repo.dailyCount("email", day)) >= DAILY_EMAIL_CAP) {
+    return error(429, "daily_email_cap", "The demo has reached its email cap for today.");
   }
   const token = bytesToB64Url(randomBytes(32));
   const tokenHash = await sha256Hex(encoder.encode(token));
@@ -244,6 +246,9 @@ async function mint(request: Request, deps: Deps): Promise<Response> {
   } catch {
     await deps.repo.deleteVerification(tokenHash);
     return error(502, "email_failed", "The confirmation email could not be sent.");
+  }
+  if (!(await deps.repo.tryIncrementDaily("email", day, DAILY_EMAIL_CAP))) {
+    return error(429, "daily_email_cap", "The demo has reached its email cap for today.");
   }
   return json({ ok: true, expiresInMinutes: 15 });
 }
@@ -303,7 +308,7 @@ async function verify(request: Request, deps: Deps, url: URL): Promise<Response>
   }
   await deps.scheduleWipe?.(driveId, expiresAt);
   const base = basePrefix(url.pathname);
-  const headers = new Headers({ "set-cookie": sessionCookie(session, cookieSecure(deps, url), Math.ceil(DRIVE_TTL_MS / 1000)) });
+  const headers = new Headers({ "set-cookie": sessionCookie(session, Math.ceil(DRIVE_TTL_MS / 1000)) });
   return json(
     { driveId, username: driveId, password, expiresAt, mountPath: `${base}/dav/${driveId}/`, caps: caps() },
     200,
@@ -407,14 +412,17 @@ async function admin(request: Request, deps: Deps, path: string): Promise<Respon
   }
   if (path === "/api/admin/freeze") {
     const driveId = typeof body.driveId === "string" ? body.driveId : "";
-    const ok = await deps.repo.freeze(driveId, deps.now());
+    const now = deps.now();
+    const ok = await deps.repo.freeze(driveId, now);
+    if (ok) await deps.deferAlarm?.(driveId, now + FROZEN_KEEP_MS);
     return json({ ok });
   }
   if (path === "/api/admin/release") {
     const driveId = typeof body.driveId === "string" ? body.driveId : "";
     const drive = await deps.repo.getDrive(driveId);
-    if (!drive || drive.status === "wiped") return json({ ok: false });
-    await wipeDrive(deps, drive, deps.now());
+    const now = deps.now();
+    if (!drive || drive.status === "wiped" || wipeDecision(drive, now, { force: true }).action !== "wipe") return json({ ok: false });
+    await wipeDrive(deps, drive, now);
     return json({ ok: true });
   }
   if (path === "/api/admin/block" || path === "/api/admin/unblock") {
@@ -457,11 +465,15 @@ async function sessionDrive(request: Request, deps: Deps): Promise<DriveRow | Re
   const drive = await deps.repo.findBySession(presentedHex);
   const stored = drive?.sessionHash ? hexToBytes(drive.sessionHash) : new Uint8Array(32);
   if (!drive || !presented || !stored || !timingSafeEqual(presented, stored)) return error(401, "unauthorized", "Unauthorized.");
-  if (drive.expiresAt <= deps.now()) {
-    await wipeDrive(deps, drive, deps.now());
+  const now = deps.now();
+  if (drive.status === "frozen") {
+    if (wipeDecision(drive, now).action === "wipe") await wipeDrive(deps, drive, now);
+    return error(403, "frozen", "This drive is frozen.");
+  }
+  if (wipeDecision(drive, now).action === "wipe") {
+    await wipeDrive(deps, drive, now);
     return error(401, "unauthorized", "Unauthorized.");
   }
-  if (drive.status === "frozen") return error(403, "frozen", "This drive is frozen.");
   if (drive.status !== "active") return error(401, "unauthorized", "Unauthorized.");
   return drive;
 }
@@ -507,14 +519,6 @@ function allowedPageOrigin(request: Request, deps: Deps): boolean {
     return origin === new URL(deps.publicOrigin).origin;
   } catch {
     return false;
-  }
-}
-
-function cookieSecure(deps: Deps, url: URL): boolean {
-  try {
-    return new URL(deps.publicOrigin).protocol === "https:";
-  } catch {
-    return url.protocol === "https:";
   }
 }
 

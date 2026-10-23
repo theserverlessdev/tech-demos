@@ -25,6 +25,9 @@ Port of [abersheeran/r2-webdav](https://github.com/abersheeran/r2-webdav) (Apach
 - D1 keeps an audit row (HMAC email, encrypted email, IP hash, network hash, object key, sha256, size) for 30 days after the wipe.
 - Admin token can freeze a drive or disable minting. `MINT_ENABLED` is off unless the env value is the string `true`.
 - The litmus page shows a suite only when `src/shared/litmus-results.ts` contains that suite's raw output. The 2026-10-23 run records `basic` 16/16, `copymove` 13/13, `props` 30/30, `locks` 41/41, and `http` 4/4.
+- Office packages must end on a comment-free central directory. Finder `._*` and `.DS_Store` files must match their magic bytes. PDF names are checked after `#xx` escapes, and only signatures of 4 or more bytes are scanned.
+- A drive holds at most 64 locks and 8 shared locks on one path. The owner is at most 1 KB, and each token is one row. The live log allows 4 sockets and closes them on a client message or a wipe.
+- A frozen drive stays until an admin release or 30 days. The alarm and `/api/session` share that decision. DAV ceilings are 240 per drive and 600 per Cloudflare location per minute. The email cap counts a message only after it is sent.
 - `LICENSE` line 1 matches upstream `abersheeran/r2-webdav` (`Copyright 2026 abersheeran`).
 
 The quota, content checks, and hosting notes in `SAFETY.md` describe the current behaviour, including the PDF Flate-stream gap and the 30-day freeze retention.

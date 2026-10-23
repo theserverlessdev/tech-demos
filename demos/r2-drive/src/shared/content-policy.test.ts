@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { sniff, zipDeflated, zipStored } from "./content-policy";
+import { sniff } from "./content-policy";
+import { zipDeflated, zipStored } from "./zip-fixture";
 
 const text = (value: string) => new TextEncoder().encode(value);
 const bytes = (...values: number[]) => new Uint8Array(values);
@@ -97,5 +98,39 @@ describe("magic bytes", () => {
     ]);
     const sniffed = await sniff(docx);
     expect(sniffed.ok && sniffed.kind).toBe("ooxml");
+    const png = bytes(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0);
+    const hidden = zipStored([{ name: "hidden.png", data: png }]);
+    const appended = new Uint8Array(docx.byteLength + 4 + hidden.byteLength);
+    appended.set(docx);
+    appended.set([0x50, 0x4b, 0x01, 0x02], docx.byteLength);
+    appended.set(hidden, docx.byteLength + 4);
+    expect((await sniff(appended)).ok).toBe(false);
+    const trailed = new Uint8Array(docx.byteLength + 1);
+    trailed.set(docx);
+    expect((await sniff(trailed)).ok).toBe(false);
+    const commented = new Uint8Array(docx.byteLength + 10);
+    commented.set(docx);
+    commented[docx.byteLength - 2] = 10;
+    expect((await sniff(commented)).ok).toBe(false);
+    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const encoded = await zipDeflated([
+      { name: "[Content_Types].xml", data: text(`<?xml version="1.0"?><Types/>`) },
+      { name: "word/document.xml", data: text(`<a>${alphabet.repeat(7).slice(0, 400)}`) },
+    ]);
+    expect((await sniff(encoded)).ok).toBe(false);
+  });
+
+  test("pdf name escapes are decoded and short signatures inside flate data stay", async () => {
+    const noise = new Uint8Array(200 * 1024);
+    for (let i = 0; i < noise.byteLength; i += 2) {
+      noise[i] = 0x4d;
+      noise[i + 1] = 0x5a;
+    }
+    const body = new Uint8Array(text("%PDF-1.7\n").byteLength + noise.byteLength + text("\n%%EOF\n").byteLength);
+    body.set(text("%PDF-1.7\n"));
+    body.set(noise, text("%PDF-1.7\n").byteLength);
+    body.set(text("\n%%EOF\n"), text("%PDF-1.7\n").byteLength + noise.byteLength);
+    expect((await sniff(body)).ok).toBe(true);
+    expect((await sniff(text("%PDF-1.7\n/J#61vaScript (x)\n%%EOF\n"))).ok).toBe(false);
   });
 });

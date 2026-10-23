@@ -8,7 +8,7 @@
     "lifecycle": "bunx wrangler r2 bucket lifecycle set r2-drive-placeholder --file lifecycle.json",
     "deploy": "bun run build && CI=1 wrangler d1 migrations apply DB --remote && wrangler deploy && bun run lifecycle",
     "test": "bun test",
-    "typecheck": "wrangler types && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
+    "typecheck": "wrangler types && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit && tsc -p tsconfig.test.json --noEmit",
     "cf-typegen": "wrangler types",
     "smoke": "bun run scripts/smoke.ts"
   },
@@ -16,6 +16,7 @@
     "@xmldom/xmldom": "0.9.12"
   },
   "devDependencies": {
+    "bun-types": "^1.4.3",
     "typescript": "^5.9.2",
     "wrangler": "^4.40.0"
   }

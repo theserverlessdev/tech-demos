@@ -41,13 +41,13 @@
     { "name": "DAV_READ", "namespace_id": "7604", "simple": { "limit": 600, "period": 60 } },
     { "name": "DAV_WRITE", "namespace_id": "7605", "simple": { "limit": 120, "period": 60 } },
     { "name": "PAGE", "namespace_id": "7606", "simple": { "limit": 180, "period": 60 } },
-    { "name": "DAV_GLOBAL", "namespace_id": "7607", "simple": { "limit": 3000, "period": 60 } },
+    { "name": "DAV_GLOBAL", "namespace_id": "7607", "simple": { "limit": 600, "period": 60 } },
     { "name": "REPORT", "namespace_id": "7608", "simple": { "limit": 5, "period": 60 } },
     { "name": "ADMIN", "namespace_id": "7609", "simple": { "limit": 30, "period": 60 } },
     { "name": "VERIFY", "namespace_id": "7610", "simple": { "limit": 10, "period": 60 } },
     { "name": "WS", "namespace_id": "7611", "simple": { "limit": 20, "period": 60 } },
     { "name": "READ", "namespace_id": "7612", "simple": { "limit": 120, "period": 60 } },
-    { "name": "DAV_DRIVE", "namespace_id": "7613", "simple": { "limit": 800, "period": 60 } }
+    { "name": "DAV_DRIVE", "namespace_id": "7613", "simple": { "limit": 240, "period": 60 } }
   ],
   "triggers": { "crons": ["*/5 * * * *"] },
   "vars": {
@@ -65,7 +65,7 @@
     { "pattern": "tech-demos.theserverless.dev/demos/r2-drive*", "zone_name": "theserverless.dev" },
     { "pattern": "r2-drive.tech-demos.theserverless.dev/*", "zone_name": "theserverless.dev" }
   ],
-  "workers_dev": true,
+  "workers_dev": false,
   "observability": {
     "enabled": true,
     "traces": { "enabled": true }

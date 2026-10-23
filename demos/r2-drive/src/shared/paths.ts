@@ -7,15 +7,6 @@ export function basePrefix(pathname: string): string {
   return "";
 }
 
-/** Strip the hub prefix so routes can be written once. */
-export function stripBase(url: URL): { url: URL; base: string } {
-  const base = basePrefix(url.pathname);
-  if (!base) return { url, base: "" };
-  const next = new URL(url.href);
-  next.pathname = url.pathname.slice(base.length) || "/";
-  return { url: next, base };
-}
-
 /**
  * Decode one URL path under a drive mount.
  * Returns the relative key, or null when the path escapes the prefix.

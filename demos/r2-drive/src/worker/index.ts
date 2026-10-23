@@ -77,10 +77,10 @@ async function buildDeps(env: Env): Promise<Deps> {
     siteKey: env.TURNSTILE_SITE_KEY ?? "",
     configured: Boolean(keys && env.TURNSTILE_SECRET && env.MAIL_FROM && env.PUBLIC_ORIGIN),
     recent: (driveId) => env.DRIVE.getByName(driveId).recentEvents(),
-    note: () => undefined,
     forwardDav: async (request, drive) => env.DRIVE.getByName(drive.id).fetch(authed(request)),
     openSocket: async (request, driveId) => env.DRIVE.getByName(driveId).fetch(authed(request)),
     scheduleWipe: (driveId, expiresAt) => env.DRIVE.getByName(driveId).schedule(expiresAt),
+    deferAlarm: (driveId, until) => env.DRIVE.getByName(driveId).deferAlarm(until),
     assets: (request, path) => serveAsset(env, request, path),
   };
 }

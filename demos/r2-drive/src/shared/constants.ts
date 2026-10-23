@@ -12,10 +12,14 @@ export const AUDIT_KEEP_MS = 30 * 24 * 60 * 60 * 1000;
 export const DAILY_MINT_CAP = 40;
 export const DAILY_EMAIL_CAP = 40;
 
+export const MAX_LOCKS_PER_DRIVE = 64;
+export const MAX_SHARED_LOCKS_PER_PATH = 8;
+export const MAX_LOCK_OWNER_BYTES = 1024;
+
 /** A frozen drive stays for evidence until an admin releases it, or this long. */
 export const FROZEN_KEEP_MS = 30 * 24 * 60 * 60 * 1000;
 
-export const AUP_VERSION = "2026-10-23";
+export const AUP_VERSION = "2026-10-23.2";
 
 /** Relative object keys longer than this are rejected with 414. R2's limit is 1024. */
 export const MAX_KEY_BYTES = 900;

@@ -1,4 +1,5 @@
 import { FROZEN_KEEP_MS } from "../shared/constants";
+import { wipeDecision } from "./drive-wipe";
 
 export type DriveStatus = "active" | "frozen" | "wiped";
 
@@ -46,6 +47,7 @@ export interface DriveRepo {
   mintKilled(): Promise<boolean>;
   setMintKilled(killed: boolean): Promise<void>;
   tryIncrementDaily(kind: "mint" | "email", day: string, cap: number): Promise<boolean>;
+  dailyCount(kind: "mint" | "email", day: string): Promise<number>;
   insertVerification(row: VerificationRow): Promise<void>;
   deleteVerification(tokenHash: string): Promise<void>;
   takeVerification(tokenHash: string, now: number): Promise<VerificationRow | null>;
@@ -89,6 +91,9 @@ export class MemoryRepo implements DriveRepo {
     if (count >= cap) return false;
     this.daily.set(key, count + 1);
     return true;
+  }
+  async dailyCount(kind: "mint" | "email", day: string): Promise<number> {
+    return this.daily.get(`${kind}:${day}`) ?? 0;
   }
   async insertVerification(row: VerificationRow): Promise<void> {
     this.verifications.push(row);
@@ -207,6 +212,11 @@ export class D1Repo implements DriveRepo {
       .bind(day, cap)
       .first<{ count: number }>();
     return row !== null;
+  }
+  async dailyCount(kind: "mint" | "email", day: string): Promise<number> {
+    const table = kind === "mint" ? "mint_daily" : "email_daily";
+    const row = await this.db.prepare(`SELECT count FROM ${table} WHERE day = ?1`).bind(day).first<{ count: number }>();
+    return row?.count ?? 0;
   }
   async insertVerification(row: VerificationRow): Promise<void> {
     await this.db
@@ -382,9 +392,7 @@ function holdsSlot(row: DriveRow, now: number): boolean {
 }
 
 function dueForWipe(row: DriveRow, now: number): boolean {
-  if (row.status === "active") return row.expiresAt <= now;
-  if (row.status === "frozen") return row.frozenAt !== null && row.frozenAt + FROZEN_KEEP_MS <= now;
-  return false;
+  return wipeDecision(row, now).action === "wipe";
 }
 
 function mapDrive(row: Record<string, D1Value>): DriveRow {

@@ -1,5 +1,5 @@
-import { contentDisposition, isFinderNoise, safeFilename, sniff } from "../shared/content-policy";
-import { FINDER_MAX_BYTES, MAX_DRIVE_BYTES, MAX_FILE_BYTES, MAX_FILES, MAX_KEY_BYTES } from "../shared/constants";
+import { checkFinder, contentDisposition, isFinderNoise, safeFilename, sniff } from "../shared/content-policy";
+import { MAX_DRIVE_BYTES, MAX_FILE_BYTES, MAX_FILES, MAX_KEY_BYTES } from "../shared/constants";
 import { DavStatus, type DavBucket, type DavObject, type PutOptions } from "./bucket";
 import { sha256Hex } from "./crypto";
 
@@ -87,7 +87,8 @@ export class GuardedBucket implements DavBucket {
     const finder = !collection && isFinderNoise(key);
     let httpMetadata = options?.httpMetadata;
     if (finder) {
-      if (body.byteLength > FINDER_MAX_BYTES) throw new DavStatus(413, "Finder metadata is too large");
+      const decision = checkFinder(key, body);
+      if (!decision.ok) throw new DavStatus(decision.status, decision.reason);
       httpMetadata = {
         contentType: "application/octet-stream",
         contentDisposition: contentDisposition(safeFilename(key), false),

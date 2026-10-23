@@ -21,7 +21,7 @@ sequenceDiagram
   Worker->>D1: insert drive, count the daily mint
   Worker->>DO: schedule(expiresAt)
   Browser->>Worker: WebDAV
-  Worker->>Worker: credential, per-drive limit, global DAV ceiling
+  Worker->>Worker: credential, per-drive limit, per-location DAV ceiling
   Worker->>DO: authed request
   DO->>DO: serialise the write, reserve quota
   DO->>R2: put or delete
@@ -33,7 +33,7 @@ sequenceDiagram
 
 What you could build with the same pattern: a personal Dropbox-style drive, an Obsidian or Zotero sync target, or a backup destination for rclone.
 
-This demo is a port of [abersheeran/r2-webdav](https://github.com/abersheeran/r2-webdav) (Apache-2.0). See `NOTICE`, `LICENSE`, and `CHANGELOG.md`. The sandbox limits are in `SAFETY.md`.
+This demo is a port of [abersheeran/r2-webdav](https://github.com/abersheeran/r2-webdav) (Apache-2.0). See `NOTICE`, `LICENSE`, and `CHANGELOG.md`. The sandbox limits are in [SAFETY.md](./SAFETY.md).
 
 ## Run
 
@@ -81,9 +81,11 @@ The rule expires objects under `drives/` after one day. R2 lifecycle is day-scal
 
 ## Caps and content
 
-25 MB per drive, 5 MB per file, 200 objects, one hour. `PUT` walks one list in `src/shared/content-policy.ts`. Text, Markdown, JSON, CSV, and PDF are allowed. Office files are allowed only when every ZIP part is `.xml` or `.rels`, inflates under 1 MB, and is UTF-8 XML. Images, video, audio, archives, OLE, and encrypted or unknown binaries are rejected with 415. Finder's `._*` and `.DS_Store` files are stored only when they are under 64 KB, so a macOS mount can write them.
+25 MB per drive, 5 MB per file, 200 objects, one hour. `PUT` walks one list in `src/shared/content-policy.ts`. Text, Markdown, JSON, CSV, and PDF are allowed. Office files are allowed only when every ZIP part is `.xml` or `.rels`, inflates under 1 MB, and is UTF-8 XML with no armour and no long single-line base64 or hex run. The end-of-central-directory record must sit at the last 22 bytes, with no comment, and the central directory must describe exactly those parts. Zip64 and data descriptors are rejected. Images, video, audio, archives, OLE, and encrypted or unknown binaries are rejected with 415.
 
-A PDF must end with `%%EOF` and must not contain an archive, executable, or media signature, or `/EmbeddedFile`, `/JavaScript`, `/JS`, `/Launch`, or `/RichMedia`. Flate streams inside a PDF can still carry bytes that do not show those signatures in the clear. That is the remaining gap.
+Finder `._*` files must start with the AppleDouble magic `00 05 16 07`, and `.DS_Store` must start with `00 00 00 01 Bud1`. Both stay under 64 KB, and a blocked signature of 4 or more bytes anywhere in the body is rejected.
+
+A PDF must end with `%%EOF` followed only by whitespace. Signatures of 4 or more bytes are rejected anywhere in the body. Names are checked after `#xx` escapes are decoded, including `/EmbeddedFile`, `/JavaScript`, `/JS`, `/Launch`, and `/RichMedia`. Two- and three-byte markers are not scanned, so a Flate stream can contain `MZ` by chance. A name hidden inside a compressed `/ObjStm` is not decoded. Wrapped base64 or hex, and other encodings, can still pass as text. A long single-line mixed base64 or hex run is rejected.
 
 The disposable-domain check uses a vendored copy of [disposable-email-domains](https://github.com/disposable-email-domains/disposable-email-domains) (`disposable_email_blocklist.conf`, CC0) plus a local denylist that includes `lomvic.com` (the temp-email demo). It is a **soft signal**: the list is incomplete and it can mis-label a real domain. A parent domain match counts, so `a.mailinator.com` and `email.lomvic.com` are rejected.
 

@@ -14,6 +14,7 @@
  */
 
 import { DOMParser } from "@xmldom/xmldom";
+import { MAX_LOCK_OWNER_BYTES, MAX_LOCKS_PER_DRIVE, MAX_SHARED_LOCKS_PER_PATH } from "../shared/constants";
 import { destinationKey, parentKey, resourceHref } from "../shared/paths";
 import { DavStatus, type DavBucket, type DavObject } from "./bucket";
 import {
@@ -439,6 +440,7 @@ async function handleLock(request: Request, ctx: DavCtx): Promise<Response> {
   if (locked) return locked;
   const { timeout, expiresAt } = parseTimeout(request.headers.get("Timeout"), ctx.now, ctx.driveExpiresAt);
   const owner = extractOwner(body);
+  if (owner && new TextEncoder().encode(owner).byteLength > MAX_LOCK_OWNER_BYTES) return new Response("Bad Request", { status: 400 });
   const refresh = body === "" ? await findHeldLock(ctx, ctx.key, tokens) : null;
   let resource = refresh ? await ctx.bucket.head(refresh.path) : await ctx.bucket.head(ctx.key);
   if (!resource && ctx.key !== "") {
@@ -456,6 +458,10 @@ async function handleLock(request: Request, ctx: DavCtx): Promise<Response> {
   if (!refresh) {
     if (requestedScope === "exclusive" && current.length > 0) return new Response("Locked", { status: 423 });
     if (requestedScope === "shared" && current.some((lock) => lock.scope === "exclusive")) return new Response("Locked", { status: 423 });
+    if ((await ctx.locks.count(ctx.now)) >= MAX_LOCKS_PER_DRIVE) return new Response("Locked", { status: 423 });
+    if (requestedScope === "shared" && current.filter((lock) => lock.scope === "shared").length >= MAX_SHARED_LOCKS_PER_PATH) {
+      return new Response("Locked", { status: 423 });
+    }
   }
   const collection = isCollection(resource, path);
   let depth: LockDepth;
@@ -473,7 +479,7 @@ async function handleLock(request: Request, ctx: DavCtx): Promise<Response> {
     root: resourceHref(ctx.mountPath, path, collection),
   };
   const next = refresh ? current.map((lock) => (lock.token === record.token ? record : lock)) : [...current, record];
-  await ctx.locks.set(path, next);
+  await ctx.locks.put(record, ctx.now);
   const headers = new Headers({ "content-type": "application/xml; charset=utf-8", "Lock-Token": `<urn:uuid:${record.token}>` });
   if (!refresh) headers.set("Location", record.root);
   return new Response(
@@ -491,10 +497,7 @@ async function handleUnlock(request: Request, ctx: DavCtx): Promise<Response> {
   if (!current.some((lock) => lock.token === token)) return new Response("Conflict", { status: 409 });
   const locked = await requireWritable(request, ctx, ctx.key);
   if (locked) return locked;
-  await ctx.locks.set(
-    ctx.key,
-    current.filter((lock) => lock.token !== token),
-  );
+  await ctx.locks.remove(token, ctx.now);
   return new Response(null, { status: 204 });
 }
 

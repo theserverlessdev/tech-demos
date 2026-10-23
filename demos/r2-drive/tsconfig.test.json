@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["bun-types"],
+    "lib": ["ESNext"]
+  },
+  "include": [
+    "src/worker/**/*.ts",
+    "src/shared/**/*.ts",
+    "worker-configuration.d.ts"
+  ]
+}

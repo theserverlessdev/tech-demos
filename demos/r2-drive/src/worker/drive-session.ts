@@ -23,10 +23,22 @@ export class DriveSession {
   }
 
   private readonly locks: LockStore;
+  private closed = false;
 
-  handle(request: Request, mountPath: string, key: string, now: number, expiresAt: number | null): Promise<Response> {
-    const run = () => this.dispatch(request, mountPath, key, now, expiresAt);
+  handle(request: Request, mountPath: string, key: string, clock: () => number, expiresAt: number | null): Promise<Response> {
+    const run = () => this.dispatch(request, mountPath, key, clock, expiresAt);
     if (!MUTATING.has(request.method)) return run();
+    return this.exclusive(run);
+  }
+
+  /** Wait for the in-flight write, then refuse anything still queued. */
+  seal(): Promise<void> {
+    return this.exclusive(async () => {
+      this.closed = true;
+    });
+  }
+
+  private exclusive<T>(run: () => Promise<T>): Promise<T> {
     const next = this.tail.then(run, run);
     this.tail = next.then(
       () => undefined,
@@ -35,8 +47,9 @@ export class DriveSession {
     return next;
   }
 
-  private async dispatch(request: Request, mountPath: string, key: string, now: number, expiresAt: number | null): Promise<Response> {
-    if (expiresAt !== null && now >= expiresAt && MUTATING.has(request.method)) {
+  private async dispatch(request: Request, mountPath: string, key: string, clock: () => number, expiresAt: number | null): Promise<Response> {
+    const now = clock();
+    if (MUTATING.has(request.method) && (this.closed || (expiresAt !== null && now >= expiresAt))) {
       return withDavCsp(new Response("Gone", { status: 410 }));
     }
     const response = await handleWebdav(request, {

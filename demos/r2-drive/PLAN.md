@@ -13,7 +13,7 @@ Show that a stateful file protocol (WebDAV Class 1 and Class 2, including LOCK a
   - Magic-byte allow list (text, markdown, JSON, CSV, PDF, small office). Images, audio, video, archives, and unknown binaries get 415.
   - No share links, no anonymous GET of bytes, no CORS, `Cache-Control: private, no-store`.
   - Browser file UI, live WebSocket log, lock owner / timeout / depth, mount snippets, litmus page that only shows a real run.
-  - Audit row (email HMAC, encrypted email, IP hash) kept 30 days after wipe. A misuse report freezes and blocks. Admin kill switch. `MINT_ENABLED` defaults off in code and on in wrangler.
+  - Audit row (email HMAC, encrypted email, IP hash) kept 30 days after wipe. A misuse report freezes and blocks. Admin kill switch. `MINT_ENABLED` is `"false"` in wrangler and on only for local dev.
 - Out:
   - Deploy, real D1 / R2 / Turnstile / Email Sending resources.
   - Share links, public downloads, image or media hosting.

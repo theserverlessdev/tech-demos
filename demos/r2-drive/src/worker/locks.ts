@@ -1,3 +1,5 @@
+import type { SqlRunner } from "./quota";
+
 export type LockScope = "exclusive" | "shared";
 export type LockDepth = "0" | "infinity";
 
@@ -14,8 +16,10 @@ export type LockRecord = {
 
 export interface LockStore {
   get(path: string, now: number): Promise<LockRecord[]>;
-  set(path: string, locks: LockRecord[]): Promise<void>;
+  put(lock: LockRecord, now: number): Promise<void>;
+  remove(token: string, now: number): Promise<void>;
   list(now: number): Promise<LockRecord[]>;
+  count(now: number): Promise<number>;
   clear(): Promise<void>;
 }
 
@@ -26,9 +30,20 @@ export class MemoryLockStore implements LockStore {
     return (this.rows.get(path) ?? []).filter((lock) => lock.expiresAt > now);
   }
 
-  async set(path: string, locks: LockRecord[]): Promise<void> {
-    if (locks.length === 0) this.rows.delete(path);
-    else this.rows.set(path, locks);
+  async put(lock: LockRecord, now: number): Promise<void> {
+    this.dropExpired(now);
+    const current = (this.rows.get(lock.path) ?? []).filter((row) => row.token !== lock.token);
+    current.push(lock);
+    this.rows.set(lock.path, current);
+  }
+
+  async remove(token: string, now: number): Promise<void> {
+    this.dropExpired(now);
+    for (const [path, locks] of this.rows) {
+      const next = locks.filter((lock) => lock.token !== token);
+      if (next.length === 0) this.rows.delete(path);
+      else if (next.length !== locks.length) this.rows.set(path, next);
+    }
   }
 
   async list(now: number): Promise<LockRecord[]> {
@@ -37,8 +52,20 @@ export class MemoryLockStore implements LockStore {
     return out;
   }
 
+  async count(now: number): Promise<number> {
+    return (await this.list(now)).length;
+  }
+
   async clear(): Promise<void> {
     this.rows.clear();
+  }
+
+  private dropExpired(now: number): void {
+    for (const [path, locks] of this.rows) {
+      const live = locks.filter((lock) => lock.expiresAt > now);
+      if (live.length === 0) this.rows.delete(path);
+      else if (live.length !== locks.length) this.rows.set(path, live);
+    }
   }
 }
 
@@ -241,4 +268,107 @@ export function escapeXml(value: string): string {
 
 export function supportedLockXml(): string {
   return "<lockentry><lockscope><exclusive/></lockscope><locktype><write/></locktype></lockentry><lockentry><lockscope><shared/></lockscope><locktype><write/></locktype></lockentry>";
+}
+
+type LockRow = {
+  token: string;
+  path: string;
+  owner: string | null;
+  scope: string;
+  depth: string;
+  timeout: string;
+  expires_at: number;
+  root: string;
+};
+
+/**
+ * One row per token. A refresh or unlock touches that row, and expired rows
+ * are deleted on write. Reads filter by path.
+ */
+export class SqliteLocks implements LockStore {
+  constructor(private readonly sql: SqlRunner) {
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS locks (
+      token TEXT PRIMARY KEY,
+      path TEXT NOT NULL,
+      owner TEXT,
+      scope TEXT NOT NULL,
+      depth TEXT NOT NULL,
+      timeout TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      root TEXT NOT NULL
+    )`);
+    this.sql.exec(`CREATE INDEX IF NOT EXISTS locks_path ON locks (path)`);
+  }
+
+  async get(path: string, now: number): Promise<LockRecord[]> {
+    return this.sql
+      .exec(
+        "SELECT token, path, owner, scope, depth, timeout, expires_at, root FROM locks WHERE path = ? AND expires_at > ?",
+        path,
+        now,
+      )
+      .toArray()
+      .map((row) => toLock(row as LockRow));
+  }
+
+  async put(lock: LockRecord, now: number): Promise<void> {
+    this.expire(now);
+    this.sql.exec(
+      `INSERT INTO locks (token, path, owner, scope, depth, timeout, expires_at, root) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(token) DO UPDATE SET
+         path = excluded.path,
+         owner = excluded.owner,
+         scope = excluded.scope,
+         depth = excluded.depth,
+         timeout = excluded.timeout,
+         expires_at = excluded.expires_at,
+         root = excluded.root`,
+      lock.token,
+      lock.path,
+      lock.owner ?? null,
+      lock.scope,
+      lock.depth,
+      lock.timeout,
+      lock.expiresAt,
+      lock.root,
+    );
+  }
+
+  async remove(token: string, now: number): Promise<void> {
+    this.expire(now);
+    this.sql.exec("DELETE FROM locks WHERE token = ?", token);
+  }
+
+  async list(now: number): Promise<LockRecord[]> {
+    return this.sql
+      .exec("SELECT token, path, owner, scope, depth, timeout, expires_at, root FROM locks WHERE expires_at > ?", now)
+      .toArray()
+      .map((row) => toLock(row as LockRow));
+  }
+
+  async count(now: number): Promise<number> {
+    const row = this.sql.exec("SELECT COUNT(*) AS n FROM locks WHERE expires_at > ?", now).toArray()[0];
+    return Number(row?.n ?? 0);
+  }
+
+  async clear(): Promise<void> {
+    this.sql.exec("DELETE FROM locks");
+  }
+
+  private expire(now: number): void {
+    this.sql.exec("DELETE FROM locks WHERE expires_at <= ?", now);
+  }
+}
+
+function toLock(row: LockRow): LockRecord {
+  return {
+    token: row.token,
+    path: row.path,
+    owner: row.owner ?? undefined,
+    scope: row.scope === "shared" ? "shared" : "exclusive",
+    depth: row.depth === "infinity" ? "infinity" : "0",
+    timeout: row.timeout,
+    expiresAt: row.expires_at,
+    root: row.root,
+  };
 }

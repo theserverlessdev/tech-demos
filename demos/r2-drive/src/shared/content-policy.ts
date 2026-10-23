@@ -1,4 +1,4 @@
-import { MAX_FILE_BYTES } from "./constants";
+import { FINDER_MAX_BYTES, MAX_FILE_BYTES } from "./constants";
 
 /**
  * One list. `sniff` walks it from top to bottom and stops at the first match.
@@ -105,6 +105,28 @@ export function isFinderNoise(key: string): boolean {
   return base === ".DS_Store" || base.startsWith("._");
 }
 
+const APPLE_DOUBLE = [0x00, 0x05, 0x16, 0x07];
+const DS_STORE = [0x00, 0x00, 0x00, 0x01, 0x42, 0x75, 0x64, 0x31];
+/** JPEG markers are 4 bytes so a short `MZ` inside other metadata is not a hit. */
+const FINDER_JPEG = [
+  [0xff, 0xd8, 0xff, 0xe0],
+  [0xff, 0xd8, 0xff, 0xe1],
+  [0xff, 0xd8, 0xff, 0xdb],
+  [0xff, 0xd8, 0xff, 0xee],
+];
+
+export function checkFinder(key: string, bytes: Uint8Array): { ok: true } | { ok: false; status: 413 | 415; reason: string } {
+  if (bytes.byteLength > FINDER_MAX_BYTES) return { ok: false, status: 413, reason: "Finder metadata is too large" };
+  const base = key.split("/").pop() ?? "";
+  const magic = base === ".DS_Store" ? DS_STORE : APPLE_DOUBLE;
+  if (!matches(bytes, magic, 0)) return { ok: false, status: 415, reason: "Rejected Finder metadata" };
+  const blocked = [...PDF_DENY.filter((signature) => signature.length >= 4), ...FINDER_JPEG];
+  for (const signature of blocked) {
+    if (indexOf(bytes, signature, 0) !== -1) return { ok: false, status: 415, reason: "Rejected Finder metadata" };
+  }
+  return { ok: true };
+}
+
 export async function sniff(bytes: Uint8Array): Promise<Sniff> {
   if (bytes.byteLength > MAX_FILE_BYTES) {
     return { ok: false, reason: "File is over 5 MB" };
@@ -206,16 +228,23 @@ function classifyText(value: string): Sniff {
 }
 
 function sniffPdf(bytes: Uint8Array): Sniff {
-  const tail = latin1(bytes.subarray(Math.max(0, bytes.byteLength - 1024)));
-  if (!tail.includes("%%EOF")) return { ok: false, reason: "Rejected PDF without a trailer" };
+  const body = latin1(bytes);
+  const eof = body.lastIndexOf("%%EOF");
+  if (eof === -1) return { ok: false, reason: "Rejected PDF without a trailer" };
+  if (/[^\t\n\r\f ]/.test(body.slice(eof + "%%EOF".length))) return { ok: false, reason: "Rejected PDF without a trailer" };
   for (const magic of PDF_DENY) {
+    if (magic.length < 4) continue;
     if (indexOf(bytes, magic, 0) !== -1) return { ok: false, reason: "Rejected PDF with an embedded payload" };
   }
-  const body = latin1(bytes);
+  const names = decodePdfHashes(body);
   for (const token of PDF_TOKENS) {
-    if (hasPdfName(body, token)) return { ok: false, reason: "Rejected PDF with an active feature" };
+    if (hasPdfName(names, token)) return { ok: false, reason: "Rejected PDF with an active feature" };
   }
   return { ok: true, kind: "pdf", mediaType: "application/pdf", inline: false };
+}
+
+function decodePdfHashes(body: string): string {
+  return body.replace(/#([0-9A-Fa-f]{2})/g, (_match, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)));
 }
 
 function hasPdfName(body: string, token: string): boolean {
@@ -258,7 +287,7 @@ async function sniffOffice(bytes: Uint8Array): Promise<Sniff> {
     } else if (entry.method !== 0) {
       return { ok: false, reason: "Rejected archive: zip" };
     }
-    if (!asXml(raw)) return { ok: false, reason: "Rejected office document with a non-XML part" };
+    if (!officeXml(raw)) return { ok: false, reason: "Rejected office document with a non-XML part" };
   }
   const mediaType = word
     ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -268,42 +297,109 @@ async function sniffOffice(bytes: Uint8Array): Promise<Sniff> {
   return { ok: true, kind: "ooxml", mediaType, inline: false };
 }
 
-type ZipEntry = { name: string; method: number; data: Uint8Array };
+type ZipEntry = { name: string; method: number; compSize: number; uncompSize: number; crc: number; localOffset: number; data: Uint8Array };
 
 function walkZip(bytes: Uint8Array): { ok: true; entries: ZipEntry[] } | { ok: false; reason: string } {
+  if (bytes.byteLength < 22) return { ok: false, reason: "Rejected archive: zip" };
+  const eocd = bytes.byteLength - 22;
+  if (readU32(bytes, eocd) !== 0x06054b50) return { ok: false, reason: "Rejected archive: zip" };
+  if (readU16(bytes, eocd + 20) !== 0) return { ok: false, reason: "Rejected archive: zip" };
+  const total = readU16(bytes, eocd + 10);
+  const cdSize = readU32(bytes, eocd + 12);
+  const cdOffset = readU32(bytes, eocd + 16);
+  if (total === 0xffff || cdSize === 0xffffffff || cdOffset === 0xffffffff) return { ok: false, reason: "Rejected archive: zip64" };
+  if (cdOffset + cdSize + 22 !== bytes.byteLength) return { ok: false, reason: "Rejected archive: zip" };
+
   const entries: ZipEntry[] = [];
   let offset = 0;
-  while (offset + 30 <= bytes.byteLength) {
-    const sig = readU32(bytes, offset);
-    if (sig === 0x02014b50 || sig === 0x06054b50) break;
-    if (sig !== 0x04034b50) return { ok: false, reason: "Rejected archive: zip" };
+  while (offset < cdOffset) {
+    if (offset + 30 > bytes.byteLength || readU32(bytes, offset) !== 0x04034b50) return { ok: false, reason: "Rejected archive: zip" };
     const flags = readU16(bytes, offset + 6);
     const method = readU16(bytes, offset + 8);
+    const crc = readU32(bytes, offset + 14);
     const compSize = readU32(bytes, offset + 18);
+    const uncompSize = readU32(bytes, offset + 22);
     const nameLen = readU16(bytes, offset + 26);
     const extraLen = readU16(bytes, offset + 28);
     if (flags & 1) return { ok: false, reason: "Rejected encrypted archive" };
-    if (compSize === 0xffffffff) return { ok: false, reason: "Rejected archive: zip64" };
+    if (flags & 8) return { ok: false, reason: "Rejected archive: zip data descriptor" };
+    if (compSize === 0xffffffff || uncompSize === 0xffffffff) return { ok: false, reason: "Rejected archive: zip64" };
     const nameAt = offset + 30;
-    if (nameAt + nameLen + extraLen > bytes.byteLength) return { ok: false, reason: "Rejected archive: zip" };
+    const extraAt = nameAt + nameLen;
+    if (extraAt + extraLen > cdOffset) return { ok: false, reason: "Rejected archive: zip" };
+    if (hasZip64Extra(bytes.subarray(extraAt, extraAt + extraLen))) return { ok: false, reason: "Rejected archive: zip64" };
     let name: string;
     try {
       name = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes.subarray(nameAt, nameAt + nameLen));
     } catch {
       return { ok: false, reason: "Rejected archive: zip" };
     }
-    const dataAt = nameAt + nameLen + extraLen;
+    const dataAt = extraAt + extraLen;
     const next = dataAt + compSize;
-    if ((flags & 8) && compSize === 0) return { ok: false, reason: "Rejected archive: zip data descriptor" };
-    if (next < offset + 30 || next > bytes.byteLength) return { ok: false, reason: "Rejected archive: zip" };
-    entries.push({ name, method, data: bytes.subarray(dataAt, next) });
+    if (next < dataAt || next > cdOffset) return { ok: false, reason: "Rejected archive: zip" };
+    entries.push({ name, method, compSize, uncompSize, crc, localOffset: offset, data: bytes.subarray(dataAt, next) });
     offset = next;
   }
-  if (entries.length === 0) return { ok: false, reason: "Rejected archive: zip" };
+  if (offset !== cdOffset || entries.length === 0 || entries.length !== total) return { ok: false, reason: "Rejected archive: zip" };
+
+  let cursor = cdOffset;
+  let seen = 0;
+  while (cursor < cdOffset + cdSize) {
+    if (cursor + 46 > cdOffset + cdSize || readU32(bytes, cursor) !== 0x02014b50) return { ok: false, reason: "Rejected archive: zip" };
+    const flags = readU16(bytes, cursor + 8);
+    const method = readU16(bytes, cursor + 10);
+    const crc = readU32(bytes, cursor + 16);
+    const compSize = readU32(bytes, cursor + 20);
+    const uncompSize = readU32(bytes, cursor + 24);
+    const nameLen = readU16(bytes, cursor + 28);
+    const extraLen = readU16(bytes, cursor + 30);
+    const commentLen = readU16(bytes, cursor + 32);
+    const localOffset = readU32(bytes, cursor + 42);
+    if (flags & 8) return { ok: false, reason: "Rejected archive: zip data descriptor" };
+    if (compSize === 0xffffffff || uncompSize === 0xffffffff || localOffset === 0xffffffff) {
+      return { ok: false, reason: "Rejected archive: zip64" };
+    }
+    const nameAt = cursor + 46;
+    const recordEnd = nameAt + nameLen + extraLen + commentLen;
+    if (recordEnd > cdOffset + cdSize) return { ok: false, reason: "Rejected archive: zip" };
+    if (hasZip64Extra(bytes.subarray(nameAt + nameLen, nameAt + nameLen + extraLen))) return { ok: false, reason: "Rejected archive: zip64" };
+    let name: string;
+    try {
+      name = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes.subarray(nameAt, nameAt + nameLen));
+    } catch {
+      return { ok: false, reason: "Rejected archive: zip" };
+    }
+    const local = entries[seen];
+    if (
+      !local ||
+      local.name !== name ||
+      local.method !== method ||
+      local.compSize !== compSize ||
+      local.uncompSize !== uncompSize ||
+      local.crc !== crc ||
+      local.localOffset !== localOffset
+    ) {
+      return { ok: false, reason: "Rejected archive: zip" };
+    }
+    seen += 1;
+    cursor = recordEnd;
+  }
+  if (cursor !== cdOffset + cdSize || seen !== entries.length) return { ok: false, reason: "Rejected archive: zip" };
   return { ok: true, entries };
 }
 
-function asXml(bytes: Uint8Array): boolean {
+function hasZip64Extra(extra: Uint8Array): boolean {
+  let offset = 0;
+  while (offset + 4 <= extra.byteLength) {
+    const id = readU16(extra, offset);
+    const size = readU16(extra, offset + 2);
+    if (id === 0x0001) return true;
+    offset += 4 + size;
+  }
+  return false;
+}
+
+function officeXml(bytes: Uint8Array): boolean {
   if (bytes.byteLength === 0 || bytes.byteLength > OFFICE_PART_LIMIT) return false;
   let value: string;
   try {
@@ -312,7 +408,11 @@ function asXml(bytes: Uint8Array): boolean {
     return false;
   }
   const trimmed = value.trim();
-  return trimmed.startsWith("<") && trimmed.includes(">");
+  if (!trimmed.startsWith("<") || !trimmed.includes(">")) return false;
+  for (const marker of ARMOUR) {
+    if (value.includes(marker)) return false;
+  }
+  return !hasLongBase64(value) && !hasLongHex(value);
 }
 
 async function inflateRaw(data: Uint8Array, limit: number): Promise<Uint8Array | null> {
@@ -341,20 +441,6 @@ async function inflateRaw(data: Uint8Array, limit: number): Promise<Uint8Array |
   } catch {
     return null;
   }
-}
-
-async function deflateRaw(data: Uint8Array): Promise<Uint8Array> {
-  const stream = new Blob([data]).stream().pipeThrough(new CompressionStream("deflate-raw"));
-  return new Uint8Array(await new Response(stream).arrayBuffer());
-}
-
-function crc32(data: Uint8Array): number {
-  let crc = 0xffffffff;
-  for (const byte of data) {
-    crc ^= byte;
-    for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
-  }
-  return (crc ^ 0xffffffff) >>> 0;
 }
 
 function readU16(bytes: Uint8Array, offset: number): number {
@@ -388,111 +474,4 @@ export function safeFilename(key: string): string {
 export function contentDisposition(filename: string, inline: boolean): string {
   const star = encodeURIComponent(filename);
   return `${inline ? "inline" : "attachment"}; filename="${filename.replaceAll('"', "")}"; filename*=UTF-8''${star}`;
-}
-
-/** Stored (method 0) ZIP. Tests and the office allow-path use this. */
-export function zipStored(files: { name: string; data: Uint8Array }[]): Uint8Array {
-  const locals: Uint8Array[] = [];
-  const centrals: Uint8Array[] = [];
-  let offset = 0;
-  for (const file of files) {
-    const name = new TextEncoder().encode(file.name);
-    const local = new Uint8Array(30 + name.byteLength + file.data.byteLength);
-    writeU32(local, 0, 0x04034b50);
-    writeU16(local, 8, 0);
-    writeU32(local, 18, file.data.byteLength);
-    writeU32(local, 22, file.data.byteLength);
-    writeU16(local, 26, name.byteLength);
-    local.set(name, 30);
-    local.set(file.data, 30 + name.byteLength);
-    locals.push(local);
-    const central = new Uint8Array(46 + name.byteLength);
-    writeU32(central, 0, 0x02014b50);
-    writeU16(central, 10, 0);
-    writeU32(central, 20, file.data.byteLength);
-    writeU32(central, 24, file.data.byteLength);
-    writeU16(central, 28, name.byteLength);
-    writeU32(central, 42, offset);
-    central.set(name, 46);
-    centrals.push(central);
-    offset += local.byteLength;
-  }
-  const centralStart = offset;
-  const centralSize = centrals.reduce((sum, part) => sum + part.byteLength, 0);
-  const end = new Uint8Array(22);
-  writeU32(end, 0, 0x06054b50);
-  writeU16(end, 8, files.length);
-  writeU16(end, 10, files.length);
-  writeU32(end, 12, centralSize);
-  writeU32(end, 16, centralStart);
-  const total = offset + centralSize + end.byteLength;
-  const out = new Uint8Array(total);
-  let cursor = 0;
-  for (const part of [...locals, ...centrals, end]) {
-    out.set(part, cursor);
-    cursor += part.byteLength;
-  }
-  return out;
-}
-
-/** Deflated (method 8) ZIP. The office allow-path requires this for a real docx. */
-export async function zipDeflated(files: { name: string; data: Uint8Array }[]): Promise<Uint8Array> {
-  const packed = await Promise.all(
-    files.map(async (file) => ({ name: file.name, data: file.data, compressed: await deflateRaw(file.data), crc: crc32(file.data) })),
-  );
-  const locals: Uint8Array[] = [];
-  const centrals: Uint8Array[] = [];
-  let offset = 0;
-  for (const file of packed) {
-    const name = new TextEncoder().encode(file.name);
-    const local = new Uint8Array(30 + name.byteLength + file.compressed.byteLength);
-    writeU32(local, 0, 0x04034b50);
-    writeU16(local, 8, 8);
-    writeU32(local, 14, file.crc);
-    writeU32(local, 18, file.compressed.byteLength);
-    writeU32(local, 22, file.data.byteLength);
-    writeU16(local, 26, name.byteLength);
-    local.set(name, 30);
-    local.set(file.compressed, 30 + name.byteLength);
-    locals.push(local);
-    const central = new Uint8Array(46 + name.byteLength);
-    writeU32(central, 0, 0x02014b50);
-    writeU16(central, 10, 8);
-    writeU32(central, 16, file.crc);
-    writeU32(central, 20, file.compressed.byteLength);
-    writeU32(central, 24, file.data.byteLength);
-    writeU16(central, 28, name.byteLength);
-    writeU32(central, 42, offset);
-    central.set(name, 46);
-    centrals.push(central);
-    offset += local.byteLength;
-  }
-  const centralStart = offset;
-  const centralSize = centrals.reduce((sum, part) => sum + part.byteLength, 0);
-  const end = new Uint8Array(22);
-  writeU32(end, 0, 0x06054b50);
-  writeU16(end, 8, files.length);
-  writeU16(end, 10, files.length);
-  writeU32(end, 12, centralSize);
-  writeU32(end, 16, centralStart);
-  const total = offset + centralSize + end.byteLength;
-  const out = new Uint8Array(total);
-  let cursor = 0;
-  for (const part of [...locals, ...centrals, end]) {
-    out.set(part, cursor);
-    cursor += part.byteLength;
-  }
-  return out;
-}
-
-function writeU16(bytes: Uint8Array, offset: number, value: number): void {
-  bytes[offset] = value & 0xff;
-  bytes[offset + 1] = (value >> 8) & 0xff;
-}
-
-function writeU32(bytes: Uint8Array, offset: number, value: number): void {
-  bytes[offset] = value & 0xff;
-  bytes[offset + 1] = (value >> 8) & 0xff;
-  bytes[offset + 2] = (value >> 16) & 0xff;
-  bytes[offset + 3] = (value >> 24) & 0xff;
 }

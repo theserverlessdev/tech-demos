@@ -77,6 +77,6 @@ export function readCookie(header: string | null, name: string): string | null {
 /** __Host- cookies are Secure, Path=/, and have no Domain attribute. */
 export const SESSION_COOKIE = "__Host-r2drive_session";
 
-export function sessionCookie(token: string, _secure: boolean, maxAge: number): string {
+export function sessionCookie(token: string, maxAge: number): string {
   return [`${SESSION_COOKIE}=${token}`, "HttpOnly", "Path=/", "SameSite=Lax", "Secure", `Max-Age=${maxAge}`].join("; ");
 }

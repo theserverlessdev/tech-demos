@@ -1,9 +1,9 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-import { DAILY_EMAIL_CAP, MAX_FILE_BYTES } from "../shared/constants";
-import { zipDeflated } from "../shared/content-policy";
+import { DAILY_EMAIL_CAP, FROZEN_KEEP_MS, MAX_FILE_BYTES } from "../shared/constants";
+import { zipDeflated, zipStored } from "../shared/zip-fixture";
 import { MemoryBucket } from "./bucket";
-import { completeWipe } from "./drive-wipe";
+import { completeWipe, wipeDecision } from "./drive-wipe";
 import { DriveSession } from "./drive-session";
 import { MemoryLockStore } from "./locks";
 import { bunSql } from "./sqlite-bun";
@@ -75,7 +75,6 @@ test("content holes return 415 and a real docx returns 201", async () => {
   const ole = new Uint8Array(1024);
   ole.set([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
   expect((await dav(app, minted, "PUT", "old.doc", ole)).status).toBe(415);
-  const { zipStored } = await import("../shared/content-policy");
   const dat = zipStored([
     { name: "[Content_Types].xml", data: text("<Types/>") },
     { name: "word/document.xml", data: text("<w:document/>") },
@@ -96,6 +95,25 @@ test("content holes return 415 and a real docx returns 201", async () => {
     { name: "word/_rels/document.xml.rels", data: text(`<?xml version="1.0"?><Relationships/>`) },
   ]);
   expect((await dav(app, minted, "PUT", "hello.docx", docx)).status).toBe(201);
+  const pngZip = zipStored([{ name: "hidden.png", data: png }]);
+  const appended = new Uint8Array(docx.byteLength + 4 + pngZip.byteLength);
+  appended.set(docx);
+  appended.set([0x50, 0x4b, 0x01, 0x02], docx.byteLength);
+  appended.set(pngZip, docx.byteLength + 4);
+  expect((await dav(app, minted, "PUT", "trailer.docx", appended)).status).toBe(415);
+  const trailed = new Uint8Array(docx.byteLength + 1);
+  trailed.set(docx);
+  expect((await dav(app, minted, "PUT", "trail.docx", trailed)).status).toBe(415);
+  const commented = new Uint8Array(docx.byteLength + 10);
+  commented.set(docx);
+  commented[docx.byteLength - 2] = 10;
+  expect((await dav(app, minted, "PUT", "comment.docx", commented)).status).toBe(415);
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  const encoded = await zipDeflated([
+    { name: "[Content_Types].xml", data: text(`<?xml version="1.0"?><Types/>`) },
+    { name: "word/document.xml", data: text(`<a>${alphabet.repeat(7).slice(0, 400)}`) },
+  ]);
+  expect((await dav(app, minted, "PUT", "encoded.docx", encoded)).status).toBe(415);
   expect(zip.byteLength).toBeGreaterThan(0);
 });
 
@@ -152,11 +170,20 @@ test("a pdf download is an attachment with a sandbox policy", async () => {
 test("finder metadata files are stored and oversized ones are refused", async () => {
   const app = await createTestApp();
   const minted = await mintDrive(app);
+  const jpeg = new Uint8Array(64);
+  jpeg.set([0xff, 0xd8, 0xff, 0xe0]);
+  expect((await dav(app, minted, "PUT", "._a.jpg", jpeg)).status).toBe(415);
+  const noise = new Uint8Array(32);
+  noise.fill(0xff);
+  expect((await dav(app, minted, "PUT", ".DS_Store", noise)).status).toBe(415);
+  const apple = new Uint8Array(26);
+  apple.set([0x00, 0x05, 0x16, 0x07, 0x00, 0x02, 0x00, 0x00]);
+  expect((await dav(app, minted, "PUT", "._note.txt", apple)).status).toBe(201);
   const store = new Uint8Array(32);
-  store[0] = 0xff;
+  store.set([0x00, 0x00, 0x00, 0x01, 0x42, 0x75, 0x64, 0x31]);
   expect((await dav(app, minted, "PUT", ".DS_Store", store)).status).toBe(201);
-  expect((await dav(app, minted, "PUT", "._note.txt", store)).status).toBe(201);
   const huge = new Uint8Array(70 * 1024);
+  huge.set([0x00, 0x00, 0x00, 0x01, 0x42, 0x75, 0x64, 0x31]);
   expect((await dav(app, minted, "PUT", ".DS_Store", huge)).status).toBe(413);
 });
 
@@ -225,7 +252,7 @@ test("a put after expiry is rejected and a nameless alarm still deletes the pref
     locks: new MemoryLockStore(),
     audit: async () => undefined,
   });
-  const late = await session.handle(new Request("http://127.0.0.1/dav/x/a.txt", { method: "PUT", body: "no" }), "/dav/x", "a.txt", 10, 10);
+  const late = await session.handle(new Request("http://127.0.0.1/dav/x/a.txt", { method: "PUT", body: "no" }), "/dav/x", "a.txt", () => 10, 10);
   expect(late.status).toBe(410);
 });
 
@@ -239,7 +266,15 @@ test("a frozen drive stays until release or the retention window", async () => {
     body: JSON.stringify({ driveId: minted.driveId }),
   });
   expect(frozen.status).toBe(200);
+  const frozenAt = app.repo.drives[0]?.frozenAt ?? 0;
   app.clock.t += 2 * 60 * 60 * 1000;
+  const decision = await app.alarm(minted.driveId);
+  expect(decision.action).toBe("defer");
+  if (decision.action === "defer") expect(decision.until).toBe(frozenAt + FROZEN_KEEP_MS);
+  expect(wipeDecision({ status: "frozen", expiresAt: minted.expiresAt, frozenAt }, minted.expiresAt + 1).action).toBe("defer");
+  expect(wipeDecision({ status: "frozen", expiresAt: minted.expiresAt, frozenAt }, frozenAt + FROZEN_KEEP_MS).action).toBe("wipe");
+  const session = await app.fetch(`${ORIGIN}/api/session`, { headers: { cookie: minted.cookie } });
+  expect(session.status).toBe(403);
   expect(await app.sweep()).toBe(0);
   expect(app.repo.drives[0]?.status).toBe("frozen");
   expect((await app.bucket.list()).objects.length).toBe(1);
@@ -272,6 +307,61 @@ test("a frozen drive stays until release or the retention window", async () => {
   expect(await app.sweep()).toBe(1);
   expect(app.repo.drives[0]?.status).toBe("wiped");
   expect((await app.bucket.list()).objects).toHaveLength(0);
+});
+
+test("a put queued after expiry gets 410", async () => {
+  const clock = { t: 1_000 };
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let entered: () => void = () => undefined;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  let held = false;
+  const inner = new MemoryBucket();
+  const session = new DriveSession({
+    sql: bunSql(new Database(":memory:")),
+    bucket: {
+      head: (key) => inner.head(key),
+      get: (key) => inner.get(key),
+      list: (options) => inner.list(options),
+      delete: (keys) => inner.delete(keys),
+      put: async (key, body, options) => {
+        if (key === "slow.txt" && !held) {
+          held = true;
+          entered();
+          await gate;
+        }
+        return inner.put(key, body, options);
+      },
+    },
+    locks: new MemoryLockStore(),
+    audit: async () => undefined,
+  });
+  const first = session.handle(new Request("http://127.0.0.1/dav/x/slow.txt", { method: "PUT", body: "slow" }), "/dav/x", "slow.txt", () => clock.t, 5_000);
+  await started;
+  clock.t = 5_000;
+  const second = session.handle(new Request("http://127.0.0.1/dav/x/late.txt", { method: "PUT", body: "late" }), "/dav/x", "late.txt", () => clock.t, 5_000);
+  release();
+  expect((await first).status).toBe(201);
+  expect((await second).status).toBe(410);
+});
+
+test("repeat mints for a live drive do not spend the email cap", async () => {
+  const app = await createTestApp();
+  await mintDrive(app);
+  const before = await app.repo.dailyCount("email", "2026-10-23");
+  for (let index = 0; index < 5; index++) {
+    const again = await app.fetch(`${ORIGIN}/api/mint`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "ada@example.com", aup: true, turnstileToken: "ok" }),
+    });
+    expect(again.status).toBe(409);
+  }
+  expect(await app.repo.dailyCount("email", "2026-10-23")).toBe(before);
 });
 
 test("unverified mints do not spend the drive cap", async () => {

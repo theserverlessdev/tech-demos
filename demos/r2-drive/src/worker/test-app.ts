@@ -3,6 +3,7 @@ import { importAesKey, importHmacKey } from "./crypto";
 import { MemoryLockStore } from "./locks";
 import { MemoryBucket, PrefixBucket } from "./bucket";
 import { DriveSession } from "./drive-session";
+import { completeWipe, runAlarm, type WipeDecision } from "./drive-wipe";
 import { bunSql } from "./sqlite-bun";
 import { MemoryRepo } from "./repo";
 import { handleRequest, wipeExpired, type Deps } from "./router";
@@ -16,6 +17,7 @@ export type TestApp = {
   emails: { to: string; subject: string; text: string }[];
   clock: { t: number };
   sweep: () => Promise<number>;
+  alarm: (driveId: string) => Promise<WipeDecision>;
   setLimit: (fn: (name: LimitName, key: string) => Promise<boolean>) => void;
 };
 
@@ -65,16 +67,17 @@ export async function createTestApp(options?: {
       return {
         list: (now) => runtime.locks.list(now),
         wipe: async () => {
+          await runtime.session.seal();
           await runtime.locks.clear();
           runtime.database.exec("DELETE FROM quota");
           runtime.database.exec("INSERT INTO quota (id, bytes, files) VALUES (1, 0, 0)");
         },
       };
     },
-    serveDav: async (request, drive, target, now) => {
+    serveDav: async (request, drive, target) => {
       const runtime = runtimeFor(drive.id);
       const before = runtime.session.quota.snapshot();
-      const response = await runtime.session.handle(request, target.mountPath, target.key, now, drive.expiresAt);
+      const response = await runtime.session.handle(request, target.mountPath, target.key, () => clock.t, drive.expiresAt);
       const after = runtime.session.quota.snapshot();
       if (before.bytes !== after.bytes || before.files !== after.files) {
         await repo.updateUsage(drive.id, after.bytes, after.files);
@@ -82,7 +85,7 @@ export async function createTestApp(options?: {
         drive.fileCount = after.files;
       }
       const list = events.get(drive.id) ?? [];
-      list.push({ at: now, method: request.method, path: target.key || "/", status: response.status });
+      list.push({ at: clock.t, method: request.method, path: target.key || "/", status: response.status });
       events.set(drive.id, list);
       return response;
     },
@@ -102,11 +105,32 @@ export async function createTestApp(options?: {
     siteKey: "site-key",
     configured: options?.configured !== false,
     recent: (driveId) => events.get(driveId) ?? [],
-    note: (driveId, event) => {
-      const list = events.get(driveId) ?? [];
-      list.push(event);
-      events.set(driveId, list);
-    },
+    deferAlarm: async () => undefined,
+  };
+  const alarm = (driveId: string) => {
+    const row = repo.drives.find((item) => item.id === driveId) ?? null;
+    return runAlarm({
+      row,
+      now: clock.t,
+      setAlarm: async () => undefined,
+      wipe: async (now) => {
+        const runtime = runtimes.get(driveId);
+        if (runtime) await runtime.session.seal();
+        await completeWipe({
+          name: driveId,
+          storedId: driveId,
+          bucket,
+          markWiped: (id, at) => repo.markWiped(id, at),
+          deleteAll: async () => {
+            await runtime?.locks.clear();
+            runtime?.database.exec("DELETE FROM quota");
+            runtime?.database.exec("INSERT INTO quota (id, bytes, files) VALUES (1, 0, 0)");
+          },
+          now,
+        });
+        runtimes.delete(driveId);
+      },
+    });
   };
   return {
     repo,
@@ -118,6 +142,7 @@ export async function createTestApp(options?: {
       return handleRequest(request, deps);
     },
     sweep: () => wipeExpired(deps),
+    alarm,
     setLimit: (fn) => {
       limit = fn;
     },
