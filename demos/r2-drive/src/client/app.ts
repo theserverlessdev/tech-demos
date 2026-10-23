@@ -244,7 +244,8 @@ async function refresh() {
   $("cwd").textContent = `/${state.cwd}`;
   const session = await api<SessionView>("/api/session");
   if (session.status === 200) {
-    $("usage").textContent = `${formatBytes(session.body.bytesUsed)} · ${session.body.fileCount} files`;
+    const count = session.body.fileCount;
+    $("usage").textContent = `${formatBytes(session.body.bytesUsed)} · ${count} ${count === 1 ? "file" : "files"}`;
   }
   await refreshLocks();
 }

@@ -43,7 +43,7 @@ h3 { font-size: 1rem; margin: 1.2rem 0 0.4rem; }
 p { margin: 0; }
 a { color: inherit; }
 
-.topbar, main { width: min(1120px, calc(100% - 28px)); margin-inline: auto; }
+.topbar, main { width: min(1120px, calc(100% - 28px)); margin-inline: auto; min-width: 0; }
 .topbar {
   display: flex; align-items: center; gap: 12px; padding: 16px 0;
   flex-wrap: wrap;
@@ -59,15 +59,17 @@ a { color: inherit; }
 .cards { display: grid; gap: 12px; margin-top: 16px; }
 .cards article, .panel {
   background: var(--bg-elev); border: 1px solid var(--line); border-radius: 18px; padding: 16px;
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow); min-width: 0;
 }
 .cards p, .hint { color: var(--muted); margin-top: 6px; }
 
 .strip {
-  margin: 16px 0; padding: 10px 14px; border-radius: 999px; background: var(--bg-sunken);
-  border: 1px solid var(--line);
+  margin: 16px 0; padding: 10px 14px; border-radius: 16px; background: var(--bg-sunken);
+  border: 1px solid var(--line); overflow-wrap: anywhere;
 }
-.layout { display: grid; gap: 16px; }
+.layout { display: grid; gap: 16px; min-width: 0; }
+.cards, form, .snippets, .browser, .row { min-width: 0; }
+.lede, .hint, .log, .file-name { overflow-wrap: anywhere; }
 .panel + .panel, .litmus { margin-top: 16px; }
 label { display: block; font-weight: 650; margin: 12px 0 6px; }
 input, textarea {
@@ -101,6 +103,7 @@ textarea { min-height: 96px; resize: vertical; }
 .snippets pre {
   margin: 0; padding: 12px; overflow: auto; border-radius: 12px; background: var(--bg-sunken);
   font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 0.78rem; white-space: pre-wrap;
+  overflow-wrap: anywhere; min-width: 0;
 }
 .files, .locks, .log, #litmus-suites { list-style: none; padding: 0; margin: 8px 0 0; }
 .files li, .locks li, .log li, #litmus-suites li {
