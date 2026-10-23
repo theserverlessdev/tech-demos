@@ -93,7 +93,7 @@ async function mint(event: SubmitEvent) {
   const email = $<HTMLInputElement>("email").value;
   const aup = $<HTMLInputElement>("aup").checked;
   if (!aup) {
-    note("mint-note", "Accept the use rules to continue.", "bad");
+    note("mint-note", "Accept the notice to continue.", "bad");
     return;
   }
   note("mint-note", "Sending the link…");

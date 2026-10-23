@@ -35,4 +35,4 @@ export type LimitName = keyof typeof RATE_LIMIT_IDS;
 export const DRIVE_ID_RE = /^drv_[a-f0-9]{32}$/;
 
 export const AUP_TEXT =
-  "This is a one-hour demo drive. I will not upload sexual material involving anyone under 18, or anything else illegal. There are no share links. Files stay on my credential and are deleted within an hour.";
+  "This is a short-lived sandbox for testing WebDAV with small documents. Only text, PDF and office documents are accepted. The drive is private and wiped within an hour.";

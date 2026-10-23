@@ -1,12 +1,12 @@
 # R2 Drive
 
-A one-hour WebDAV drive on Cloudflare Workers. The pattern is a stateful file protocol running properly at the edge: Class 1 and Class 2 (including `LOCK` / `UNLOCK`) against an isolated R2 prefix, with lock state in a SQLite Durable Object.
+A short-lived sandbox for testing WebDAV with small documents. The pattern is a stateful file protocol running properly at the edge: Class 1 and Class 2 (including `LOCK` / `UNLOCK`) against an isolated R2 prefix, with lock state in a SQLite Durable Object. Only text, PDF and office documents are accepted. Drives are private and wiped within an hour. Misuse can be reported, and drives can be frozen.
 
-What you can try: verify an email, accept the use rules, and mount the drive from macOS Finder, Windows Explorer, rclone, or Obsidian Remotely Save. The page also uploads, renames, moves, deletes, and previews text and PDF, and it shows the lock owner, timeout, and depth on a live request log.
+What you can try: verify an email, accept the notice, and mount the drive from macOS Finder, Windows Explorer, rclone, or Obsidian Remotely Save. The page also uploads, renames, moves, deletes, and previews text and PDF, and it shows the lock owner, timeout, and depth on a live request log.
 
 What you could build with the same pattern: a personal Dropbox-style drive, an Obsidian or Zotero sync target, or a backup destination for rclone.
 
-This demo is a port of [abersheeran/r2-webdav](https://github.com/abersheeran/r2-webdav) (Apache-2.0). See `NOTICE`, `LICENSE`, and `CHANGELOG.md`. Abuse rules are in `ABUSE.md`.
+This demo is a port of [abersheeran/r2-webdav](https://github.com/abersheeran/r2-webdav) (Apache-2.0). See `NOTICE`, `LICENSE`, and `CHANGELOG.md`. The sandbox limits are in `SAFETY.md`.
 
 ## Run
 

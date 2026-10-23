@@ -10,7 +10,7 @@ export function rateLimitIp(ip: string): string {
 }
 
 /**
- * Network key for mint quotas and abuse blocks.
+ * Network key for mint quotas and freeze blocks.
  * IPv6 is a /64. IPv4 is a /24 because a /64 does not apply to IPv4.
  */
 export function clientNetwork(ip: string): string {

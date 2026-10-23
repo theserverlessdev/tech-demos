@@ -30,7 +30,7 @@
       <h1>R2 Drive</h1>
     </div>
     <div class="topbar__actions">
-      <a class="btn" href="#report">Report abuse</a>
+      <a class="btn" href="#report">Report misuse</a>
       <button class="btn btn-icon" id="theme" type="button" aria-label="Switch colour theme">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9Z"/></svg>
       </button>
@@ -39,7 +39,7 @@
 
   <main>
     <section class="intro">
-      <p class="lede">A stateful file protocol, running properly on Workers. This demo turns R2 into a WebDAV Class 1 and Class 2 drive with locks kept in a SQLite Durable Object, then wipes the prefix an hour after you mint it.</p>
+      <p class="lede">A short-lived sandbox for testing WebDAV with small documents. This demo turns R2 into a WebDAV Class 1 and Class 2 drive with locks kept in a SQLite Durable Object. Only text, PDF and office documents are accepted, and the prefix is wiped within an hour.</p>
       <div class="cards">
         <article>
           <h2>What this shows</h2>
@@ -47,7 +47,7 @@
         </article>
         <article>
           <h2>What you can try</h2>
-          <p>Verify an email, accept the use rules, and mount the drive from macOS, Windows, rclone, or Obsidian. Or use the browser to upload, rename, move, delete, and preview a text or PDF file.</p>
+          <p>Verify an email, accept the notice, and mount the drive from macOS, Windows, rclone, or Obsidian. Or use the browser to upload, rename, move, delete, and preview a text or PDF file.</p>
         </article>
         <article>
           <h2>What you could build</h2>
@@ -67,7 +67,7 @@
           <input id="email" name="email" type="email" autocomplete="email" required maxlength="254" placeholder="you@example.com" />
           <label class="check" for="aup">
             <input id="aup" name="aup" type="checkbox" required />
-            <span id="aup-text">This is a one-hour demo drive. I will not upload sexual material involving anyone under 18, or anything else illegal. There are no share links. Files stay on my credential and are deleted within an hour.</span>
+            <span id="aup-text">This is a short-lived sandbox for testing WebDAV with small documents. Only text, PDF and office documents are accepted. The drive is private and wiped within an hour.</span>
           </label>
           <div id="turnstile"></div>
           <button class="btn btn-primary" id="mint-button" type="submit">Email me a link</button>
@@ -128,8 +128,8 @@
     </section>
 
     <section class="panel" id="report" aria-labelledby="report-heading">
-      <h2 id="report-heading">Report abuse</h2>
-      <p class="hint">A report freezes that drive and blocks its email and network. Reports are kept for 30 days after the drive is wiped.</p>
+      <h2 id="report-heading">Report misuse</h2>
+      <p class="hint">Misuse can be reported, and a report freezes that drive. Reports are kept for 30 days after the drive is wiped.</p>
       <form id="report-form">
         <label for="report-drive">Drive id, if you have it</label>
         <input id="report-drive" type="text" maxlength="40" placeholder="drv_…" />

@@ -1,8 +1,8 @@
-# Abuse protection
+# Safety
 
-This demo must not work as a way to host or distribute illegal material, including CSAM. The controls below are the design, not an add-on.
+This demo is a short-lived sandbox for testing WebDAV with small documents. Only text, PDF and office documents are accepted. Drives are private and wiped within an hour. Misuse can be reported, and drives can be frozen. The controls below are the design, not an add-on.
 
-## No distribution
+## Private drives
 
 - There is no share link, public object URL, or presigned URL. The UI does not generate one.
 - A file is readable only with that drive's own short-lived credential: the Basic password, or the `HttpOnly` session cookie.
@@ -34,12 +34,12 @@ A PDF can still embed an image. The cap, the missing share link, and the one-hou
 
 `MINT_ENABLED` must be the string `"true"`. Any other value, including unset, leaves minting off. The deploy config sets `"true"`. `POST /api/admin/mint` with `{"enabled": false}` sets a D1 kill flag. The admin route cannot turn minting on when the env value is not `"true"`.
 
-## Accountability
+## Records
 
 Each drive row in D1 stores:
 
 - `email_hmac`: HMAC-SHA256 of the normalised address under `AUDIT_HMAC_KEY`
-- `email_enc`: AES-GCM of the address under `AUDIT_KEY`, so a responder can decrypt it
+- `email_enc`: AES-GCM of the address under `AUDIT_KEY`, so the address can be recovered for a report
 - `ip_hmac`: HMAC of the rate-limit IP (IPv6 /64, full IPv4)
 - `network_hmac`: HMAC of the block key (IPv6 /64, IPv4 /24)
 - creation time, expiry, status

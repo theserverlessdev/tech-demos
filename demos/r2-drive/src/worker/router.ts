@@ -185,7 +185,7 @@ async function mint(request: Request, deps: Deps): Promise<Response> {
   if (!deps.configured || !deps.mailFrom) return error(503, "not_configured", "This demo is not configured.");
   const body = await readJson(request);
   if (body instanceof Response) return body;
-  if (body.aup !== true) return error(400, "aup_required", "Accept the use rules to mint a drive.");
+  if (body.aup !== true) return error(400, "aup_required", "Accept the notice to mint a drive.");
   const email = normalizeEmail(typeof body.email === "string" ? body.email : "");
   if (!email) return error(400, "bad_email", "Enter a normal email address.");
   if (isDisposableEmail(email)) {

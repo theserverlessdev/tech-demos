@@ -1,6 +1,6 @@
 # Changelog
 
-Port of [abersheeran/r2-webdav](https://github.com/abersheeran/r2-webdav) (Apache-2.0, Copyright 2026 abersheeran). The WebDAV method behaviour is derived from that Worker. Persistence, tenancy, and abuse controls are new.
+Port of [abersheeran/r2-webdav](https://github.com/abersheeran/r2-webdav) (Apache-2.0, Copyright 2026 abersheeran). The WebDAV method behaviour is derived from that Worker. Persistence, tenancy, and the private-drive limits are new.
 
 ## Kept
 
