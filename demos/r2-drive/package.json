@@ -1,0 +1,21 @@
+{
+  "name": "@tech-demos/r2-drive",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun build src/client/app.ts --outdir public/assets --target browser --minify",
+    "dev": "bun run scripts/ensure-dev-vars.ts && bun run build && CI=1 wrangler d1 migrations apply DB --local && wrangler dev --port 8808 --var PUBLIC_ORIGIN:http://127.0.0.1:8808 --var MINT_ENABLED:true --var TURNSTILE_LOCAL:1 --var EMAIL_SINK:1 --var MAIL_FROM:drive@localhost --var TURNSTILE_SITE_KEY:1x00000000000000000000AA",
+    "deploy": "bun run build && CI=1 wrangler d1 migrations apply DB --remote && wrangler deploy",
+    "test": "bun test",
+    "typecheck": "wrangler types && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
+    "cf-typegen": "wrangler types",
+    "smoke": "bun run scripts/smoke.ts"
+  },
+  "dependencies": {
+    "@xmldom/xmldom": "0.8.11"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "wrangler": "^4.40.0"
+  }
+}
