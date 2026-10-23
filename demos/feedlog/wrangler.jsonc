@@ -45,7 +45,7 @@
   "triggers": { "crons": ["17 * * * *"] },
   "vars": {
     "EMBED_MODEL": "@cf/baai/bge-small-en-v1.5",
-    "TURNSTILE_SITE_KEY": "0x4AAAAAAFRgq04SvYB_gEMr"
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFRUoj5qDpf7XyIW"
   },
   // Secrets, never commit: TURNSTILE_SECRET, ADMIN_TOKEN, GATE_SECRET (set on the Worker; the owner holds them).
   // Local `bun run dev` writes .dev.vars with Cloudflare's always-pass test pair, which overrides these

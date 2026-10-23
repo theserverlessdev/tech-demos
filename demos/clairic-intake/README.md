@@ -75,7 +75,7 @@ The D1 id in `wrangler.jsonc` is `472d5bac-dea1-4710-90d9-7b5738178b68` (`tech-d
    The hourly cron also deletes objects older than a day.
 3. **Queue.** `wrangler queues create tech-demos-clairic-intake` and `wrangler queues create tech-demos-clairic-intake-dlq`. The producer binding is `INTAKE`. The consumer reads the same queue, retries twice, waits 30 seconds between retries, and sends exhausted messages to the dead-letter queue. Nothing reads that queue. Inspect it in the dashboard within 4 days; messages there are deleted after that. A row that is still queued or running after the lease and the retry wait is shown as failed.
 4. **Secrets.** `wrangler secret put TURNSTILE_SECRET` and `wrangler secret put IP_HASH_SECRET` (32 or more random bytes).
-5. **Turnstile.** Create a widget whose hostname is `clairic-intake.tech-demos.theserverless.dev`. Put its site key in `TURNSTILE_SITE_KEY`. The widget actions are `extract`, `decide`, and `batch`.
+5. **Turnstile.** Use the shared widget (`docs/turnstile.md`). `TURNSTILE_SITE_KEY` is already that site key. The widget actions are `extract`, `decide`, and `batch`.
 6. **DNS.** Add a proxied record for `clairic-intake.tech-demos.theserverless.dev`, or switch that route to a `custom_domain`.
 7. **Deploy.** `bun run deploy`. Routes: `tech-demos.theserverless.dev/demos/clairic-intake*` and `clairic-intake.tech-demos.theserverless.dev/*`.
 8. **AI.** The Worker uses `@cf/cloudflare/clairic`, `@cf/meta/llama-3.2-3b-instruct`, and `@cf/cloudflare/clef` through the Workers AI binding. No extra provider key. Confirm the account can call the two preview models before the first paid request.

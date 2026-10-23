@@ -55,6 +55,7 @@
     "COMPARE_MODEL": "@cf/meta/llama-3.2-3b-instruct",
     "CLEF_MODEL": "@cf/cloudflare/clef",
     "ENVIRONMENT": "",
+    // Shared widget. See docs/turnstile.md.
     "TURNSTILE_SITE_KEY": "0x4AAAAAAFRUoj5qDpf7XyIW"
   },
   "secrets": { "required": ["TURNSTILE_SECRET", "IP_HASH_SECRET"] },

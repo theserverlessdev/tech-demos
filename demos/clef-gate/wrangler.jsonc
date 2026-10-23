@@ -38,7 +38,7 @@
     "CONFIDENCE_FLOOR": "0.62",
     "SESSION_TTL_SECONDS": "21600",
     "PENDING_TTL_SECONDS": "600",
-    "TURNSTILE_SITE_KEY": "0x4AAAAAAFRgqlaAuJ8-Lnuc",
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFRUoj5qDpf7XyIW",
     "LOCAL_DEV": "0"
   },
   "secrets": {

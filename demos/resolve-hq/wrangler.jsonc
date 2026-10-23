@@ -59,10 +59,8 @@
     "ENVIRONMENT": "",
     "DAILY_DRAFT_CAP": "80",
     "IP_DRAFT_CAP": "8",
-    // Owner: replace REPLACE_ME with the public Turnstile site key before deploy
-    // (same as the other demos). Widget hosts: tech-demos.theserverless.dev and
-    // resolve-hq.tech-demos.theserverless.dev.
-    "TURNSTILE_SITE_KEY": "0x4AAAAAAFXhiuhfc0KZXcjs"
+    // Shared widget. Do not create another one. See docs/turnstile.md.
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFRUoj5qDpf7XyIW"
   },
   "routes": [
     { "pattern": "tech-demos.theserverless.dev/demos/resolve-hq*", "zone_name": "theserverless.dev" },

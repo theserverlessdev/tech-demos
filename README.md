@@ -54,6 +54,7 @@ bun run deploy   # wrangler deploy hub (owner only)
 2. Add `wrangler.jsonc` with **both** routes: `/demos/<slug>*` and `<slug>.tech-demos.theserverless.dev/*`
 3. Register a `redirectSource(slug, origin)` fallback in `apps/hub/src/registry.ts` with `kind: "standalone"`
 4. Open a PR (screenshot + video of the running demo)
+5. If the demo calls Turnstile, reuse the shared widget. Do not create one. See [docs/turnstile.md](docs/turnstile.md).
 
 Remember: zone routes win over the hub custom domain. Do not expect the hub loader to serve a standalone demo while those routes exist.
 

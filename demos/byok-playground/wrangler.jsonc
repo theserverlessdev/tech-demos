@@ -34,8 +34,8 @@
     // wrangler dev (which rewrites Host to the first route) can use test keys
     // and allow http://localhost to the mock OpenAI server.
     "ENVIRONMENT": "",
-    // Replace after creating the widget. Until then the proxy fails closed off localhost.
-    "TURNSTILE_SITE_KEY": "0x4AAAAAAFXRvJJNv6vLYFJL"
+    // Shared widget. A placeholder such as REPLACE_ME still fails closed off localhost.
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFRUoj5qDpf7XyIW"
   },
   "secrets": { "required": ["TURNSTILE_SECRET", "IP_HASH_SECRET", "SESSION_SECRET"] },
   "routes": [

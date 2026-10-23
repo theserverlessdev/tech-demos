@@ -86,7 +86,7 @@ Resources already created on the account:
 | Worker | `tech-demos-repo-per-agent` |
 | D1 | `tech-demos-repo-per-agent` (`94497718-3138-4506-a005-0c91bcc80f0e`) |
 | Artifacts namespace | `tech-demos` |
-| Turnstile widget | `tech-demos-repo-per-agent`, site key `0x4AAAAAAFRUoj5qDpf7XyIW` |
+| Turnstile widget | shared `tech-demos-shared` (was `tech-demos-repo-per-agent`), site key `0x4AAAAAAFRUoj5qDpf7XyIW` |
 
 Routes after the next deploy: `tech-demos.theserverless.dev/demos/repo-per-agent`, `tech-demos.theserverless.dev/demos/repo-per-agent/*`, and `repo-per-agent.tech-demos.theserverless.dev/*`.
 

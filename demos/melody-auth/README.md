@@ -155,7 +155,7 @@ bun run dev:local
 
 ## Deploy
 
-Resources already exist from PR #43 (D1 `e522863a-1932-4955-99d7-18a13014c631`, KV `24dc62b3e8d94d139a8c5d63fdca1a1b`, Turnstile site key `0x4AAAAAAFYQUTxFgredOxQl`). Apply the additive migration, then deploy:
+Resources already exist from PR #43 (D1 `e522863a-1932-4955-99d7-18a13014c631`, KV `24dc62b3e8d94d139a8c5d63fdca1a1b`). Turnstile uses the shared widget (`docs/turnstile.md`), site key `0x4AAAAAAFRUoj5qDpf7XyIW`. Apply the additive migration, then deploy:
 
 ```bash
 cd demos/melody-auth

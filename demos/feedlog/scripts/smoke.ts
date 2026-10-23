@@ -3,7 +3,7 @@ import type { BoardConfig, ChangelogEntry, Health, Post, SimilarResult } from ".
 
 const args = process.argv.slice(2);
 const base = (args.find((arg) => arg.startsWith("http")) ?? "http://127.0.0.1:8787").replace(/\/$/, "");
-const PRODUCTION_SITE_KEY = "0x4AAAAAAFRgq04SvYB_gEMr";
+const PRODUCTION_SITE_KEY = "0x4AAAAAAFRUoj5qDpf7XyIW";
 const TEST_SITE_KEY = "1x00000000000000000000AA";
 
 function isLoopbackBase(url: string): boolean {

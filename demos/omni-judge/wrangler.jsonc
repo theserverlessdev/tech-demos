@@ -42,7 +42,7 @@
     // Empty in production and in the local default. Localhost still accepts the
     // Turnstile test secret. Set ENVIRONMENT=local only for the labelled stub.
     "ENVIRONMENT": "",
-    "TURNSTILE_SITE_KEY": "0x4AAAAAAFXRuxaIlcSffdZ4"
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFRUoj5qDpf7XyIW"
   },
   "secrets": { "required": ["TURNSTILE_SECRET", "IP_HASH_SECRET"] },
   "routes": [

@@ -26,8 +26,8 @@
   ],
   "vars": {
     "AI_MODEL": "@cf/meta/llama-3.2-1b-instruct",
-    // Public production widget site key. Local `wrangler dev` uses the test key in wrangler.dev.jsonc.
-    "TURNSTILE_SITE_KEY": "0x4AAAAAAFRgqW3QGH0PGoRv"
+    // Shared widget. Local `wrangler dev` uses the test key in wrangler.dev.jsonc.
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFRUoj5qDpf7XyIW"
   },
   "routes": [
     { "pattern": "tech-demos.theserverless.dev/demos/actor-lab", "zone_name": "theserverless.dev" },

@@ -98,7 +98,7 @@ This pass does **not** create Cloudflare resources or deploy. Existing ids stay 
 Owner steps after merge:
 
 1. `wrangler d1 migrations apply DB --remote` (or `bun run deploy`) so migrations `0002` and `0003` land.
-2. Create a Turnstile widget for `tech-demos.theserverless.dev` and `edgechat.tech-demos.theserverless.dev`. Put the site key in `wrangler.jsonc` `vars.TURNSTILE_SITE_KEY` and run `wrangler secret put TURNSTILE_SECRET`. `wrangler deploy` fails if that secret is missing (`secrets.required`).
+2. Reuse the shared Turnstile widget (`docs/turnstile.md`). The site key is already in `wrangler.jsonc`. Run `wrangler secret put TURNSTILE_SECRET` with that widget's secret. `wrangler deploy` fails if the secret is missing (`secrets.required`).
 3. Optional but recommended: R2 lifecycle on bucket `tech-demos-edgechat`, prefix `uploads/`, expire after 7 days. That leaves `seed/welcome.txt` alone. Dashboard or `wrangler r2 bucket lifecycle` — this agent does not change Cloudflare account config.
 4. Confirm `CONNECT_LIMIT` namespace `7468` is unused by another Worker on the same account.
 
