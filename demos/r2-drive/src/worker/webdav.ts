@@ -34,7 +34,7 @@ import {
   type LockStore,
 } from "./locks";
 import type { GuardedBucket, SqlRunner } from "./quota";
-import { budgetExhaustedResponse, takeUnits } from "./requests";
+import { copyMoveBudgetResponse, takeUnits, unitsUsed } from "./requests";
 
 const COLLECTION = "<collection />";
 const DAV = "DAV:";
@@ -66,6 +66,7 @@ export type DavCtx = {
   key: string;
   driveExpiresAt?: number;
   sql: SqlRunner;
+  driveId: string;
 };
 
 export async function handleWebdav(request: Request, ctx: DavCtx): Promise<Response> {
@@ -390,9 +391,9 @@ async function transfer(request: Request, ctx: DavCtx, move: boolean): Promise<R
   if (collection && depth === "infinity") {
     for await (const object of listAll(ctx.bucket, `${ctx.key}/`, true)) jobs.push(object);
   }
-  // The request already paid for one unit. Each further object this COPY or MOVE writes costs another.
+  // The request already paid for one unit. Each further object costs another, so the total is one per object.
   // A failed charge returns before the destination delete and before any put.
-  if (!takeUnits(ctx.sql, jobs.length - 1)) return budgetExhaustedResponse();
+  if (!takeUnits(ctx.sql, jobs.length - 1)) return copyMoveBudgetResponse(ctx.driveId, jobs.length, unitsUsed(ctx.sql));
   if (existing) {
     const removed = await handleDelete(new Request(request.url, { method: "DELETE", headers: lockHeaders(request) }), {
       ...ctx,

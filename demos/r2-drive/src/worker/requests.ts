@@ -41,13 +41,21 @@ export function setUnitsUsed(sql: SqlRunner, used: number): void {
   sql.exec("UPDATE requests SET used = ?1 WHERE id = 1", used);
 }
 
-export function budgetExhaustedResponse(): Response {
-  console.error(JSON.stringify({ event: "drive_budget_exhausted" }));
+export function budgetExhaustedResponse(detail: { driveId: string; needed: number; used: number }): Response {
+  console.error(JSON.stringify({ event: "drive_budget_exhausted", driveId: detail.driveId, needed: detail.needed, used: detail.used }));
   return new Response(BUDGET_EXHAUSTED_MESSAGE, { status: 429 });
 }
 
 /** The gate `DriveObject.fetch` and the test server both call. Null means the unit was taken. */
-export function chargeRequest(sql: SqlRunner): Response | null {
+export function chargeRequest(sql: SqlRunner, driveId = ""): Response | null {
   if (takeRequest(sql)) return null;
-  return budgetExhaustedResponse();
+  return budgetExhaustedResponse({ driveId, needed: 1, used: unitsUsed(sql) });
+}
+
+/** A COPY or MOVE that cannot be paid for while units remain. The lifetime message is only for a spent budget. */
+export function copyMoveBudgetResponse(driveId: string, needed: number, used: number): Response {
+  const left = MAX_DRIVE_REQUESTS - used;
+  console.error(JSON.stringify({ event: "drive_budget_exhausted", driveId, needed, used }));
+  if (left <= 0) return new Response(BUDGET_EXHAUSTED_MESSAGE, { status: 429 });
+  return new Response(`This copy/move needs ${needed} units; ${left} left.`, { status: 429 });
 }

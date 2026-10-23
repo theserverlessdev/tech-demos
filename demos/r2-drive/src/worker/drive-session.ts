@@ -62,9 +62,15 @@ export class DriveSession {
       key,
       driveExpiresAt: expiresAt ?? undefined,
       sql: this.sql,
+      driveId: driveIdFromMount(mountPath),
     });
     return withDavCsp(response);
   }
+}
+
+function driveIdFromMount(mountPath: string): string {
+  const match = /\/(drv_[a-f0-9]{32})$/.exec(mountPath);
+  return match?.[1] ?? "";
 }
 
 export function withDavCsp(response: Response): Response {

@@ -8,8 +8,8 @@ Show that a stateful file protocol (WebDAV Class 1 and Class 2, including LOCK a
 
 - In:
   - A port of [abersheeran/r2-webdav](https://github.com/abersheeran/r2-webdav) (Apache-2.0) with attribution, LICENSE, and CHANGELOG.
-  - Turnstile plus a one-time email link before mint. One active drive per normalized email. Password hashed at rest.
-  - Caps: 25 MB per drive, 200 files, 5 MB per file, and 3000 request units (one per WebDAV request or live-log connection, plus one per file a COPY or MOVE writes). TTL 60 minutes. Cron, a Durable Object alarm, and an on-request wipe. R2 lifecycle file is the day-scale backstop.
+  - Turnstile plus a one-time email link before mint. Production uses the shared widget site key. Local dev keeps the test site key. One active drive per normalized email. Password hashed at rest.
+  - Caps: 25 MB per drive, 200 files, 5 MB per file, and 3000 request units (one per WebDAV request or live-log connection; a COPY or MOVE costs one unit per file or folder it writes, with a minimum of one). TTL 60 minutes. Cron, a Durable Object alarm, and an on-request wipe. R2 lifecycle file is the day-scale backstop.
   - Magic-byte allow list (text, markdown, JSON, CSV, PDF). Office files, images, audio, video, archives, and unknown binaries get 415.
   - No share links, no anonymous GET of bytes, no CORS, `Cache-Control: private, no-store`.
   - Browser file UI, live WebSocket log, lock owner / timeout / depth, mount snippets, litmus page that only shows a real run.

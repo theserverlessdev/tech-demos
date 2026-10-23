@@ -81,7 +81,7 @@ export async function createTestApp(options?: {
     },
     serveDav: async (request, drive, target) => {
       const runtime = runtimeFor(drive.id);
-      const budget = chargeRequest(runtime.sql);
+      const budget = chargeRequest(runtime.sql, drive.id);
       if (budget) return budget;
       const before = runtime.session.quota.snapshot();
       const response = await runtime.session.handle(request, target.mountPath, target.key, () => clock.t, drive.expiresAt);

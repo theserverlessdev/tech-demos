@@ -52,7 +52,7 @@
   "triggers": { "crons": ["*/5 * * * *"] },
   "vars": {
     "MINT_ENABLED": "false",
-    "TURNSTILE_SITE_KEY": "",
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFRUoj5qDpf7XyIW",
     "TURNSTILE_LOCAL": "0",
     "EMAIL_SINK": "0",
     "MAIL_FROM": "drive@example.invalid",

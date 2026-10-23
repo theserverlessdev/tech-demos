@@ -493,14 +493,105 @@ test("a 20-file MOVE at 2990 units gets 429 and leaves the source", async () => 
       Destination: `${ORIGIN}/dav/${minted.driveId}/elsewhere`,
     });
     expect(moved.status).toBe(429);
-    expect(await moved.text()).toBe(BUDGET_EXHAUSTED_MESSAGE);
+    expect(await moved.text()).toBe("This copy/move needs 21 units; 9 left.");
     expect(app.unitsUsed(minted.driveId)).toBe(2991);
   });
   expect(logged).toContain("drive_budget_exhausted");
+  expect(logged).toContain(`"driveId":"${minted.driveId}"`);
+  expect(logged).toContain('"needed":21');
+  expect(logged).toContain('"used":2991');
   expect((await dav(app, minted, "GET", "folder/n0.txt")).status).toBe(200);
   expect(await (await dav(app, minted, "GET", "folder/n0.txt")).text()).toBe("x");
   expect((await dav(app, minted, "GET", "elsewhere/n0.txt")).status).toBe(404);
   expect((await dav(app, minted, "GET", "elsewhere")).status).toBe(404);
+});
+
+test("a folder COPY at Depth infinity charges one unit per object", async () => {
+  const app = await createTestApp();
+  const minted = await mintDrive(app, "copyinf@example.com", "203.0.113.52");
+  expect((await dav(app, minted, "MKCOL", "folder")).status).toBe(201);
+  for (let index = 0; index < 4; index++) {
+    expect((await dav(app, minted, "PUT", `folder/n${index}.txt`, "x")).status).toBe(201);
+  }
+  const before = app.unitsUsed(minted.driveId);
+  const copied = await dav(app, minted, "COPY", "folder", null, {
+    Destination: `${ORIGIN}/dav/${minted.driveId}/elsewhere`,
+    Depth: "infinity",
+  });
+  expect(copied.status).toBe(201);
+  expect(app.unitsUsed(minted.driveId) - before).toBe(5);
+  expect((await dav(app, minted, "GET", "elsewhere/n0.txt")).status).toBe(200);
+});
+
+test("a failed overwrite COPY leaves the destination intact", async () => {
+  const app = await createTestApp();
+  const minted = await mintDrive(app, "overwrite@example.com", "203.0.113.53");
+  expect((await dav(app, minted, "MKCOL", "src")).status).toBe(201);
+  for (let index = 0; index < 10; index++) {
+    expect((await dav(app, minted, "PUT", `src/n${index}.txt`, "s")).status).toBe(201);
+  }
+  expect((await dav(app, minted, "MKCOL", "dest")).status).toBe(201);
+  expect((await dav(app, minted, "PUT", "dest/keep.txt", "keep")).status).toBe(201);
+  app.setUnitsUsed(minted.driveId, 2995);
+  const logged = await capturingErrors(async () => {
+    const copied = await dav(app, minted, "COPY", "src", null, {
+      Destination: `${ORIGIN}/dav/${minted.driveId}/dest`,
+      Depth: "infinity",
+      Overwrite: "T",
+    });
+    expect(copied.status).toBe(429);
+    expect(await copied.text()).toBe("This copy/move needs 11 units; 4 left.");
+    expect(app.unitsUsed(minted.driveId)).toBe(2996);
+  });
+  expect(logged).toContain("drive_budget_exhausted");
+  expect(logged).toContain(`"driveId":"${minted.driveId}"`);
+  expect(logged).toContain('"needed":11');
+  expect(logged).toContain('"used":2996');
+  expect(await (await dav(app, minted, "GET", "dest/keep.txt")).text()).toBe("keep");
+  expect((await dav(app, minted, "GET", "src/n0.txt")).status).toBe(200);
+  expect((await dav(app, minted, "GET", "dest/n0.txt")).status).toBe(404);
+});
+
+test("a Depth 0 folder COPY costs 1 unit", async () => {
+  const app = await createTestApp();
+  const minted = await mintDrive(app, "depth0@example.com", "203.0.113.54");
+  expect((await dav(app, minted, "MKCOL", "folder")).status).toBe(201);
+  expect((await dav(app, minted, "PUT", "folder/note.txt", "inside")).status).toBe(201);
+  const before = app.unitsUsed(minted.driveId);
+  const copied = await dav(app, minted, "COPY", "folder", null, {
+    Destination: `${ORIGIN}/dav/${minted.driveId}/shallow`,
+    Depth: "0",
+  });
+  expect(copied.status).toBe(201);
+  expect(app.unitsUsed(minted.driveId) - before).toBe(1);
+  expect((await dav(app, minted, "GET", "shallow/note.txt")).status).toBe(404);
+  expect(await (await dav(app, minted, "GET", "folder/note.txt")).text()).toBe("inside");
+});
+
+test("a COPY that lands on exactly 3000 units succeeds and the next unit fails", async () => {
+  const app = await createTestApp();
+  const minted = await mintDrive(app, "boundary@example.com", "203.0.113.55");
+  expect((await dav(app, minted, "MKCOL", "folder")).status).toBe(201);
+  expect((await dav(app, minted, "PUT", "folder/a.txt", "a")).status).toBe(201);
+  expect((await dav(app, minted, "PUT", "folder/b.txt", "b")).status).toBe(201);
+  app.setUnitsUsed(minted.driveId, 2997);
+  const copied = await dav(app, minted, "COPY", "folder", null, {
+    Destination: `${ORIGIN}/dav/${minted.driveId}/elsewhere`,
+    Depth: "infinity",
+  });
+  expect(copied.status).toBe(201);
+  expect(app.unitsUsed(minted.driveId)).toBe(3000);
+  const stored = await app.bucket.list({ prefix: `drives/${minted.driveId}/elsewhere/` });
+  expect(stored.objects.some((object) => object.key.endsWith("elsewhere/a.txt"))).toBe(true);
+  const logged = await capturingErrors(async () => {
+    const over = await app.fetch(davUrl(minted.driveId, "missing.txt"), { headers: authHeaders(minted) });
+    expect(over.status).toBe(429);
+    expect(await over.text()).toBe(BUDGET_EXHAUSTED_MESSAGE);
+  });
+  expect(logged).toContain("drive_budget_exhausted");
+  expect(logged).toContain(`"driveId":"${minted.driveId}"`);
+  expect(logged).toContain('"needed":1');
+  expect(logged).toContain('"used":3000');
 });
 
 test("request 3001 on a drive gets 429", async () => {
@@ -521,15 +612,15 @@ test("request 3001 on a drive gets 429", async () => {
 });
 
 async function capturingErrors(run: () => Promise<void>): Promise<string> {
-  const lines: unknown[][] = [];
+  const lines: string[] = [];
   const original = console.error;
   console.error = (...args: unknown[]) => {
-    lines.push(args);
+    lines.push(args.map(String).join(" "));
   };
   try {
     await run();
   } finally {
     console.error = original;
   }
-  return JSON.stringify(lines);
+  return lines.join("\n");
 }

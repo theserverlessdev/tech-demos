@@ -23,7 +23,7 @@ sequenceDiagram
   Browser->>Worker: WebDAV
   Worker->>Worker: credential, per-drive limit, per-location DAV ceiling
   Worker->>DO: authed request
-  DO->>DO: charge the lifetime budget (one unit per request or socket, plus one per copied or moved file)
+  DO->>DO: charge the lifetime budget (one unit per request or socket; a COPY or MOVE costs one unit per file or folder it writes, with a minimum of one)
   DO->>DO: serialise the write, reserve quota
   DO->>R2: put or delete
   DO->>D1: audit row, usage when it changed
@@ -45,7 +45,7 @@ bun install
 bun run --filter @tech-demos/r2-drive dev
 ```
 
-That listens on <http://127.0.0.1:8808>. Local dev writes `.dev.vars` with Cloudflare's published Turnstile test pair and `EMAIL_SINK=1`. Open the page, mint with any non-disposable address, then use **Use the latest link**. The dev mailbox is served only on loopback, and only when both `EMAIL_SINK=1` and `TURNSTILE_LOCAL=1`.
+That listens on <http://127.0.0.1:8808>. Production uses the shared Turnstile widget (`0x4AAAAAAFRUoj5qDpf7XyIW`). Local dev keeps Cloudflare's test site key: `bun run dev` passes `--var TURNSTILE_SITE_KEY:1x00000000000000000000AA`, and `.dev.vars` holds the published test pair plus `EMAIL_SINK=1`. Open the page, mint with any non-disposable address, then use **Use the latest link**. The dev mailbox is served only on loopback, and only when both `EMAIL_SINK=1` and `TURNSTILE_LOCAL=1`.
 
 ```sh
 bun run --filter @tech-demos/r2-drive test
@@ -63,7 +63,7 @@ Nothing here is deployed. Replace these before a real deploy:
 | --- | --- |
 | D1 `DB` | `database_id` `00000000-0000-4000-8000-0000000000d2`, name `r2-drive-placeholder` |
 | R2 `BUCKET` | `r2-drive-placeholder` |
-| Turnstile | `TURNSTILE_SITE_KEY` is empty in `wrangler.jsonc`. Secret `TURNSTILE_SECRET` |
+| Turnstile | Shared widget site key `0x4AAAAAAFRUoj5qDpf7XyIW` in `wrangler.jsonc`. Secret `TURNSTILE_SECRET` is that widget's secret |
 | Email Sending | `MAIL_FROM` is `drive@example.invalid`. Binding `EMAIL` |
 | Audit | secrets `AUDIT_KEY` and `AUDIT_HMAC_KEY`, each 32 bytes hex |
 | Admin | secret `ADMIN_TOKEN` |
@@ -84,7 +84,7 @@ Before a real deploy, add a billing notification in the Cloudflare dashboard (No
 
 ## Caps and content
 
-25 MB per drive, 5 MB per file, 200 objects, one hour, and 3000 request units for the life of the drive. The budget counts one unit per WebDAV request or live-log connection, plus one per file a COPY or MOVE writes. `PUT` walks one list in `src/shared/content-policy.ts`. Text, Markdown, JSON, CSV, and PDF are allowed. Word, Excel, PowerPoint, and every other ZIP-based file are rejected with 415, as are images, video, audio, archives, OLE, and encrypted or unknown binaries.
+25 MB per drive, 5 MB per file, 200 objects, one hour, and 3000 request units for the life of the drive. The budget counts one unit per WebDAV request or live-log connection. A COPY or MOVE costs one unit per file or folder it writes, with a minimum of one. `PUT` walks one list in `src/shared/content-policy.ts`. Text, Markdown, JSON, CSV, and PDF are allowed. Word, Excel, PowerPoint, and every other ZIP-based file are rejected with 415, as are images, video, audio, archives, OLE, and encrypted or unknown binaries.
 
 Finder `._*` files must start with the AppleDouble magic `00 05 16 07`, and `.DS_Store` must start with `00 00 00 01 Bud1`. Either file can carry up to 64 KB of opaque binary after that header. A few blocked signatures are still rejected, including PNG and some JPEG markers.
 

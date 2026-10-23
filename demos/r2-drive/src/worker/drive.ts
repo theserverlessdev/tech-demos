@@ -111,7 +111,7 @@ export class DriveObject extends DurableObject<DriveEnv> {
     const name = this.ctx.id.name || storedId || "";
     if (!this.ctx.id.name) console.error(JSON.stringify({ event: "drive_missing_name", storedId: storedId ?? null }));
     if (request.headers.get("x-r2drive-authed") !== "1" || !name) return new Response("Forbidden", { status: 403 });
-    const budget = chargeRequest(this.ctx.storage.sql);
+    const budget = chargeRequest(this.ctx.storage.sql, name);
     if (budget) return budget;
     if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
       const limited = socketLimitResponse(this.ctx.getWebSockets().length);
