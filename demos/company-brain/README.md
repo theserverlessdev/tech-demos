@@ -92,8 +92,7 @@ From this folder, with the owner account (unset any other API token):
 
 ```bash
 bunx wrangler whoami
-# TURNSTILE_SITE_KEY in wrangler.jsonc is the live widget key.
-# Widget hostnames: tech-demos.theserverless.dev, company-brain.tech-demos.theserverless.dev
+# TURNSTILE_SITE_KEY in wrangler.jsonc is the shared widget. See docs/turnstile.md.
 # workers_dev is false so the workers.dev hostname is not a third Turnstile host.
 env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bunx wrangler deploy
 env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bunx wrangler secret put TURNSTILE_SECRET

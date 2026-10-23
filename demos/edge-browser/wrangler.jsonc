@@ -47,7 +47,7 @@
     // works under wrangler dev, which rewrites Host to the first route.
     // "local" also skips Browser Rendering and writes the stand-in outputs.
     "ENVIRONMENT": "",
-    "TURNSTILE_SITE_KEY": "0x4AAAAAAFX7Ws8qEiyDj57x"
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFRUoj5qDpf7XyIW"
   },
   "secrets": { "required": ["TURNSTILE_SECRET", "IP_HASH_SECRET"] },
   "triggers": { "crons": ["*/15 * * * *"] },

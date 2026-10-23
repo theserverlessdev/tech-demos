@@ -42,6 +42,7 @@
     "MAX_TASKS_PER_VISITOR": "3",
     "MAX_LIVE_REPOS": "300",
     "AI_CALLS_PER_DAY": "80",
+    // Shared widget (this key). See docs/turnstile.md.
     "TURNSTILE_SITE_KEY": "0x4AAAAAAFRUoj5qDpf7XyIW"
   },
   "triggers": { "crons": ["*/15 * * * *"] },

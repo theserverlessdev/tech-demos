@@ -84,7 +84,7 @@ bun run scripts/smoke.ts http://127.0.0.1:8787
 
 | Name | Where | What |
 | --- | --- | --- |
-| `TURNSTILE_SITE_KEY` | `wrangler.jsonc` `vars` (public) | Production widget site key. Local dev uses the test key in `wrangler.dev.jsonc`. |
+| `TURNSTILE_SITE_KEY` | `wrangler.jsonc` `vars` (public) | Shared widget site key. Local dev uses the test key in `wrangler.dev.jsonc`. See `docs/turnstile.md`. |
 | `TURNSTILE_SECRET` | Worker secret / `.dev.vars` | Widget secret. The live worker has a real secret. Never commit it. `.dev.vars` keeps the test secret for localhost. |
 
 On any host that is not localhost, AI routes stay **off** when the secret is missing or when either value is still a test key. Human chat keeps working. The deployed worker is past that gate: <https://tech-demos.theserverless.dev/demos/actor-lab/> health reports AI ready.

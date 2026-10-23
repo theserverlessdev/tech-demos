@@ -86,7 +86,7 @@ A brand-new Worker with `secrets.required` needs a first deploy before `wrangler
 | --- | --- | --- |
 | D1 database | `tech-demos-edge-browser` | **Create.** `wrangler d1 create tech-demos-edge-browser`, then paste `database_id` over `00000000-0000-4000-8000-000000007441` in `wrangler.jsonc`. |
 | R2 bucket | `tech-demos-edge-browser` | **Create.** `wrangler r2 bucket create tech-demos-edge-browser`, then `wrangler r2 bucket lifecycle add tech-demos-edge-browser captures-expiry captures/ --expire-days 1`. That rule is the backstop. It is not a `wrangler.jsonc` field. |
-| Turnstile widget | `tech-demos-edge-browser` | **Exists.** Hostnames: `tech-demos.theserverless.dev`, `edge-browser.tech-demos.theserverless.dev`. `TURNSTILE_SITE_KEY` is `0x4AAAAAAFX7Ws8qEiyDj57x`. The secret is `wrangler secret put TURNSTILE_SECRET` after the first deploy. Do not commit it. |
+| Turnstile widget | shared `tech-demos-shared` | **Reuse it.** Do not create a widget. `TURNSTILE_SITE_KEY` is `0x4AAAAAAFRUoj5qDpf7XyIW`. The secret is `wrangler secret put TURNSTILE_SECRET` after the first deploy. Do not commit it. See `docs/turnstile.md`. |
 | Browser Rendering | binding `BROWSER` | No separate namespace. The binding is in `wrangler.jsonc`. The account needs Browser Rendering on Workers Paid. |
 | Workflow | `tech-demos-edge-browser-capture` | Created on deploy from the `CAPTURE` binding. |
 | Rate-limit namespaces | `7441` capture, `7442` read, `7443` session | Created when this Worker is deployed. They do not overlap the ids already in the repo. `7443` is checked in the workflow step. There is no Durable Object. |

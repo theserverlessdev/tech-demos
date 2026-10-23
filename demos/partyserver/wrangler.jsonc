@@ -20,7 +20,7 @@
     { "name": "READ_LIMIT", "namespace_id": "7502", "simple": { "limit": 40, "period": 60 } }
   ],
   "vars": {
-    "TURNSTILE_SITE_KEY": "0x4AAAAAAFRgpxXI2NOgPsDG",
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFRUoj5qDpf7XyIW",
     "ROOM_TTL_MS": "7200000",
     "TURNSTILE_LOCAL": "0"
   },

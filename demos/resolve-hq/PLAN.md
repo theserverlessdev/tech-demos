@@ -45,7 +45,7 @@ This is still a **small hosted slice**, not a vendor of [mirza-rizvi/ResolveHQ](
 - **S6** Memoize `ensureSeed`; pause polling while the tab is hidden.
 - **S7** Honest copy: public original seed threads, private visitor writes (including on seeds), locked seed status/order, Turnstile, daily budget, local-dev stub.
 - **R1** `messages.visitor_id` (migration 0004); seed status/priority/assignee/`updated_at` locked.
-- **R2** `TURNSTILE_SITE_KEY` stays `REPLACE_ME` until the owner sets a widget. Seeds load without a session (read-only).
+- **R2** `TURNSTILE_SITE_KEY` is the shared widget (`docs/turnstile.md`). Seeds load without a session until `TURNSTILE_SECRET` is set (read-only).
 - **R3** `#turnstile` and `#hint` sit under the status strip; errors and Turnstile scroll that bar into view, and the composer mirrors the hint.
 - **R4** A `session*` 401 remints once and retries.
 - **N1** Sweep deletes via subqueries (tickets last) and R2 batches of 1,000.
@@ -62,4 +62,4 @@ Workers + Static Assets, D1, R2, Queue, Workers AI, RateLimit (7331 + 7530–753
 
 ## Owner steps (after merge)
 
-Listed in the PR: replace `REPLACE_ME` in `TURNSTILE_SITE_KEY`, `wrangler secret put` for `TURNSTILE_SECRET` and `SESSION_SECRET`, apply D1 migrations through `0004`, deploy. No new Cloudflare resources are created here.
+Listed in the PR: `wrangler secret put` for `TURNSTILE_SECRET` (the shared widget secret) and `SESSION_SECRET`, apply D1 migrations through `0004`, deploy. Do not create a Turnstile widget. No new Cloudflare resources are created here.

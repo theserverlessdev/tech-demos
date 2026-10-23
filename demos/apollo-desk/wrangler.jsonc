@@ -33,9 +33,8 @@
     // Empty in production. .dev.vars sets "local" so the Turnstile test secret
     // works under wrangler dev, which rewrites Host to the first route.
     "ENVIRONMENT": "",
-    // Public widget key. Local .dev.vars sets the always-pass test key.
-    // Production needs a widget for tech-demos.theserverless.dev and apollo-desk.tech-demos.theserverless.dev.
-    "TURNSTILE_SITE_KEY": "0x4AAAAAAFXhiKOhT-oHW_Gp"
+    // Shared widget. Local .dev.vars sets the always-pass test key.
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFRUoj5qDpf7XyIW"
   },
   "secrets": { "required": ["TURNSTILE_SECRET"] },
   "routes": [

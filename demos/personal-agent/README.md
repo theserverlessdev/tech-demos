@@ -110,7 +110,7 @@ After the Worker is deployed, redeploy `apps/hub` so the gallery card is registe
 
 | Name | Where | What |
 | --- | --- | --- |
-| `TURNSTILE_SITE_KEY` | wrangler var (public) | Widget site key `0x4AAAAAAFRgrYxN6MUtsC0C`. Local `.dev.vars` overrides it with `1x00000000000000000000AA`. |
+| `TURNSTILE_SITE_KEY` | wrangler var (public) | Shared widget site key `0x4AAAAAAFRUoj5qDpf7XyIW`. Local `.dev.vars` overrides it with `1x00000000000000000000AA`. |
 | `TURNSTILE_SECRET` | `wrangler secret put` | Siteverify secret. Local `.dev.vars` uses `1x0000000000000000000000000000000AA`. |
 | `VISITOR_HMAC_SECRET` | `wrangler secret put` | Signs `id.exp.sig` visitor tokens. Local `.dev.vars` uses `local-personal-agent-hmac-dev-only`, which production rejects. |
 

@@ -93,7 +93,7 @@ Do **not** deploy from this PR unless the owner asks. When it is time:
 | Name | Where | What |
 | --- | --- | --- |
 | D1 `tech-demos-byok-playground` | `wrangler d1 create` then paste `database_id` into `wrangler.jsonc` | Compare budget table. Apply `migrations/0001_init.sql`. |
-| `TURNSTILE_SITE_KEY` | `wrangler.jsonc` `vars` (public) | Production widget site key. `REPLACE_ME` fails closed off localhost (proxy and compare off). Local uses the test key. |
+| `TURNSTILE_SITE_KEY` | `wrangler.jsonc` `vars` (public) | Shared widget site key (`docs/turnstile.md`). `REPLACE_ME` fails closed off localhost (proxy and compare off). Local uses the test key. |
 | `TURNSTILE_SECRET` | Worker secret / `.dev.vars` | Widget secret. Never commit it. |
 | `IP_HASH_SECRET` | Worker secret / `.dev.vars` | HMAC key for `ip_key`. Never commit it. |
 | `SESSION_SECRET` | Worker secret / `.dev.vars` | HMAC key for the session cookie. Never commit it. |
@@ -115,7 +115,7 @@ bunx wrangler secret put SESSION_SECRET
 1. Confirm the hub path 308s to `https://byok-playground.tech-demos.theserverless.dev/`.
 2. **Workers Logs:** open Observability → Logs for this Worker and confirm invocation logs are off. Send one chat request, then search logs for the pasted key and for `x-byok-key`. Until that live check is done, do not claim the key is never logged.
 3. Confirm traces are off (so `url.full` cannot carry a key). Keys are in the JSON body, not the URL.
-4. Confirm Turnstile uses a production widget, not `REPLACE_ME` or the always-pass test keys.
+4. Confirm Turnstile uses the shared widget (`docs/turnstile.md`), not `REPLACE_ME` or the always-pass test keys.
 5. Redeploy the hub so the gallery card is registered.
 
 Needs Workers Paid (Workers AI, D1, rate limiting, Turnstile). No Durable Objects, R2, Queues, Containers, or Workers for Platforms.

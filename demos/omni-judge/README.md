@@ -93,7 +93,7 @@ curl "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/ai/ru
 env -u CF_API_TOKEN -u CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID=3f847e2fadeef3e583701e8fa25657b5 bunx wrangler deploy
 ```
 
-A brand-new Worker with `secrets.required` needs a first deploy before `wrangler secret put` works, or a secrets file. `TURNSTILE_SECRET` and `IP_HASH_SECRET` are both required. Put the Turnstile site key in `vars.TURNSTILE_SITE_KEY` (it is `REPLACE_ME` until the widget exists). `workers_dev` is false.
+A brand-new Worker with `secrets.required` needs a first deploy before `wrangler secret put` works, or a secrets file. `TURNSTILE_SECRET` and `IP_HASH_SECRET` are both required. `vars.TURNSTILE_SITE_KEY` is the shared widget (`docs/turnstile.md`). `workers_dev` is false.
 
 ### Resources to create
 
@@ -101,7 +101,7 @@ A brand-new Worker with `secrets.required` needs a first deploy before `wrangler
 | --- | --- | --- |
 | D1 database | `tech-demos-omni-judge` | Placeholder `database_id` is `00000000-0000-4000-8000-000000007451`. Create the database and paste the real id into `wrangler.jsonc`. Apply `migrations/0001_init.sql` and `migrations/0002_pair.sql`. |
 | R2 bucket | `tech-demos-omni-judge` | Create the bucket, then add the lifecycle rule above. Deploy is not complete without that rule. |
-| Turnstile widget | `tech-demos-omni-judge` | Hostname `omni-judge.tech-demos.theserverless.dev`. The hub path redirects before the widget loads. Site key replaces `REPLACE_ME`. Secret via `wrangler secret put TURNSTILE_SECRET`. |
+| Turnstile widget | shared `tech-demos-shared` | Reuse it. Site key is already in `wrangler.jsonc`. The hub path redirects before the widget loads. Secret via `wrangler secret put TURNSTILE_SECRET`. |
 | Secret | `IP_HASH_SECRET` | HMAC key for the network cap. Not a Turnstile value. |
 | Rate-limit namespaces | `7451` judge, `7452` compare, `7453` read | Created when this Worker is deployed. They are not used elsewhere in this repo. |
 | Routes | `tech-demos.theserverless.dev/demos/omni-judge*` and `omni-judge.tech-demos.theserverless.dev/*` | Zone `theserverless.dev`. Applied on deploy. |

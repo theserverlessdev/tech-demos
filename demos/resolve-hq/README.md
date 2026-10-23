@@ -89,7 +89,7 @@ bun run typecheck
 
 Needs the existing D1, R2, Queue, and Workers AI (Paid). This slice does not create new Cloudflare resources. From this folder, with the owner account (unset any other `CF_API_TOKEN`):
 
-1. Create a Turnstile widget for `tech-demos.theserverless.dev` and `resolve-hq.tech-demos.theserverless.dev` (or reuse a widget that already allows those hosts). Replace the `REPLACE_ME` placeholder in `wrangler.jsonc` `TURNSTILE_SITE_KEY`. Until that is set, the live page stays read-only (public seeds still load).
+1. Reuse the shared Turnstile widget (`docs/turnstile.md`). `TURNSTILE_SITE_KEY` in `wrangler.jsonc` is already that site key. Until `TURNSTILE_SECRET` is set, the live page stays read-only (public seeds still load).
 2. `printf '%s' "$TURNSTILE_SECRET" | wrangler secret put TURNSTILE_SECRET`
 3. `openssl rand -hex 32 | wrangler secret put SESSION_SECRET`
 4. `bun run deploy` (applies D1 migrations through `0004_messages_visitor.sql` and deploys).

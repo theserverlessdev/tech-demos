@@ -74,7 +74,7 @@ A brand-new Worker with `secrets.required` needs a first deploy before `wrangler
 | Resource | Name | Status |
 | --- | --- | --- |
 | D1 database | `tech-demos-memory-repo` | **Exists.** `database_id` in `wrangler.jsonc` is `a4810d2e-56d9-424f-a9f8-93cdbb41a42c`. Self-hosters: `wrangler d1 create tech-demos-memory-repo` and paste that id over the one in `wrangler.jsonc`. |
-| Turnstile widget | `tech-demos-memory-repo` | **Exists.** Hostnames: `tech-demos.theserverless.dev`, `memory-repo.tech-demos.theserverless.dev`. `TURNSTILE_SITE_KEY` is `0x4AAAAAAFR__jdvlvsysD_8`. Self-hosters: create a widget for those hostnames, put the site key in `TURNSTILE_SITE_KEY`, and put the secret with `wrangler secret put TURNSTILE_SECRET`. |
+| Turnstile widget | shared `tech-demos-shared` | **Reuse it.** Do not create a widget. Site key `0x4AAAAAAFRUoj5qDpf7XyIW` is in `wrangler.jsonc`. Secret: `wrangler secret put TURNSTILE_SECRET`. See `docs/turnstile.md`. |
 | Artifacts namespace | `tech-demos` | Shared with repo-per-agent. Create it only if this account does not already have it. |
 | Rate-limit namespaces | `7431` chat, `7432` dream, `7433` create, `7434` read | Created when this Worker is deployed. They do not overlap the ids already in the repo. New ids must be 7490+. |
 | Durable Object classes | `ChatAgent`, `MemoryAgent` | Created by the `v1` migration on deploy. |

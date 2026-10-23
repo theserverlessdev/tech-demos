@@ -122,5 +122,5 @@ The hub registry keeps a fallback Dynamic Worker. The fallback sends the visitor
 
 Production still needs, and this PR does not create:
 
-- Turnstile widget hostnames `tech-demos.theserverless.dev` and `apollo-desk.tech-demos.theserverless.dev`, then `TURNSTILE_SITE_KEY` and `wrangler secret put TURNSTILE_SECRET`
+- The shared Turnstile widget (`docs/turnstile.md`). `TURNSTILE_SITE_KEY` is already set. Run `wrangler secret put TURNSTILE_SECRET` with that widget's secret.
 - Rate-limit namespaces `7465` (`DESK_LIMIT`, 8/min per desk) and `7466` (`READ_LIMIT`, 60/min). `7311` (`TURN_LIMIT`) already exists
