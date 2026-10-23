@@ -7,7 +7,7 @@ const bytes = (...values: number[]) => new Uint8Array(values);
 const pdf = text("%PDF-1.7\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n");
 
 describe("magic bytes", () => {
-  test("allows text, markdown, json, csv, pdf, and office packages", async () => {
+  test("allows text, markdown, json, csv, and pdf", async () => {
     expect((await sniff(text("# Notes\n\nHello"))).ok).toBe(true);
     expect((await sniff(text("a,b\n1,2\n"))).ok).toBe(true);
     const json = await sniff(text('{"ok":true}\n'));
@@ -21,7 +21,7 @@ describe("magic bytes", () => {
         { name: "word/document.xml", data: text("<w:document/>") },
       ]),
     );
-    expect(docx.ok && docx.kind).toBe("ooxml");
+    expect(docx.ok).toBe(false);
   });
 
   test("rejects images, video, audio, archives, and unknown binaries", async () => {
@@ -89,15 +89,14 @@ describe("magic bytes", () => {
     expect((await sniff(scripted)).ok).toBe(false);
   });
 
-  test("a deflated minimal docx is an office document", async () => {
+  test("a deflated docx and zip slack are rejected", async () => {
     const docx = await zipDeflated([
       { name: "[Content_Types].xml", data: text(`<?xml version="1.0"?><Types/>`) },
       { name: "_rels/.rels", data: text(`<?xml version="1.0"?><Relationships/>`) },
       { name: "word/document.xml", data: text(`<?xml version="1.0"?><w:document/>`) },
       { name: "word/_rels/document.xml.rels", data: text(`<?xml version="1.0"?><Relationships/>`) },
     ]);
-    const sniffed = await sniff(docx);
-    expect(sniffed.ok && sniffed.kind).toBe("ooxml");
+    expect((await sniff(docx)).ok).toBe(false);
     const png = bytes(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0);
     const hidden = zipStored([{ name: "hidden.png", data: png }]);
     const appended = new Uint8Array(docx.byteLength + 4 + hidden.byteLength);

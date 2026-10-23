@@ -1,6 +1,6 @@
 # Safety
 
-This demo is a short-lived sandbox for testing WebDAV with small documents. Only text, PDF and office documents are accepted. Drives are private and wiped within an hour. Misuse can be reported, and drives can be frozen. The controls below are the design, not an add-on.
+This demo is a short-lived sandbox for testing WebDAV with small documents. Only text and PDF documents are accepted. Office files are not accepted. Drives are private and wiped within an hour. Misuse can be reported, and drives can be frozen. The controls below are the design, not an add-on.
 
 ## Private drives
 
@@ -11,22 +11,22 @@ This demo is a short-lived sandbox for testing WebDAV with small documents. Only
 - Every response sends `Cache-Control: private, no-store`, plus `nosniff` and `no-referrer`.
 - The TTL is one hour. It is enforced when the drive is touched, by the Durable Object alarm, and by a cron every five minutes.
 - `lifecycle.json` is the R2 backstop: delete `drives/` after one day (`maxAge` 86400). R2 lifecycle is day-scale, so it cannot promise a one-hour delete. Unreadable leftover bytes can sit until that rule runs.
-- Caps, in `src/shared/constants.ts`: 5 MB per file, 25 MB per drive, 200 objects. Quota changes are one SQLite `UPDATE … WHERE bytes + ? <= cap RETURNING` on the Durable Object, and mutating methods run one at a time per drive. A wipe waits for the in-flight write, then a queued write gets 410. A failed copy leaves the counter equal to the bytes still stored. Keys over 900 bytes get 414.
+- Caps, in `src/shared/constants.ts`: 5 MB per file, 25 MB per drive, 200 objects, and 3000 authenticated requests per drive. The request counter is one SQLite `UPDATE … WHERE used < cap RETURNING` on the Durable Object; the next request gets 429. Quota changes are one SQLite `UPDATE … WHERE bytes + ? <= cap RETURNING`, and mutating methods run one at a time per drive. A wipe waits for the in-flight write, then a queued write gets 410. A write that arrives with no stored expiry also gets 410. A failed copy leaves the counter equal to the bytes still stored. Keys over 900 bytes get 414.
 - A drive holds at most 64 locks, and at most 8 shared locks on one path. The lock owner is at most 1 KB. Each lock token is one SQLite row. The live log accepts at most 4 WebSockets. A client message closes that socket. A wipe closes every socket.
 
 ## Allow-list
 
 `src/shared/content-policy.ts` exports one `CONTENT_RULES` list. `PUT` walks it from top to bottom and stops at the first match. The file extension and the client `Content-Type` are ignored.
 
-Allowed: UTF-8 text (Markdown, CSV, notes), JSON, PDF, and OOXML Word / Excel / PowerPoint. An office package is allowed only when the end-of-central-directory record sits at the last 22 bytes with no comment, the central directory describes exactly the local entries, every part name ends in `.xml` or `.rels`, each part inflates under 1 MB, and the inflated bytes are UTF-8 XML. Zip64 and data descriptors are rejected. OLE is not accepted.
+Allowed: UTF-8 text (Markdown, CSV, notes), JSON, and PDF. Word, Excel, PowerPoint, and every other ZIP-based file are rejected. OLE is not accepted.
 
-Rejected with 415: images, video, audio, zip, 7z, rar, tar, gz, OLE, and the other archive and executable signatures in that list, plus PGP and age armour anywhere in a text or office XML part, OpenSSL `Salted__`, a long single-line base64 or hex run, and anything else that is not valid text.
+Rejected with 415: images, video, audio, zip, 7z, rar, tar, gz, OLE, office packages, and the other archive and executable signatures in that list, plus PGP and age armour anywhere in a text file, OpenSSL `Salted__`, a long single-line base64 or hex run, and anything else that is not valid text.
 
-A single-line mixed run of 256 or more characters is rejected. Base64 needs three of upper case, lower case, digits, and `+/`. Hex needs digits, `a-f`, and at least 8 distinct characters. Wrapped base64 (76 columns), wrapped hex, and other encodings pass as text. Office XML parts get the same single-line check.
+A single-line mixed run of 256 or more characters is rejected. Base64 needs three of upper case, lower case, digits, and `+/`. Hex needs digits, `a-f`, and at least 8 distinct characters. Wrapped base64 (76 columns), wrapped hex, and other encodings pass as text.
 
-A PDF must end at `%%EOF` with only whitespace after it. Signatures of 4 or more bytes are rejected anywhere in the body. Names are checked after `#xx` escapes are decoded, including `/EmbeddedFile`, `/JavaScript`, `/JS`, `/Launch`, and `/RichMedia`. A name inside a compressed object stream is not decoded. Two- and three-byte markers are not scanned, so a Flate stream can contain `MZ` by chance. PDFs are served as attachments with `Content-Security-Policy: default-src 'none'; sandbox`.
+A PDF must end at `%%EOF` with only whitespace after it. Signatures of 4 or more bytes are rejected anywhere in the body. Names are checked after `#xx` escapes are decoded, including `/EmbeddedFile`, `/JavaScript`, `/JS`, `/Launch`, and `/RichMedia`. A name inside a compressed object stream is not decoded. Two- and three-byte markers are not scanned, so a compressed stream can contain `MZ` by chance. A compressed stream or an image stream can still carry pictures and arbitrary bytes, and a PDF viewer will show them. PDFs are served as attachments with `Content-Security-Policy: default-src 'none'; sandbox`.
 
-Empty files and `MKCOL` collections skip the sniff. `._*` must start with the AppleDouble magic `00 05 16 07`, and `.DS_Store` must start with `00 00 00 01 Bud1`. Both stay under 64 KB, and a blocked signature of 4 or more bytes anywhere in the body is rejected, including the 4-byte JPEG markers.
+Empty files and `MKCOL` collections skip the sniff. `._*` must start with the AppleDouble magic `00 05 16 07`, and `.DS_Store` must start with `00 00 00 01 Bud1`. Either file can carry up to 64 KB of opaque binary after that header. A few blocked signatures are still rejected, including PNG and some JPEG markers.
 
 ## Minting
 
@@ -55,7 +55,7 @@ The IP itself is not stored. The address is recoverable only with `AUDIT_KEY`, v
 
 `POST /api/report` (Turnstile, 10–2000 character reason) records the report. If the drive id exists and is not already wiped, the drive is frozen and its email and network are blocked. The reporter's address is not blocked. The response is 202 either way.
 
-A frozen drive is kept for evidence. The alarm, the request path, and the cron share one decision: keep it until `frozen_at` plus 30 days, then wipe. Freezing moves the alarm to that time. `/api/session` returns 403 before it considers the hour, so reopening the page does not delete the drive. A new mint for that email stays blocked while the freeze holds. `POST /api/admin/release` wipes it immediately. The one-day R2 lifecycle can still delete the bytes before the 30 days; the D1 row (keys, hashes, sizes, encrypted email) is the record that lasts.
+A frozen drive is kept for evidence. The alarm, the request path, and the cron share one decision: keep it until `frozen_at` plus 30 days, then wipe. An admin freeze moves the alarm to that time. A freeze from a report takes effect when the alarm fires: the row is frozen immediately, and the alarm defers itself then. A later report does not move `frozen_at`. `/api/session` returns 403 before it considers the hour, so reopening the page does not delete the drive. A new mint for that email stays blocked while the freeze holds. `POST /api/admin/release` wipes it immediately. The one-day R2 lifecycle can still delete the bytes before the 30 days; the D1 row (keys, hashes, sizes, encrypted email) is the record that lasts.
 
 `Authorization: Bearer $ADMIN_TOKEN` (the token is hashed before compare):
 

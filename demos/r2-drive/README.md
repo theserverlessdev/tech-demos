@@ -1,6 +1,6 @@
 # R2 Drive
 
-A short-lived sandbox for testing WebDAV with small documents. Class 1 and Class 2 (including `LOCK` / `UNLOCK`) run against an isolated R2 prefix, with lock state in a SQLite Durable Object. Only text, PDF and office documents are accepted. Drives are private and wiped within an hour. Misuse can be reported, and drives can be frozen.
+A short-lived sandbox for testing WebDAV with small documents. Class 1 and Class 2 (including `LOCK` / `UNLOCK`) run against an isolated R2 prefix, with lock state in a SQLite Durable Object. Only text and PDF documents are accepted. Office files are not accepted. Drives are private and wiped within an hour. Misuse can be reported, and drives can be frozen.
 
 What you can try: verify an email, accept the notice, and mount the drive from macOS Finder, Windows Explorer, rclone, or Obsidian Remotely Save. The page also uploads, renames, deletes, and previews text and PDF, and it shows the lock owner, timeout, and depth on a live request log.
 
@@ -81,17 +81,17 @@ The rule expires objects under `drives/` after one day. R2 lifecycle is day-scal
 
 ## Caps and content
 
-25 MB per drive, 5 MB per file, 200 objects, one hour. `PUT` walks one list in `src/shared/content-policy.ts`. Text, Markdown, JSON, CSV, and PDF are allowed. Office files are allowed only when every ZIP part is `.xml` or `.rels`, inflates under 1 MB, and is UTF-8 XML with no armour and no long single-line base64 or hex run. The end-of-central-directory record must sit at the last 22 bytes, with no comment, and the central directory must describe exactly those parts. Zip64 and data descriptors are rejected. Images, video, audio, archives, OLE, and encrypted or unknown binaries are rejected with 415.
+25 MB per drive, 5 MB per file, 200 objects, one hour, and 3000 authenticated requests for the life of the drive. `PUT` walks one list in `src/shared/content-policy.ts`. Text, Markdown, JSON, CSV, and PDF are allowed. Word, Excel, PowerPoint, and every other ZIP-based file are rejected with 415, as are images, video, audio, archives, OLE, and encrypted or unknown binaries.
 
-Finder `._*` files must start with the AppleDouble magic `00 05 16 07`, and `.DS_Store` must start with `00 00 00 01 Bud1`. Both stay under 64 KB, and a blocked signature of 4 or more bytes anywhere in the body is rejected.
+Finder `._*` files must start with the AppleDouble magic `00 05 16 07`, and `.DS_Store` must start with `00 00 00 01 Bud1`. Either file can carry up to 64 KB of opaque binary after that header. A few blocked signatures are still rejected, including PNG and some JPEG markers.
 
-A PDF must end with `%%EOF` followed only by whitespace. Signatures of 4 or more bytes are rejected anywhere in the body. Names are checked after `#xx` escapes are decoded, including `/EmbeddedFile`, `/JavaScript`, `/JS`, `/Launch`, and `/RichMedia`. Two- and three-byte markers are not scanned, so a Flate stream can contain `MZ` by chance. A name hidden inside a compressed `/ObjStm` is not decoded. Wrapped base64 or hex, and other encodings, can still pass as text. A long single-line mixed base64 or hex run is rejected.
+A PDF must end with `%%EOF` followed only by whitespace. Signatures of 4 or more bytes are rejected anywhere in the body. Names are checked after `#xx` escapes are decoded, including `/EmbeddedFile`, `/JavaScript`, `/JS`, `/Launch`, and `/RichMedia`. Two- and three-byte markers are not scanned. A compressed stream or an image stream can still carry pictures and arbitrary bytes, and a PDF viewer will show them. A name hidden inside a compressed `/ObjStm` is not decoded. Wrapped base64 or hex, and other encodings, can still pass as text. A long single-line mixed base64 or hex run is rejected.
 
 The disposable-domain check uses a vendored copy of [disposable-email-domains](https://github.com/disposable-email-domains/disposable-email-domains) (`disposable_email_blocklist.conf`, CC0) plus a local denylist that includes `lomvic.com` (the temp-email demo). It is a **soft signal**: the list is incomplete and it can mis-label a real domain. A parent domain match counts, so `a.mailinator.com` and `email.lomvic.com` are rejected.
 
 ## Litmus
 
-`src/shared/litmus-results.ts` holds a real run of litmus 0.13 (Ubuntu 0.13-5build2) against `wrangler dev` on 2026-10-23, after the archive and lock changes. The suites were invoked one at a time: `basic` at 17:54:22Z (16/16, one warning about DELETE of a collection whose Request-URI included a fragment), `copymove` at 17:55:32Z (13/13), `props` at 17:56:45Z (30/30), `locks` at 17:57:56Z (41/41), and `http` at 17:59:07Z (4/4, including `expect100`). The page prints those counts and the raw output; it does not invent a suite that has no raw output.
+`src/shared/litmus-results.ts` holds a real run of litmus 0.13 (Ubuntu 0.13-5build2) against `wrangler dev` on 2026-10-23, after office files were removed from the allow-list. The suites were invoked one at a time: `basic` at 18:25:12Z (16/16, one warning about DELETE of a collection whose Request-URI included a fragment), `copymove` at 18:26:23Z (13/13), `props` at 18:27:36Z (30/30), `locks` at 18:28:46Z (41/41), and `http` at 18:29:58Z (4/4, including `expect100`). The page prints those counts and the raw output; it does not invent a suite that has no raw output.
 
 ## Mount
 

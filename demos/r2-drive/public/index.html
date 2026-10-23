@@ -39,7 +39,7 @@
 
   <main>
     <section class="intro">
-      <p class="lede">A short-lived sandbox for testing WebDAV with small documents. This demo turns R2 into a WebDAV Class 1 and Class 2 drive with locks kept in a SQLite Durable Object. Only text, PDF and office documents are accepted, and the prefix is wiped within an hour.</p>
+      <p class="lede">A short-lived sandbox for testing WebDAV with small documents. This demo turns R2 into a WebDAV Class 1 and Class 2 drive with locks kept in a SQLite Durable Object. Only text and PDF documents are accepted. Office files are not accepted, and the prefix is wiped within an hour.</p>
       <div class="cards">
         <article>
           <h2>What this shows</h2>
@@ -67,7 +67,7 @@
           <input id="email" name="email" type="email" autocomplete="email" required maxlength="254" placeholder="you@example.com" />
           <label class="check" for="aup">
             <input id="aup" name="aup" type="checkbox" required />
-            <span id="aup-text">This is a short-lived sandbox for testing WebDAV with small documents. Only text, PDF and office documents are accepted. The drive is private and wiped within an hour.</span>
+            <span id="aup-text">This is a short-lived sandbox for testing WebDAV with small documents. Only text and PDF documents are accepted. Office files are not accepted. The drive is private and wiped within an hour.</span>
           </label>
           <div id="turnstile"></div>
           <button class="btn btn-primary" id="mint-button" type="submit">Email me a link</button>

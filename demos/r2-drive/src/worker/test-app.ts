@@ -4,7 +4,9 @@ import { MemoryLockStore } from "./locks";
 import { MemoryBucket, PrefixBucket } from "./bucket";
 import { DriveSession } from "./drive-session";
 import { completeWipe, runAlarm, type WipeDecision } from "./drive-wipe";
+import { takeRequest } from "./requests";
 import { bunSql } from "./sqlite-bun";
+import type { SqlRunner } from "./quota";
 import { MemoryRepo } from "./repo";
 import { handleRequest, wipeExpired, type Deps } from "./router";
 import type { LimitName } from "../shared/constants";
@@ -32,7 +34,7 @@ export async function createTestApp(options?: {
   const emails: TestApp["emails"] = [];
   const events = new Map<string, LogEvent[]>();
   const clock = { t: options?.now ?? Date.parse("2026-10-23T12:00:00Z") };
-  const runtimes = new Map<string, { session: DriveSession; locks: MemoryLockStore; database: Database }>();
+  const runtimes = new Map<string, { session: DriveSession; locks: MemoryLockStore; database: Database; sql: SqlRunner }>();
   let limit: (name: LimitName, key: string) => Promise<boolean> = async () => true;
   const auditKey = await importAesKey(new Uint8Array(32).fill(7));
   const auditHmac = await importHmacKey(new Uint8Array(32).fill(9));
@@ -40,9 +42,10 @@ export async function createTestApp(options?: {
     const existing = runtimes.get(driveId);
     if (existing) return existing;
     const database = new Database(":memory:");
+    const sql = bunSql(database);
     const locks = new MemoryLockStore();
     const session = new DriveSession({
-      sql: bunSql(database),
+      sql,
       bucket: new PrefixBucket(bucket, `drives/${driveId}/`),
       locks,
       audit: async (info) => {
@@ -55,7 +58,7 @@ export async function createTestApp(options?: {
         });
       },
     });
-    const runtime = { session, locks, database };
+    const runtime = { session, locks, database, sql };
     runtimes.set(driveId, runtime);
     return runtime;
   };
@@ -76,6 +79,7 @@ export async function createTestApp(options?: {
     },
     serveDav: async (request, drive, target) => {
       const runtime = runtimeFor(drive.id);
+      if (!takeRequest(runtime.sql)) return new Response("Too many requests", { status: 429 });
       const before = runtime.session.quota.snapshot();
       const response = await runtime.session.handle(request, target.mountPath, target.key, () => clock.t, drive.expiresAt);
       const after = runtime.session.quota.snapshot();

@@ -11,6 +11,14 @@ export function rejectClientMessage(socket: { close(code: number, reason?: strin
   socket.close(1008, "read-only");
 }
 
+export function closeClientSocket(socket: { close(code: number, reason?: string): void }, code: number, reason: string): void {
+  try {
+    socket.close(code, reason);
+  } catch {
+    // Already closed.
+  }
+}
+
 export function closeLiveSockets(sockets: { close(code: number, reason?: string): void }[]): void {
   for (const socket of sockets) {
     try {

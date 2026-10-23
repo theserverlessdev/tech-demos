@@ -19,7 +19,10 @@ export const MAX_LOCK_OWNER_BYTES = 1024;
 /** A frozen drive stays for evidence until an admin releases it, or this long. */
 export const FROZEN_KEEP_MS = 30 * 24 * 60 * 60 * 1000;
 
-export const AUP_VERSION = "2026-10-23.2";
+/** Authenticated requests that reach the Durable Object, for the life of that drive. */
+export const MAX_DRIVE_REQUESTS = 3000;
+
+export const AUP_VERSION = "2026-10-23.3";
 
 /** Relative object keys longer than this are rejected with 414. R2's limit is 1024. */
 export const MAX_KEY_BYTES = 900;
@@ -54,4 +57,4 @@ export type LimitName = keyof typeof RATE_LIMIT_IDS;
 export const DRIVE_ID_RE = /^drv_[a-f0-9]{32}$/;
 
 export const AUP_TEXT =
-  "This is a short-lived sandbox for testing WebDAV with small documents. Only text, PDF and office documents are accepted. The drive is private and wiped within an hour.";
+  "This is a short-lived sandbox for testing WebDAV with small documents. Only text and PDF documents are accepted. Office files are not accepted. The drive is private and wiped within an hour.";

@@ -4,7 +4,8 @@ import { adaptR2, PrefixBucket } from "./bucket";
 import { DriveSession } from "./drive-session";
 import { completeWipe, runAlarm } from "./drive-wipe";
 import { SqliteLocks } from "./locks";
-import { closeLiveSockets, rejectClientMessage, socketLimitResponse } from "./sockets";
+import { takeRequest } from "./requests";
+import { closeClientSocket, closeLiveSockets, rejectClientMessage, socketLimitResponse } from "./sockets";
 import { splitDavPath } from "../shared/paths";
 import type { LockRecord } from "./locks";
 import type { LogEvent, PublicLock } from "../shared/types";
@@ -87,7 +88,9 @@ export class DriveObject extends DurableObject<DriveEnv> {
     rejectClientMessage(ws);
   }
 
-  webSocketClose(): void {}
+  webSocketClose(ws: WebSocket, code: number, reason: string): void {
+    closeClientSocket(ws, code, reason);
+  }
 
   webSocketError(): void {}
 
@@ -108,6 +111,7 @@ export class DriveObject extends DurableObject<DriveEnv> {
     const name = this.ctx.id.name || storedId || "";
     if (!this.ctx.id.name) console.error(JSON.stringify({ event: "drive_missing_name", storedId: storedId ?? null }));
     if (request.headers.get("x-r2drive-authed") !== "1" || !name) return new Response("Forbidden", { status: 403 });
+    if (!takeRequest(this.ctx.storage.sql)) return new Response("Too many requests", { status: 429 });
     if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
       const limited = socketLimitResponse(this.ctx.getWebSockets().length);
       if (limited) return limited;

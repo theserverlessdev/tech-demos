@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { closeLiveSockets, rejectClientMessage, socketLimitResponse } from "./sockets";
+import { closeClientSocket, closeLiveSockets, rejectClientMessage, socketLimitResponse } from "./sockets";
 
 test("a fifth socket is refused, a client message closes, and a wipe closes the rest", () => {
   expect(socketLimitResponse(3)).toBeNull();
@@ -12,6 +12,10 @@ test("a fifth socket is refused, a client message closes, and a wipe closes the 
   const open = [fake(), fake(), fake()];
   closeLiveSockets(open);
   expect(open.map((socket) => socket.code)).toEqual([1000, 1000, 1000]);
+  const closing = fake();
+  closeClientSocket(closing, 1001, "peer gone");
+  expect(closing.code).toBe(1001);
+  expect(closing.reason).toBe("peer gone");
 });
 
 function fake() {

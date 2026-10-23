@@ -136,7 +136,7 @@ export class MemoryRepo implements DriveRepo {
     const row = await this.getDrive(id);
     if (!row || row.status === "wiped") return false;
     row.status = "frozen";
-    row.frozenAt = now;
+    if (row.frozenAt === null) row.frozenAt = now;
     return true;
   }
   async markWiped(id: string, now: number): Promise<void> {
@@ -307,10 +307,12 @@ export class D1Repo implements DriveRepo {
   }
   async freeze(id: string, now: number): Promise<boolean> {
     const result = await this.db
-      .prepare("UPDATE drives SET status = 'frozen', frozen_at = ?2 WHERE id = ?1 AND status != 'wiped'")
+      .prepare("UPDATE drives SET status = 'frozen', frozen_at = COALESCE(frozen_at, ?2) WHERE id = ?1 AND status != 'wiped'")
       .bind(id, now)
       .run();
-    return (result.meta.changes ?? 0) > 0;
+    if ((result.meta.changes ?? 0) > 0) return true;
+    const row = await this.getDrive(id);
+    return row?.status === "frozen";
   }
   async markWiped(id: string, now: number): Promise<void> {
     await this.db

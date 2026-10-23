@@ -10,7 +10,7 @@ Show that a stateful file protocol (WebDAV Class 1 and Class 2, including LOCK a
   - A port of [abersheeran/r2-webdav](https://github.com/abersheeran/r2-webdav) (Apache-2.0) with attribution, LICENSE, and CHANGELOG.
   - Turnstile plus a one-time email link before mint. One active drive per normalized email. Password hashed at rest.
   - Caps: 25 MB per drive, 200 files, 5 MB per file. TTL 60 minutes. Cron, a Durable Object alarm, and an on-request wipe. R2 lifecycle file is the day-scale backstop.
-  - Magic-byte allow list (text, markdown, JSON, CSV, PDF, small office). Images, audio, video, archives, and unknown binaries get 415.
+  - Magic-byte allow list (text, markdown, JSON, CSV, PDF). Office files, images, audio, video, archives, and unknown binaries get 415.
   - No share links, no anonymous GET of bytes, no CORS, `Cache-Control: private, no-store`.
   - Browser file UI, live WebSocket log, lock owner / timeout / depth, mount snippets, litmus page that only shows a real run.
   - Audit row (email HMAC, encrypted email, IP hash) kept 30 days after wipe. A misuse report freezes and blocks. Admin kill switch. `MINT_ENABLED` is `"false"` in wrangler and on only for local dev.

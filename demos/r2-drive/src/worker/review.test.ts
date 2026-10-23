@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-import { DAILY_EMAIL_CAP, FROZEN_KEEP_MS, MAX_FILE_BYTES } from "../shared/constants";
+import { DAILY_EMAIL_CAP, FROZEN_KEEP_MS, MAX_DRIVE_REQUESTS, MAX_FILE_BYTES } from "../shared/constants";
 import { zipDeflated, zipStored } from "../shared/zip-fixture";
 import { MemoryBucket } from "./bucket";
 import { completeWipe, wipeDecision } from "./drive-wipe";
@@ -63,7 +63,7 @@ test("a failed collection copy leaves the quota equal to the stored bytes", asyn
   expect(drive?.fileCount).toBe(page.objects.length);
 });
 
-test("content holes return 415 and a real docx returns 201", async () => {
+test("content holes and office packages return 415", async () => {
   const app = await createTestApp();
   const minted = await mintDrive(app);
   const pdf = text("%PDF-1.7\n1 0 obj<<>>endobj\n%%EOF\n");
@@ -94,7 +94,7 @@ test("content holes return 415 and a real docx returns 201", async () => {
     { name: "word/document.xml", data: text(`<?xml version="1.0"?><w:document/>`) },
     { name: "word/_rels/document.xml.rels", data: text(`<?xml version="1.0"?><Relationships/>`) },
   ]);
-  expect((await dav(app, minted, "PUT", "hello.docx", docx)).status).toBe(201);
+  expect((await dav(app, minted, "PUT", "hello.docx", docx)).status).toBe(415);
   const pngZip = zipStored([{ name: "hidden.png", data: png }]);
   const appended = new Uint8Array(docx.byteLength + 4 + pngZip.byteLength);
   appended.set(docx);
@@ -179,6 +179,10 @@ test("finder metadata files are stored and oversized ones are refused", async ()
   const apple = new Uint8Array(26);
   apple.set([0x00, 0x05, 0x16, 0x07, 0x00, 0x02, 0x00, 0x00]);
   expect((await dav(app, minted, "PUT", "._note.txt", apple)).status).toBe(201);
+  const planted = new Uint8Array(40);
+  planted.set([0x00, 0x05, 0x16, 0x07, 0x00, 0x02, 0x00, 0x00]);
+  planted.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 26);
+  expect((await dav(app, minted, "PUT", "._planted.txt", planted)).status).toBe(415);
   const store = new Uint8Array(32);
   store.set([0x00, 0x00, 0x00, 0x01, 0x42, 0x75, 0x64, 0x31]);
   expect((await dav(app, minted, "PUT", ".DS_Store", store)).status).toBe(201);
@@ -254,6 +258,8 @@ test("a put after expiry is rejected and a nameless alarm still deletes the pref
   });
   const late = await session.handle(new Request("http://127.0.0.1/dav/x/a.txt", { method: "PUT", body: "no" }), "/dav/x", "a.txt", () => 10, 10);
   expect(late.status).toBe(410);
+  const unscheduled = await session.handle(new Request("http://127.0.0.1/dav/x/b.txt", { method: "PUT", body: "no" }), "/dav/x", "b.txt", () => 10, null);
+  expect(unscheduled.status).toBe(410);
 });
 
 test("a frozen drive stays until release or the retention window", async () => {
@@ -428,4 +434,43 @@ test("an infinite lock does not outlive the drive", async () => {
     locks: { expiresAt: number }[];
   };
   expect(listed.locks[0]?.expiresAt).toBeLessThanOrEqual(minted.expiresAt);
+});
+
+test("a second report leaves frozen_at unchanged", async () => {
+  const app = await createTestApp();
+  const minted = await mintDrive(app);
+  const body = JSON.stringify({
+    driveId: minted.driveId,
+    reason: "This drive is hosting something that should be removed.",
+    turnstileToken: "ok",
+  });
+  const first = await app.fetch(`${ORIGIN}/api/report`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body,
+  });
+  expect(first.status).toBe(202);
+  const frozenAt = app.repo.drives[0]?.frozenAt;
+  expect(typeof frozenAt).toBe("number");
+  app.clock.t += 60_000;
+  const second = await app.fetch(`${ORIGIN}/api/report`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body,
+  });
+  expect(second.status).toBe(202);
+  expect(app.repo.drives[0]?.frozenAt).toBe(frozenAt);
+});
+
+test("request 3001 on a drive gets 429", async () => {
+  const app = await createTestApp();
+  const minted = await mintDrive(app);
+  for (let index = 0; index < MAX_DRIVE_REQUESTS; index++) {
+    const response = await app.fetch(davUrl(minted.driveId, "missing.txt"), { headers: authHeaders(minted) });
+    expect(response.status).toBe(404);
+  }
+  const over = await app.fetch(davUrl(minted.driveId, "missing.txt"), {
+    headers: authHeaders(minted, { "cf-connecting-ip": "198.51.100.40" }),
+  });
+  expect(over.status).toBe(429);
 });

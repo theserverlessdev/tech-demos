@@ -49,7 +49,7 @@ export class DriveSession {
 
   private async dispatch(request: Request, mountPath: string, key: string, clock: () => number, expiresAt: number | null): Promise<Response> {
     const now = clock();
-    if (MUTATING.has(request.method) && (this.closed || (expiresAt !== null && now >= expiresAt))) {
+    if (MUTATING.has(request.method) && (this.closed || expiresAt === null || now >= expiresAt)) {
       return withDavCsp(new Response("Gone", { status: 410 }));
     }
     const response = await handleWebdav(request, {

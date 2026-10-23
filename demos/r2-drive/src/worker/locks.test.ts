@@ -84,6 +84,30 @@ test("the lock list never grows past 64", async () => {
   expect(((await again.json()) as { locks: unknown[] }).locks.length).toBe(64);
 });
 
+test("sqlite locks stop at 64 on one drive", async () => {
+  const database = new Database(":memory:");
+  const sql = bunSql(database);
+  const locks = new SqliteLocks(sql);
+  const session = new DriveSession({
+    sql,
+    bucket: new MemoryBucket(),
+    locks,
+    audit: async () => undefined,
+  });
+  for (let index = 0; index < 64; index++) {
+    const put = await session.handle(request("PUT", `n${index}.txt`, "x"), "/dav/x", `n${index}.txt`, () => 1, 60_000);
+    expect(put.status).toBe(201);
+    const locked = await session.handle(request("LOCK", `n${index}.txt`, exclusive), "/dav/x", `n${index}.txt`, () => 1, 60_000);
+    expect(locked.status).toBe(201);
+  }
+  expect((await locks.count(1))).toBe(64);
+  const extraPut = await session.handle(request("PUT", "extra.txt", "x"), "/dav/x", "extra.txt", () => 1, 60_000);
+  expect(extraPut.status).toBe(201);
+  const extra = await session.handle(request("LOCK", "extra.txt", exclusive), "/dav/x", "extra.txt", () => 1, 60_000);
+  expect(extra.status).toBe(423);
+  expect((await locks.count(1))).toBe(64);
+});
+
 function request(method: string, key: string, body: string): Request {
   return new Request(`http://127.0.0.1/dav/x/${key}`, { method, body, headers: { "content-type": "application/xml" } });
 }

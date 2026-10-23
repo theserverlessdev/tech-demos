@@ -18,16 +18,16 @@ Port of [abersheeran/r2-webdav](https://github.com/abersheeran/r2-webdav) (Apach
 - No CORS. Responses send `Cache-Control: private, no-store`. There is no anonymous read and no share link.
 - `creationdate` is ISO 8601. `getlastmodified` stays RFC 1123. `MS-Author-Via: DAV` is set for Explorer.
 - `COPY` and `MOVE` run sequentially. `Destination` must be the same origin and the same drive mount.
-- `PUT` replaces the client `Content-Type` with the sniffed type. Office and PDF downloads are attachments. Text and JSON are inline.
+- `PUT` replaces the client `Content-Type` with the sniffed type. PDF downloads are attachments. Text and JSON are inline. Office files are not accepted.
 - Quotas: 5 MB per file, 25 MB per drive, 200 objects, 1 hour TTL. The counter is an atomic SQLite update on the Durable Object, and writes for one drive run one at a time.
 - Content allow-list by magic bytes (`src/shared/content-policy.ts`).
 - Minting requires Turnstile, an accepted use notice, and a magic link from Cloudflare Email Sending. One live drive per normalised email.
 - D1 keeps an audit row (HMAC email, encrypted email, IP hash, network hash, object key, sha256, size) for 30 days after the wipe.
 - Admin token can freeze a drive or disable minting. `MINT_ENABLED` is off unless the env value is the string `true`.
-- The litmus page shows a suite only when `src/shared/litmus-results.ts` contains that suite's raw output. A 2026-10-23 run, one suite at a time, records `basic` 16/16, `copymove` 13/13, `props` 30/30, `locks` 41/41, and `http` 4/4. Each suite has its own start time.
-- Office packages must end on a comment-free central directory. Finder `._*` and `.DS_Store` files must match their magic bytes. PDF names are checked after `#xx` escapes, and only signatures of 4 or more bytes are scanned.
-- A drive holds at most 64 locks and 8 shared locks on one path. The owner is at most 1 KB, and each token is one row. The live log allows 4 sockets and closes them on a client message or a wipe.
-- A frozen drive stays until an admin release or 30 days. The alarm and `/api/session` share that decision. DAV ceilings are 240 per drive and 600 per Cloudflare location per minute. The email cap counts a message only after it is sent.
+- The litmus page shows a suite only when `src/shared/litmus-results.ts` contains that suite's raw output. A 2026-10-23 run, one suite at a time after office files were removed, records `basic` 16/16, `copymove` 13/13, `props` 30/30, `locks` 41/41, and `http` 4/4. Each suite has its own start time.
+- Word, Excel, PowerPoint, and other ZIP-based files are rejected. Finder `._*` and `.DS_Store` files must match their magic bytes and can still hold 64 KB of opaque binary. PDF names are checked after `#xx` escapes. A compressed or image stream inside a PDF can still carry pictures and arbitrary bytes.
+- A drive holds at most 64 locks and 8 shared locks on one path. The owner is at most 1 KB, and each token is one row. The live log allows 4 sockets, closes a client message, and closes the peer socket from `webSocketClose`. Each drive also stops after 3000 authenticated requests.
+- A frozen drive stays until an admin release or 30 days. An admin freeze moves the alarm. A report freeze takes effect when the alarm fires, and a later report does not move `frozen_at`. DAV ceilings are 240 per drive and 600 per Cloudflare location per minute. The email cap counts a message only after it is sent.
 - `LICENSE` line 1 matches upstream `abersheeran/r2-webdav` (`Copyright 2026 abersheeran`).
 
 The quota, content checks, and hosting notes in `SAFETY.md` describe the current behaviour, including the PDF Flate-stream gap and the 30-day freeze retention.

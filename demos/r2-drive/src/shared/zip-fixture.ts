@@ -1,4 +1,4 @@
-/** Test fixtures. The office allow-path parses ZIP; it does not build one. */
+/** Test fixtures. The allow-list rejects ZIP; these builders only feed rejection tests. */
 
 export function zipStored(files: { name: string; data: Uint8Array }[]): Uint8Array {
   const locals: Uint8Array[] = [];
