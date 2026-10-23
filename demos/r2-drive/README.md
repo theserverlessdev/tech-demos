@@ -94,7 +94,7 @@ The disposable-domain check uses a vendored copy of [disposable-email-domains](h
 
 ## Litmus
 
-`src/shared/litmus-results.ts` holds a real run of litmus 0.13 (Ubuntu 0.13-5build2) against `wrangler dev` on 2026-10-23, after COPY and MOVE started charging one unit per file written. The suites were invoked one at a time: `basic` at 18:56:19Z (16/16, one warning about DELETE of a collection whose Request-URI included a fragment), `copymove` at 18:57:29Z (13/13), `props` at 18:58:42Z (30/30), `locks` at 18:59:52Z (41/41), and `http` at 19:01:04Z (4/4, including `expect100`). The page prints those counts and the raw output; it does not invent a suite that has no raw output.
+`src/shared/litmus-results.ts` holds a real run of litmus 0.13 (Ubuntu 0.13-5build2) against `wrangler dev` on 2026-10-23, after a COPY or MOVE was charged one unit per file or folder it writes. The suites were invoked one at a time: `basic` at 19:37:07Z (16/16, one warning about DELETE of a collection whose Request-URI included a fragment), `copymove` at 19:38:18Z (13/13), `props` at 19:39:30Z (30/30), `locks` at 19:40:41Z (41/41), and `http` at 19:41:53Z (4/4, including `expect100`). The page prints those counts and the raw output; it does not invent a suite that has no raw output.
 
 ## Mount
 
