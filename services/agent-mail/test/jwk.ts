@@ -1,0 +1,19 @@
+/** Test-only RSA key. It is not a production secret. Do not copy it into wrangler.jsonc. */
+export const TEST_PUBLIC_JWK = {
+  kty: "RSA",
+  e: "AQAB",
+  n: "yQPY0YQ3VN79KBKRv7mmNcwyVI0cDXF8wK8cidUZarNYYjnGFcvbMlTqB--JmOOEjloTkZkiHcg2cRlouwFM6M8f7gifzm3CsnoZlQusWYcYUXKoMCMBiKgrWjw8-WZMXAV9BGoV97UtRHWY8DFGJjxZlrQE8o1lx7vzaUbhUzCyJnUMNi1BbGEd7ZxF-eFL36hpLq1MgYaHIhoOA34b5HARvqpjimJXIKJD8I3wJM5-dEcVDRMmuJ5V9oJePo_9UKaT7IQSrO866kCl2_MWanItkkosYmoAIO1o_F2IynPR8pqSt2NQDQz2Bs0XtwvnehMSpvt-Pc5sRrWxaecQDw",
+  kid: "test",
+  alg: "RS256",
+  use: "sig",
+};
+
+export const TEST_PRIVATE_JWK = {
+  ...TEST_PUBLIC_JWK,
+  d: "TUU5zPxWqrzXMtbEiR9LyaVXeZIOxQopiwYlYcR1c0NCx-tufkVxWs0yc198lLVs6K2ulQr5BtrGNr6uOCidUGcCXqWZDKi7rZDrEZS9qWKZkgGRroNeXRJMK_E4_SP6WWtQreg7zo8qOgU8h6RhU2RiieBkgHqjM97HiGITTr8cV6WHouE5R6wSPjdP6w2UZrd2ZGccXqmk8l7drMUlclrwrAKKmwjmNuIp5Imo627ZTk2oz-O6StAU_uydMsBBINJZ9uu4qkVmn2zdpUSi5AIUJTHE0p81kRQT_95fuC7Igffbhy5WScegOthQzelbaPs1jqhMwmKokpgeQSuE6Q",
+  p: "6fjzVLDwjBFFhcBY8KgGbpnAn4JDx4279dcbxhFio2mpK73bTm_5-8sgnPodRAWdV2jPyLqSb3O6tG4UTwCjf44hwbFxIgQLJtq7aYasw9imd4dIjvz0PsD3zTkL0vhM5-pnV80msM5q9tZpUARgFFpneZH4GGIFHTaINoqt1nk",
+  q: "2_CUAAU50iPeuKfrf7DH7vd9EWQ1MuNmdTncyuI2B__Gb5GD5PnviohRA-Zngw_08RL8bmJMgMGGPceuPrlb7m1x4HWjrZuDJsurqBOq5E2HhjBCmqn3Emq_7Z3O8A6uM2W4WWJ2Pp2HeslnrkAm0wtHj2jRl0SoEKmRQTN6GMc",
+  dp: "CTi1pnXe1TZtDgt5tep5bmyC6gaBU2EjslnLD3Bp-dTVRRMTjLDfImxsGaPF-YNbIzHPVrL7yIbAKhJYnJCC4Skh7Xdn5RZRtjNSxaL4NjPYw8dCNdiEa-DBI4aHD8aXiWB0uEIurzNDhf0HY474lnTFtUXqiFN8rh0TG0s19Mk",
+  dq: "uIcTFSVNSsKvlYvFKN_gDt10AEhr3eMuTkIavdmm7XUqPub-mvkbgcY2-qevxyV3I2ADjHVKrGgxwdmrlpKbz-HhPipVBk5Ibh9JSP4fTebCQtJwvyTE153ao3jYa05V12eLkOrsPEKcrWcXZvoJ2N1Iz8houJpwy3IJHYQb93c",
+  qi: "yDLMOrZF20iZwlGU8J45db7e6XlfvHXY4qB9pZ9478chUZVIY_ydpZ5uv6CGSGdjaHQFo7qMPMvkM1VoXeLQUcrubmogVOyZBh--3JlKfuoq06q17ACnJ8gO0y1r8QgNTeUQ1oKu6mbIQSHnnVOw495D27ga0Ml5p6UiRBNDDOs",
+};
