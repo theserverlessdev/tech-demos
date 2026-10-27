@@ -1,9 +1,11 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
+import { durableSql } from "../../test/durable-sql";
 import {
   DAILY_CAP,
   SEARCH_DAILY_CAP,
   TOKEN_TTL_MS,
+  TOKEN_USE_LIMIT,
   claimSql,
   ensureCapSchema,
   nextMidnightUtc,
@@ -14,20 +16,7 @@ import {
 } from "./cap";
 
 function sqlite(db: Database): CapSql {
-  // Live Durable Object cursors report the latest statement's rowsWritten, not their own.
-  let lastWritten = 0;
-  return {
-    exec(query: string, ...bindings: unknown[]) {
-      const statement = db.query(query);
-      const upper = query.trimStart().toUpperCase();
-      if (upper.startsWith("SELECT") || upper.startsWith("PRAGMA")) {
-        const rows = statement.all(...(bindings as never[]));
-        return { toArray: () => rows, get rowsWritten() { return lastWritten; } };
-      }
-      lastWritten = statement.run(...(bindings as never[])).changes;
-      return { toArray: () => [], get rowsWritten() { return lastWritten; } };
-    },
-  };
+  return durableSql(db);
 }
 
 function open(): CapSql {
@@ -103,6 +92,37 @@ test("a new token insert drops rows that have already expired", () => {
   expect(hashes).toEqual(["fresh", "live"]);
   const live = sql.exec("SELECT exp FROM tokens WHERE hash = ?", "live").toArray()[0] as { exp: number };
   expect(live.exp).toBe(start + 1_000 + TOKEN_TTL_MS);
+});
+
+test("a primary-key insert counts the index, and RETURNING still reports the row", () => {
+  const db = new Database(":memory:");
+  const sql = durableSql(db);
+  ensureCapSchema(sql);
+  const inserted = sql.exec(
+    "INSERT INTO tokens (hash, exp, uses) VALUES (?, ?, 1) ON CONFLICT(hash) DO NOTHING RETURNING hash",
+    "hash",
+    10,
+  );
+  expect(inserted.toArray()).toEqual([{ hash: "hash" }]);
+  expect(inserted.rowsWritten).toBe(2);
+  const replay = sql.exec(
+    "UPDATE tokens SET uses = uses + 1 WHERE hash = ? AND uses < ? AND exp > ? RETURNING uses",
+    "hash",
+    TOKEN_USE_LIMIT,
+    0,
+  );
+  expect(replay.toArray()).toEqual([{ uses: 2 }]);
+  expect(replay.rowsWritten).toBe(1);
+  const spent = sql.exec(
+    "UPDATE tokens SET uses = uses + 1 WHERE hash = ? AND uses < ? AND exp > ? RETURNING uses",
+    "hash",
+    TOKEN_USE_LIMIT,
+    0,
+  );
+  expect(spent.toArray()).toEqual([]);
+  expect(spent.rowsWritten).toBe(0);
+  expect(rememberSql(sql, "hash", 0)).toBe(false);
+  expect(rememberSql(sql, "other", 0)).toBe(true);
 });
 
 test("remember reports the insert before the prune, so the second use succeeds", () => {

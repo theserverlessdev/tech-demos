@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
+import { durableSql } from "../../test/durable-sql";
 import { handleApi, MAX_BODY, type Deps } from "./api";
 import { DAILY_CAP, capMessage, ensureCapSchema, rememberSql, searchCapMessage, takeSql, type CapSql } from "./cap";
 import { DUMMY_TOKEN, TURNSTILE_ACTION, verifyTurnstile } from "./turnstile";
@@ -11,19 +12,7 @@ function siteverify(body: unknown): typeof fetch {
 }
 
 function sqlite(db: Database): CapSql {
-  let lastWritten = 0;
-  return {
-    exec(query: string, ...bindings: unknown[]) {
-      const statement = db.query(query);
-      const upper = query.trimStart().toUpperCase();
-      if (upper.startsWith("SELECT") || upper.startsWith("PRAGMA")) {
-        const rows = statement.all(...(bindings as never[]));
-        return { toArray: () => rows, get rowsWritten() { return lastWritten; } };
-      }
-      lastWritten = statement.run(...(bindings as never[])).changes;
-      return { toArray: () => [], get rowsWritten() { return lastWritten; } };
-    },
-  };
+  return durableSql(db);
 }
 
 function deps(over: Partial<Deps> = {}): Deps & {
