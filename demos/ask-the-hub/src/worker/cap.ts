@@ -18,7 +18,6 @@ export type CapTable = "asks" | "searches";
 export type CapSql = {
   exec(query: string, ...bindings: unknown[]): {
     toArray(): unknown[];
-    readonly rowsWritten: number;
   };
 };
 
@@ -81,30 +80,33 @@ export function refundSql(sql: CapSql, table: CapTable, now: Date): void {
 /**
  * Insert a token once, after a fresh siteverify success. The insert is the first
  * of two uses. A later insert does not move the expiry.
+ *
+ * A returned row means the insert happened. Durable Object SQLite counts the
+ * primary-key index in rowsWritten, so a successful insert reports 2.
  */
 export function rememberSql(sql: CapSql, hash: string, now: number): boolean {
-  const cursor = sql.exec(
-    "INSERT INTO tokens (hash, exp, uses) VALUES (?, ?, 1) ON CONFLICT(hash) DO NOTHING",
-    hash,
-    now + TOKEN_TTL_MS,
-  );
-  // Read this statement's count first. A later exec replaces rowsWritten on the live cursor.
-  const inserted = cursor.rowsWritten === 1;
+  const inserted = sql
+    .exec(
+      "INSERT INTO tokens (hash, exp, uses) VALUES (?, ?, 1) ON CONFLICT(hash) DO NOTHING RETURNING hash",
+      hash,
+      now + TOKEN_TTL_MS,
+    )
+    .toArray();
   sql.exec("DELETE FROM tokens WHERE exp <= ?", now);
-  return inserted;
+  return inserted.length === 1;
 }
 
 /** Spend one saved use. Expired and exhausted rows stay as they are. */
 export function takeSql(sql: CapSql, hash: string, now: number): TokenDecision {
-  const row = sql.exec("SELECT exp, uses FROM tokens WHERE hash = ?", hash).toArray()[0] as
-    | { exp: number; uses: number }
-    | undefined;
-  if (!row) return "absent";
-  const cursor = sql.exec(
-    "UPDATE tokens SET uses = uses + 1 WHERE hash = ? AND uses < ? AND exp > ?",
-    hash,
-    TOKEN_USE_LIMIT,
-    now,
-  );
-  return cursor.rowsWritten === 1 ? "replay" : "spent";
+  const updated = sql
+    .exec(
+      "UPDATE tokens SET uses = uses + 1 WHERE hash = ? AND uses < ? AND exp > ? RETURNING uses",
+      hash,
+      TOKEN_USE_LIMIT,
+      now,
+    )
+    .toArray();
+  if (updated.length === 1) return "replay";
+  const existing = sql.exec("SELECT hash FROM tokens WHERE hash = ?", hash).toArray();
+  return existing.length === 0 ? "absent" : "spent";
 }
