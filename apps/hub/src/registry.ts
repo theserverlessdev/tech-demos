@@ -103,7 +103,31 @@ const clairicIntakeFallbackSource = standalone("clairic-intake");
 // The zone route 308s /demos/r2-drive* to the subdomain. This source only redirects if that route is missing.
 const r2DriveFallbackSource = standalone("r2-drive");
 
+// ask-the-hub is a standalone Worker (ASSETS, AI, AI_SEARCH, ASK_CAP, ASK_LIMIT, SEARCH_LIMIT, Turnstile).
+// The zone route wins, and this source only redirects if that route is missing.
+const askTheHubFallbackSource = standalone("ask-the-hub");
+
 export const demos: DemoEntry[] = [
+  {
+    slug: "ask-the-hub",
+    title: "Ask the Hub",
+    description: "Ask a question about the demos. AI Search answers from each README and plan in R2.",
+    demonstrates:
+      "Managed RAG over an R2 bucket, with zero vector plumbing. A sync script copies every demo README and plan into R2, AI Search indexes that bucket, and the Worker streams an answer beside the retrieved chunks.",
+    capabilities: [
+      "Ask a sample question or type one of your own",
+      "Read the streamed answer next to the source file, score, and snippet",
+      "Open the same search from the hub with Command-K, the Search button, or the chat bubble",
+    ],
+    useCases: [
+      "A docs assistant for a product handbook",
+      "A support bot over articles you already published",
+      "Internal wiki search over a bucket of markdown",
+    ],
+    tags: ["ai-search", "r2", "durable-objects", "turnstile"],
+    kind: "standalone",
+    source: askTheHubFallbackSource,
+  },
   {
     slug: "r2-drive",
     title: "R2 Drive",

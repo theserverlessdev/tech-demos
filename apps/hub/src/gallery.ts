@@ -1,5 +1,6 @@
 import type { DemoEntry } from "./registry";
 import { demoPath, demoSubdomain, HUB_HOST } from "@tech-demos/shared";
+import { ASK_HEADER_BUTTON, ASK_PALETTE_CSS, ASK_PALETTE_MARKUP, ASK_PALETTE_SCRIPT } from "./ask-palette";
 
 function escapeHtml(s: string): string {
   return s
@@ -53,6 +54,8 @@ export const THEME_BOOT_SCRIPT = `(function () {
         document.documentElement.setAttribute("data-theme", theme);
       } catch (e) {}
     })();`;
+
+export { ASK_PALETTE_SCRIPT };
 
 export const GALLERY_UI_SCRIPT = `(function () {
       var header = document.getElementById("main-header");
@@ -848,6 +851,7 @@ export function renderGallery(demos: DemoEntry[]): string {
       }
     }
 
+    ${ASK_PALETTE_CSS}
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after {
         animation-duration: 0.01ms !important;
@@ -877,6 +881,7 @@ export function renderGallery(demos: DemoEntry[]): string {
         </nav>
 
         <div class="header-actions">
+          ${ASK_HEADER_BUTTON}
           <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="primary-nav">Menu</button>
           <button class="theme-toggle" type="button" aria-label="Toggle dark and light mode">
             <svg class="icon icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
@@ -971,7 +976,9 @@ ${cards || empty}
     </div>
   </footer>
 
+  ${ASK_PALETTE_MARKUP}
   <script>${GALLERY_UI_SCRIPT}</script>
+  <script>${ASK_PALETTE_SCRIPT}</script>
 </body>
 </html>`;
 }

@@ -1,6 +1,6 @@
 import { demoPath, demoSubdomain, demoUrl, HUB_HOST, type DemoKind } from "@tech-demos/shared";
 import { demos, getDemo } from "./registry";
-import { renderGallery, THEME_BOOT_SCRIPT, GALLERY_UI_SCRIPT } from "./gallery";
+import { renderGallery, THEME_BOOT_SCRIPT, GALLERY_UI_SCRIPT, ASK_PALETTE_SCRIPT } from "./gallery";
 import {
   COMPATIBILITY_DATE,
   demoLoaderId,
@@ -35,14 +35,19 @@ export function standaloneBlockedOnHost(kind: DemoKind, hostname: string): boole
 }
 
 async function galleryHeaders(): Promise<HeadersInit> {
-  const [boot, ui] = await Promise.all([sha256CspHash(THEME_BOOT_SCRIPT), sha256CspHash(GALLERY_UI_SCRIPT)]);
+  const [boot, ui, ask] = await Promise.all([
+    sha256CspHash(THEME_BOOT_SCRIPT),
+    sha256CspHash(GALLERY_UI_SCRIPT),
+    sha256CspHash(ASK_PALETTE_SCRIPT),
+  ]);
   const csp = [
     "default-src 'none'",
-    `script-src '${boot}' '${ui}'`,
+    `script-src '${boot}' '${ui}' '${ask}' https://challenges.cloudflare.com`,
     "style-src 'unsafe-inline' https://fonts.googleapis.com",
     "font-src https://fonts.gstatic.com",
     "img-src 'self' data:",
-    "connect-src 'self'",
+    "connect-src 'self' https://ask-the-hub.tech-demos.theserverless.dev https://challenges.cloudflare.com",
+    "frame-src https://challenges.cloudflare.com",
     "base-uri 'none'",
     "form-action 'none'",
     "frame-ancestors 'none'",

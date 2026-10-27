@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark light" />
+  <meta name="theme-color" content="#0e0e11" />
+  <title>Ask the Hub · Tech Demos · theserverless.dev</title>
+  <meta name="description" content="Ask questions about the tech demos. Cloudflare AI Search answers from each demo's README and plan in R2." />
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Hanken+Grotesk:wght@400..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script src="./assets/theme.js"></script>
+  <link rel="stylesheet" href="./assets/app.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="https://tech-demos.theserverless.dev/">
+      <img src="./favicon.svg" width="26" height="26" alt="" />
+      <span>Tech Demos</span>
+    </a>
+    <div class="topbar__title">
+      <h1>Ask the Hub</h1>
+      <p>Questions over every demo's notes</p>
+    </div>
+    <button class="btn btn-icon" id="theme" type="button" aria-label="Switch colour theme">Theme</button>
+  </header>
+
+  <p class="shows"><span class="shows__k">What this proves</span> Managed RAG over an R2 bucket, with zero vector plumbing. A sync script copies each demo's README and plan into R2. Cloudflare AI Search indexes that bucket. This Worker only asks.</p>
+
+  <section class="can" aria-labelledby="try-title">
+    <h2 id="try-title">What to try</h2>
+    <ul>
+      <li>Tap a sample question, or type one of your own, up to 500 characters.</li>
+      <li>Watch the answer stream while the retrieved notes stay beside it.</li>
+      <li>Read the source file and the score on each chunk.</li>
+    </ul>
+  </section>
+  <section class="can" aria-labelledby="build-title">
+    <h2 id="build-title">What you could build</h2>
+    <ul>
+      <li>A docs assistant for a product handbook.</li>
+      <li>A support bot that answers from the articles you already published.</li>
+      <li>Internal wiki search over a bucket of markdown.</li>
+    </ul>
+  </section>
+
+  <p class="strip" id="status" role="status">Questions are checked, then forgotten. The daily counter stores a number, not the text.</p>
+
+  <main class="layout">
+    <section class="panel" aria-label="Question">
+      <p class="eyebrow">Question</p>
+      <div class="chips" id="chips"></div>
+      <form id="form">
+        <label class="stack" for="question">Ask about a demo
+          <textarea id="question" name="question" rows="4" maxlength="500" required placeholder="What does the R2 Drive demo prove?"></textarea>
+        </label>
+        <div class="submit-row">
+          <div id="turnstile" class="turnstile"></div>
+          <button class="btn btn-primary" id="ask" type="submit">Ask</button>
+        </div>
+      </form>
+    </section>
+    <section class="panel" aria-live="polite" aria-label="Answer">
+      <p class="eyebrow">Answer</p>
+      <div id="answer" class="answer">The answer will stream here.</div>
+    </section>
+    <section class="panel" aria-label="Retrieved chunks">
+      <p class="eyebrow">Retrieved chunks</p>
+      <div id="chunks" class="chunks"><p class="muted">Source, score, and snippet show up here.</p></div>
+    </section>
+  </main>
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async></script>
+  <script src="./assets/app.js"></script>
+</body>
+</html>
