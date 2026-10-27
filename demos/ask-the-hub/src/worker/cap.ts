@@ -88,8 +88,10 @@ export function rememberSql(sql: CapSql, hash: string, now: number): boolean {
     hash,
     now + TOKEN_TTL_MS,
   );
+  // Read this statement's count first. A later exec replaces rowsWritten on the live cursor.
+  const inserted = cursor.rowsWritten === 1;
   sql.exec("DELETE FROM tokens WHERE exp <= ?", now);
-  return cursor.rowsWritten === 1;
+  return inserted;
 }
 
 /** Spend one saved use. Expired and exhausted rows stay as they are. */

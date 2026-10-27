@@ -11,14 +11,17 @@ function siteverify(body: unknown): typeof fetch {
 }
 
 function sqlite(db: Database): CapSql {
+  let lastWritten = 0;
   return {
     exec(query: string, ...bindings: unknown[]) {
       const statement = db.query(query);
       const upper = query.trimStart().toUpperCase();
       if (upper.startsWith("SELECT") || upper.startsWith("PRAGMA")) {
-        return { toArray: () => statement.all(...(bindings as never[])), rowsWritten: 0 };
+        const rows = statement.all(...(bindings as never[]));
+        return { toArray: () => rows, get rowsWritten() { return lastWritten; } };
       }
-      return { toArray: () => [], rowsWritten: statement.run(...(bindings as never[])).changes };
+      lastWritten = statement.run(...(bindings as never[])).changes;
+      return { toArray: () => [], get rowsWritten() { return lastWritten; } };
     },
   };
 }
@@ -226,6 +229,17 @@ test("DEV=1 accepts the dummy token and lets it be reused", async () => {
   expect((await handleApi(post("/api/search", body), bag, "/api/search"))?.status).toBe(200);
   expect((await handleApi(post("/api/ask", body), bag, "/api/ask"))?.status).toBe(200);
   expect((await handleApi(post("/api/search", body), bag, "/api/search"))?.status).toBe(200);
+});
+
+test("search then ask share one token after the prune, and the third use is rejected", async () => {
+  const bag = deps();
+  const body = { question: QUESTION, turnstileToken: "site-token" };
+  expect((await handleApi(post("/api/search", body), bag, "/api/search"))?.status).toBe(200);
+  expect((await handleApi(post("/api/ask", body), bag, "/api/ask"))?.status).toBe(200);
+  const third = await handleApi(post("/api/search", body), bag, "/api/search");
+  expect(third?.status).toBe(403);
+  expect(((await third!.json()) as { code: string }).code).toBe("turnstile");
+  expect(bag.calls.verify).toBe(1);
 });
 
 test("a solved token can be used twice and the third replay is rejected", async () => {

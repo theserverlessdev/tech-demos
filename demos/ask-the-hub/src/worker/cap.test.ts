@@ -14,16 +14,18 @@ import {
 } from "./cap";
 
 function sqlite(db: Database): CapSql {
+  // Live Durable Object cursors report the latest statement's rowsWritten, not their own.
+  let lastWritten = 0;
   return {
     exec(query: string, ...bindings: unknown[]) {
       const statement = db.query(query);
       const upper = query.trimStart().toUpperCase();
       if (upper.startsWith("SELECT") || upper.startsWith("PRAGMA")) {
         const rows = statement.all(...(bindings as never[]));
-        return { toArray: () => rows, rowsWritten: 0 };
+        return { toArray: () => rows, get rowsWritten() { return lastWritten; } };
       }
-      const result = statement.run(...(bindings as never[]));
-      return { toArray: () => [], rowsWritten: result.changes };
+      lastWritten = statement.run(...(bindings as never[])).changes;
+      return { toArray: () => [], get rowsWritten() { return lastWritten; } };
     },
   };
 }
@@ -101,6 +103,16 @@ test("a new token insert drops rows that have already expired", () => {
   expect(hashes).toEqual(["fresh", "live"]);
   const live = sql.exec("SELECT exp FROM tokens WHERE hash = ?", "live").toArray()[0] as { exp: number };
   expect(live.exp).toBe(start + 1_000 + TOKEN_TTL_MS);
+});
+
+test("remember reports the insert before the prune, so the second use succeeds", () => {
+  const sql = open();
+  const now = 1_700_000_000_000;
+  expect(rememberSql(sql, "stale", now - TOKEN_TTL_MS)).toBe(true);
+  expect(rememberSql(sql, "hash", now)).toBe(true);
+  expect((sql.exec("SELECT hash FROM tokens ORDER BY hash").toArray() as { hash: string }[]).map((row) => row.hash)).toEqual(["hash"]);
+  expect(takeSql(sql, "hash", now + 1)).toBe("replay");
+  expect(takeSql(sql, "hash", now + 1)).toBe("spent");
 });
 
 test("an older token table gains a uses column without a new expiry", () => {
