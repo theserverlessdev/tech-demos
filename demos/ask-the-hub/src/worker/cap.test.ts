@@ -91,6 +91,18 @@ test("a token is inserted once, expires on its own clock, and allows two uses", 
   expect(takeSql(sql, "missing", start)).toBe("absent");
 });
 
+test("a new token insert drops rows that have already expired", () => {
+  const sql = open();
+  const start = 1_700_000_000_000;
+  expect(rememberSql(sql, "expired", start)).toBe(true);
+  expect(rememberSql(sql, "live", start + 1_000)).toBe(true);
+  expect(rememberSql(sql, "fresh", start + TOKEN_TTL_MS)).toBe(true);
+  const hashes = (sql.exec("SELECT hash FROM tokens ORDER BY hash").toArray() as { hash: string }[]).map((row) => row.hash);
+  expect(hashes).toEqual(["fresh", "live"]);
+  const live = sql.exec("SELECT exp FROM tokens WHERE hash = ?", "live").toArray()[0] as { exp: number };
+  expect(live.exp).toBe(start + 1_000 + TOKEN_TTL_MS);
+});
+
 test("an older token table gains a uses column without a new expiry", () => {
   const db = new Database(":memory:");
   db.exec("CREATE TABLE tokens (hash TEXT PRIMARY KEY, exp INTEGER NOT NULL)");

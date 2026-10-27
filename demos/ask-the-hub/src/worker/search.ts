@@ -44,6 +44,7 @@ export function chunksFromSearchPayload(payload: unknown): Chunk[] {
 }
 
 type SearchInstance = {
+  info?: () => Promise<unknown>;
   search: (params: {
     query: string;
     ai_search_options?: { retrieval?: { max_num_results?: number } };
@@ -66,6 +67,44 @@ export function instanceName(env: SearchEnv): string {
 
 export function searchConfigured(env: SearchEnv): boolean {
   return typeof env.AI_SEARCH?.get === "function";
+}
+
+export const HEALTH_TTL_MS = 60_000;
+
+export type HealthCache = { at: number; ok: boolean } | null;
+
+/** One isolate remembers the last probe so the gallery does not ask on every page view. */
+const healthSlot: { current: HealthCache } = { current: null };
+
+async function instanceAnswers(env: SearchEnv): Promise<boolean> {
+  if (!env.AI_SEARCH?.get) return false;
+  const instance = env.AI_SEARCH.get(instanceName(env));
+  try {
+    if (typeof instance.info === "function") {
+      await instance.info();
+      return true;
+    }
+    await instance.search({
+      query: "health",
+      ai_search_options: { retrieval: { max_num_results: 1 } },
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** True when the named instance exists and answers. The result is reused for 60 seconds. */
+export async function confirmSearch(env: SearchEnv, now: number, slot: { current: HealthCache }): Promise<boolean> {
+  const cached = slot.current;
+  if (cached && now - cached.at < HEALTH_TTL_MS) return cached.ok;
+  const ok = await instanceAnswers(env);
+  slot.current = { at: now, ok };
+  return ok;
+}
+
+export function cachedSearchHealth(env: SearchEnv, now = Date.now()): Promise<boolean> {
+  return confirmSearch(env, now, healthSlot);
 }
 
 function asResponse(stream: Response | ReadableStream): Response {

@@ -35,6 +35,9 @@ function deps(over: Partial<Deps> = {}): Deps & {
     dev: false,
     siteKey: "0x4AAAAAAFRUoj5qDpf7XyIW",
     searchReady: true,
+    async confirm() {
+      return true;
+    },
     async limit(name, key) {
       calls.limit.push(`${name}:${key}`);
       return true;
@@ -295,6 +298,13 @@ test("health is 503 until search is configured", async () => {
   const up = await handleApi(health, deps(), "/api/health");
   expect(up?.status).toBe(200);
   expect(((await up!.json()) as { ok: boolean }).ok).toBe(true);
+});
+
+test("health is 503 when the AI Search instance does not answer", async () => {
+  const health = new Request("https://ask-the-hub.tech-demos.theserverless.dev/api/health");
+  const down = await handleApi(health, deps({ confirm: async () => false }), "/api/health");
+  expect(down?.status).toBe(503);
+  expect(await down!.json()).toEqual({ ok: false, reason: "search_unavailable" });
 });
 
 test("a non-json or oversized body is refused before it is parsed", async () => {

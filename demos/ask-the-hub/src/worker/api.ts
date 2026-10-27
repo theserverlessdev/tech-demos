@@ -1,5 +1,5 @@
 import { capMessage, searchCapMessage, type ClaimResult, type TokenDecision } from "./cap";
-import { createSearch, searchConfigured, type Chunk } from "./search";
+import { cachedSearchHealth, createSearch, searchConfigured, type Chunk } from "./search";
 import { DUMMY_TOKEN, devEnabled, tokenHash, verifyTurnstile, type VerifyResult } from "./turnstile";
 import { parseQuestion, readToken } from "./validate";
 import type { Env } from "./env";
@@ -16,6 +16,7 @@ export type Deps = {
   dev: boolean;
   siteKey: string;
   searchReady: boolean;
+  confirm: () => Promise<boolean>;
   limit: (name: "ASK_LIMIT" | "SEARCH_LIMIT", key: string) => Promise<boolean>;
   verify: (token: string, ip: string) => Promise<VerifyResult>;
   takeToken: (hash: string) => Promise<TokenDecision>;
@@ -137,6 +138,7 @@ export async function handleApi(request: Request, deps: Deps, path: string): Pro
   }
   if (path === "/api/health" && request.method === "GET") {
     if (!deps.searchReady) return json(503, { ok: false, error: "Search is not configured." }, request, deps);
+    if (!(await deps.confirm())) return json(503, { ok: false, reason: "search_unavailable" }, request, deps);
     return json(200, { ok: true }, request, deps);
   }
   if (path === "/api/config" && request.method === "GET") {
@@ -220,6 +222,7 @@ export function depsFromEnv(env: Env): Deps {
     dev,
     siteKey: env.TURNSTILE_SITE_KEY?.trim() ?? "",
     searchReady: searchConfigured(env),
+    confirm: () => cachedSearchHealth(env),
     async limit(name, key) {
       const binding = name === "ASK_LIMIT" ? env.ASK_LIMIT : env.SEARCH_LIMIT;
       const result = await binding.limit({ key });

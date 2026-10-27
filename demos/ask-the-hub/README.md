@@ -46,4 +46,16 @@ The Worker calls `env.AI_SEARCH.get(env.AI_SEARCH_INSTANCE)` on the namespace bi
 - `ASK_LIMIT` namespace `7614`: 8 asks per minute per IP.
 - `SEARCH_LIMIT` namespace `7615`: 20 searches per minute per IP.
 - `AskCap` Durable Object: 200 asks per UTC day, and 1000 searches per UTC day, for the whole demo. Over either cap the API returns 429 and the time it resets, midnight UTC. A failed search gives that slot back.
-- A solved Turnstile token is remembered once, for two minutes, and can be used twice (search, then ask). A third use is rejected. The expiry is not extended.
+- A solved Turnstile token is remembered once, for two minutes, and can be used twice (search, then ask). A third use is rejected. The expiry is not extended. Expired rows are deleted the next time a token is stored.
+
+## Screenshots
+
+Captured against a local stand-in backend, not the live AI Search instance.
+
+![Ask the Hub at 390px, captured against a local stand-in backend](./artifacts/demo-390-answer.png)
+
+![Ask the Hub on desktop, captured against a local stand-in backend](./artifacts/demo-desktop-answer.png)
+
+![Hub palette at 390px, captured against a local stand-in backend](./artifacts/hub-390-answer.png)
+
+The same local stand-in captured the other stills in [artifacts/](./artifacts/) and `artifacts/ask-the-hub.mp4`.
