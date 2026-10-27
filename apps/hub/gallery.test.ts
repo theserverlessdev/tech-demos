@@ -25,6 +25,8 @@ test("the hub search button and palette stay in the page", () => {
   expect(html).toContain("event.metaKey || event.ctrlKey");
   expect(html).toContain("https://ask-the-hub.tech-demos.theserverless.dev");
   expect(html).toContain('"/api/health"');
+  expect(html).not.toContain('<script src="https://challenges.cloudflare.com/turnstile/v0/api.js');
+  expect(html).toContain("ask-turnstile-api");
 });
 
 test("gallery scripts include menu dismiss on Escape and outside tap", () => {

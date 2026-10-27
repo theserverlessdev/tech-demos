@@ -32,11 +32,16 @@ export async function tokenHash(token: string): Promise<string> {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-export function allowedWidgetHost(host: string): boolean {
-  return host === "theserverless.dev" || host.endsWith(".theserverless.dev");
+export const TURNSTILE_ACTION = "ask-the-hub";
+
+const WIDGET_HOSTS = new Set(["tech-demos.theserverless.dev", "ask-the-hub.tech-demos.theserverless.dev"]);
+
+export function allowedWidgetHost(host: string, dev = false): boolean {
+  if (WIDGET_HOSTS.has(host)) return true;
+  return dev && isLocalHostname(host);
 }
 
-type Siteverify = { success?: boolean; hostname?: string };
+type Siteverify = { success?: boolean; hostname?: string; action?: string };
 
 /**
  * Production rejects a missing token, a failed siteverify, the dummy token,
@@ -72,8 +77,7 @@ export async function verifyTurnstile(opts: {
     return "rejected";
   }
   if (!result.success) return "rejected";
-  const host = result.hostname ?? "";
-  if (isLocalHostname(host) && !opts.dev) return "rejected";
-  if (!opts.dev && !allowedWidgetHost(host)) return "rejected";
+  if (!allowedWidgetHost(result.hostname ?? "", opts.dev)) return "rejected";
+  if (result.action !== TURNSTILE_ACTION) return "rejected";
   return "ok";
 }

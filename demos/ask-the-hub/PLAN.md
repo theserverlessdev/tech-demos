@@ -6,7 +6,7 @@ Visitors ask questions about this monorepo. Cloudflare AI Search (formerly AutoR
 
 A visitor opens the demo, passes the shared Turnstile widget, and asks a short question. The page streams an answer and lists the retrieved chunks with source file, score, and snippet. The hub gallery gets a card, a Command-K palette, a visible Search button, and a chat bubble. Those controls call this Worker and stay hidden if it does not answer.
 
-Out of scope: creating the R2 bucket, the AI Search instance, or any deploy. Wrangler ids in this folder are placeholders. Questions are not stored or logged.
+Out of scope: creating the R2 bucket, the AI Search instance, or any deploy. The instance name in wrangler is `tech-demos-hub-docs`. Questions are not stored or logged.
 
 ## Flow
 
@@ -29,7 +29,7 @@ flowchart LR
 ## Stack
 
 - Workers static assets for the page. The account is Workers Paid; no Containers and no Workers for Platforms.
-- AI Search binding. `env.AI.autorag(instance).aiSearch({ stream: true })` streams the answer. `search` returns chunks. Zero Vectorize plumbing in this repo.
+- AI Search namespace binding `AI_SEARCH`. `env.AI_SEARCH.get(env.AI_SEARCH_INSTANCE)` talks to instance `tech-demos-hub-docs`. `chatCompletions({ stream: true })` streams the answer. `search` returns chunks. Zero Vectorize plumbing in this repo.
 - R2 bucket `tech-demos-hub-docs` is filled by the sync script with the S3 API. Keys are `<slug>/README.md` and `<slug>/PLAN.md`.
 - Durable Object class `AskCap`, binding `ASK_CAP`, one global SQLite counter. `blockConcurrencyWhile` makes the increment atomic.
 - Rate limits `ASK_LIMIT` namespace `7614` (8 per minute per IP) and `SEARCH_LIMIT` namespace `7615` (20 per minute per IP). Both ids are unused in this repo. The next taken id before them is `7613`.

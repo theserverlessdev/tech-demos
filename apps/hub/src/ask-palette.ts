@@ -126,6 +126,7 @@ export const ASK_PALETTE_SCRIPT = `(function () {
       ];
       var token = "";
       var widgetId = "";
+      var mountTimer = 0;
       samples.forEach(function (sample) {
         var button = document.createElement("button");
         button.type = "button";
@@ -147,7 +148,17 @@ export const ASK_PALETTE_SCRIPT = `(function () {
       function openDialog() {
         dialog.hidden = false;
         input.focus();
-        mount();
+        ensureTurnstile();
+        if (mount()) return;
+        if (mountTimer) return;
+        var tries = 0;
+        mountTimer = setInterval(function () {
+          tries += 1;
+          if (mount() || tries >= 15) {
+            clearInterval(mountTimer);
+            mountTimer = 0;
+          }
+        }, 400);
       }
       function closeDialog() { dialog.hidden = true; }
       openBtn.addEventListener("click", openDialog);
@@ -164,19 +175,29 @@ export const ASK_PALETTE_SCRIPT = `(function () {
         }
         if (event.key === "Escape" && !dialog.hidden) closeDialog();
       });
+      function ensureTurnstile() {
+        if (window.turnstile || document.getElementById("ask-turnstile-api")) return;
+        var script = document.createElement("script");
+        script.id = "ask-turnstile-api";
+        script.async = true;
+        script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+        document.head.appendChild(script);
+      }
       function mount() {
         var host = document.getElementById("ask-turnstile");
+        if (!host || host.getAttribute("data-ready") === "1") return true;
         var api = window.turnstile;
-        if (!host || !api || typeof api.render !== "function" || host.getAttribute("data-ready") === "1") return;
+        if (!api || typeof api.render !== "function") return false;
         host.setAttribute("data-ready", "1");
         widgetId = api.render(host, {
           sitekey: SITE_KEY,
+          action: "ask-the-hub",
           callback: function (value) { token = value; },
           "expired-callback": function () { token = ""; },
           "error-callback": function () { token = ""; }
         });
+        return true;
       }
-      setInterval(mount, 400);
       function paintChunks(list) {
         chunkBox.replaceChildren();
         (list || []).forEach(function (item) {
@@ -192,7 +213,6 @@ export const ASK_PALETTE_SCRIPT = `(function () {
       }
       function applyPiece(acc, piece) {
         if (!piece) return acc;
-        if (piece.indexOf(acc) === 0) return piece;
         return acc + piece;
       }
       function readStream(res) {
@@ -233,25 +253,48 @@ export const ASK_PALETTE_SCRIPT = `(function () {
         if (window.turnstile && widgetId) window.turnstile.reset(widgetId);
         status.textContent = "Looking through the demo notes.";
         answer.textContent = "";
-        fetch(ORIGIN + "/api/search", { method: "POST", headers: { "content-type": "application/json" }, body: payload })
-          .then(function (res) { return res.json().then(function (body) { return { ok: res.ok, body: body }; }); })
-          .then(function (out) {
-            if (!out.ok) throw new Error(out.body && out.body.error ? out.body.error : "Search is unavailable right now.");
-            paintChunks(out.body.chunks || []);
-            return fetch(ORIGIN + "/api/ask", { method: "POST", headers: { "content-type": "application/json" }, body: payload });
+        var FRIENDLY = "Search is unavailable right now.";
+        function fetchTimed(url, options) {
+          var ctrl = new AbortController();
+          var timer = setTimeout(function () { ctrl.abort(); }, 20000);
+          return fetch(url, Object.assign({}, options, { signal: ctrl.signal })).finally(function () { clearTimeout(timer); });
+        }
+        function messageFrom(body) {
+          if (body && typeof body.error === "string" && body.error) {
+            return body.resetsAt ? body.error + " Reset " + body.resetsAt + "." : body.error;
+          }
+          return FRIENDLY;
+        }
+        function readPayload(res) {
+          return res.text().then(function (text) {
+            var body = null;
+            if (text) {
+              try { body = JSON.parse(text); } catch (e) { body = null; }
+            }
+            return body;
+          });
+        }
+        fetchTimed(ORIGIN + "/api/search", { method: "POST", headers: { "content-type": "application/json" }, body: payload })
+          .then(function (res) {
+            return readPayload(res).then(function (body) {
+              if (!res.ok || !body) throw new Error(messageFrom(body));
+              paintChunks(body.chunks || []);
+            });
+          })
+          .then(function () {
+            return fetchTimed(ORIGIN + "/api/ask", { method: "POST", headers: { "content-type": "application/json" }, body: payload });
           })
           .then(function (res) {
             var type = res.headers.get("content-type") || "";
             if (!res.ok || type.indexOf("application/json") !== -1) {
-              return res.json().then(function (body) {
-                var message = body && body.error ? body.error : "Search is unavailable right now.";
-                if (body && body.resetsAt) message += " Reset " + body.resetsAt + ".";
-                throw new Error(message);
-              });
+              return readPayload(res).then(function (body) { throw new Error(messageFrom(body)); });
             }
             return readStream(res);
           })
           .then(function () { status.textContent = "Answered from the indexed notes."; })
-          .catch(function (err) { status.textContent = err instanceof Error ? err.message : "Search is unavailable right now."; });
+          .catch(function (err) {
+            if (err && err.name === "AbortError") status.textContent = FRIENDLY;
+            else status.textContent = err instanceof Error && err.message ? err.message : FRIENDLY;
+          });
       });
     })();`;

@@ -4,13 +4,7 @@ export interface RateLimitBinding {
 
 export interface Env {
   ASSETS: Fetcher;
-  AI?: {
-    autorag: (instance: string) => {
-      search: (params: { query: string; max_num_results?: number }) => Promise<unknown>;
-      aiSearch: (params: { query: string; stream: true; max_num_results?: number }) => Promise<Response>;
-    };
-  };
-  AI_SEARCH?: {
+  AI_SEARCH: {
     get: (name: string) => {
       search: (params: { query: string }) => Promise<unknown>;
       chatCompletions: (params: {

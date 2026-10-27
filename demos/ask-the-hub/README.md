@@ -6,6 +6,18 @@ Ask a question about the tech demos. Cloudflare AI Search reads every demo `READ
 
 Managed RAG over R2, with zero vector plumbing.
 
+## What you can try
+
+- Ask what a demo proves, which demos use Turnstile, or how a null field is handled.
+- Watch the answer stream while the retrieved notes stay beside it.
+- Read the source file and the score on each chunk.
+
+## What you could build
+
+- A docs assistant for a product handbook.
+- A support bot that answers from articles you already published.
+- Internal wiki search over a bucket of markdown.
+
 ## Run
 
 ```sh
@@ -19,17 +31,18 @@ Sync the notes when you are ready to index them:
 
 ```sh
 R2_ACCOUNT_ID=... R2_ACCESS_KEY_ID=... R2_SECRET_ACCESS_KEY=... node demos/ask-the-hub/scripts/sync-docs.mjs --dry-run
-node demos/ask-the-hub/scripts/sync-docs.mjs
-node demos/ask-the-hub/scripts/sync-docs.mjs --prune
+R2_ACCOUNT_ID=... R2_ACCESS_KEY_ID=... R2_SECRET_ACCESS_KEY=... node demos/ask-the-hub/scripts/sync-docs.mjs
+R2_ACCOUNT_ID=... R2_ACCESS_KEY_ID=... R2_SECRET_ACCESS_KEY=... node demos/ask-the-hub/scripts/sync-docs.mjs --prune
 ```
 
 Keys are `<slug>/README.md` and `<slug>/PLAN.md`. Unchanged files are skipped. Removed demos are deleted only with `--prune`.
 
-Point an AI Search instance at the bucket, then set `AI_SEARCH_INSTANCE` in wrangler. The placeholder name is `placeholder-tech-demos-hub-docs`.
+The Worker calls `env.AI_SEARCH.get(env.AI_SEARCH_INSTANCE)` on the namespace binding. `AI_SEARCH_INSTANCE` is `tech-demos-hub-docs`. This repo does not create that instance.
 
 ## Limits
 
 - Question: trimmed, 1–500 characters. The text is not stored or logged.
 - `ASK_LIMIT` namespace `7614`: 8 asks per minute per IP.
 - `SEARCH_LIMIT` namespace `7615`: 20 searches per minute per IP.
-- `AskCap` Durable Object: 200 asks per UTC day for the whole demo. Over the cap the API returns 429 and the time it resets, midnight UTC.
+- `AskCap` Durable Object: 200 asks per UTC day, and 1000 searches per UTC day, for the whole demo. Over either cap the API returns 429 and the time it resets, midnight UTC. A failed search gives that slot back.
+- A solved Turnstile token is remembered once, for two minutes, and can be used twice (search, then ask). A third use is rejected. The expiry is not extended.

@@ -1,7 +1,8 @@
+import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-import { handleApi, type Deps } from "./api";
-import { DAILY_CAP, capMessage } from "./cap";
-import { DUMMY_TOKEN, verifyTurnstile } from "./turnstile";
+import { handleApi, MAX_BODY, type Deps } from "./api";
+import { DAILY_CAP, capMessage, ensureCapSchema, rememberSql, searchCapMessage, takeSql, type CapSql } from "./cap";
+import { DUMMY_TOKEN, TURNSTILE_ACTION, verifyTurnstile } from "./turnstile";
 
 const QUESTION = "What does the R2 Drive demo prove?";
 
@@ -9,30 +10,63 @@ function siteverify(body: unknown): typeof fetch {
   return (async () => new Response(JSON.stringify(body), { status: 200 })) as typeof fetch;
 }
 
-function deps(over: Partial<Deps> = {}): Deps & { calls: { search: number; ask: number; claim: number; limit: string[] } } {
-  const calls = { search: 0, ask: 0, claim: 0, limit: [] as string[] };
+function sqlite(db: Database): CapSql {
+  return {
+    exec(query: string, ...bindings: unknown[]) {
+      const statement = db.query(query);
+      const upper = query.trimStart().toUpperCase();
+      if (upper.startsWith("SELECT") || upper.startsWith("PRAGMA")) {
+        return { toArray: () => statement.all(...(bindings as never[])), rowsWritten: 0 };
+      }
+      return { toArray: () => [], rowsWritten: statement.run(...(bindings as never[])).changes };
+    },
+  };
+}
+
+function deps(over: Partial<Deps> = {}): Deps & {
+  calls: { search: number; ask: number; claim: number; refund: number; refundSearch: number; limit: string[]; verify: number };
+  clock: (ms: number) => void;
+} {
+  const calls = { search: 0, ask: 0, claim: 0, refund: 0, refundSearch: 0, limit: [] as string[], verify: 0 };
+  const tokens = sqlite(new Database(":memory:"));
+  ensureCapSchema(tokens);
+  let now = 1_700_000_000_000;
   const base: Deps = {
     dev: false,
     siteKey: "0x4AAAAAAFRUoj5qDpf7XyIW",
+    searchReady: true,
     async limit(name, key) {
       calls.limit.push(`${name}:${key}`);
       return true;
     },
-    verify: (token, ip) =>
-      verifyTurnstile({
+    verify: (token, ip) => {
+      calls.verify += 1;
+      return verifyTurnstile({
         secret: "real-secret",
         token,
         ip,
         dev: false,
-        fetchImpl: siteverify({ success: true, hostname: "tech-demos.theserverless.dev" }),
-      }),
-    async knownToken() {
-      return false;
+        fetchImpl: siteverify({ success: true, hostname: "tech-demos.theserverless.dev", action: TURNSTILE_ACTION }),
+      });
     },
-    async noteToken() {},
+    async takeToken(hash) {
+      return takeSql(tokens, hash, now);
+    },
+    async rememberToken(hash) {
+      return rememberSql(tokens, hash, now);
+    },
     async claim() {
       calls.claim += 1;
       return { ok: true, used: 1, remaining: 199, cap: DAILY_CAP, resetsAt: "2026-10-28T00:00:00.000Z" };
+    },
+    async claimSearch() {
+      return { ok: true, used: 1, remaining: 999, cap: 1000, resetsAt: "2026-10-28T00:00:00.000Z" };
+    },
+    async refund() {
+      calls.refund += 1;
+    },
+    async refundSearch() {
+      calls.refundSearch += 1;
     },
     async search() {
       calls.search += 1;
@@ -45,7 +79,7 @@ function deps(over: Partial<Deps> = {}): Deps & { calls: { search: number; ask: 
       });
     },
   };
-  return { ...base, ...over, calls };
+  return { ...base, ...over, calls, clock: (ms: number) => { now = ms; } };
 }
 
 function post(path: string, body: unknown, ip = "203.0.113.10") {
@@ -187,4 +221,98 @@ test("DEV=1 accepts the dummy token", async () => {
   });
   const res = await handleApi(post("/api/search", { question: QUESTION, turnstileToken: DUMMY_TOKEN }), bag, "/api/search");
   expect(res?.status).toBe(200);
+});
+
+test("a solved token can be used twice and the third replay is rejected", async () => {
+  const bag = deps();
+  const body = { question: QUESTION, turnstileToken: "site-token" };
+  expect((await handleApi(post("/api/search", body), bag, "/api/search"))?.status).toBe(200);
+  expect((await handleApi(post("/api/ask", body), bag, "/api/ask"))?.status).toBe(200);
+  const third = await handleApi(post("/api/search", body), bag, "/api/search");
+  expect(third?.status).toBe(403);
+  expect(((await third!.json()) as { code: string }).code).toBe("turnstile");
+  expect(bag.calls.verify).toBe(1);
+});
+
+test("a saved token is rejected after its original expiry", async () => {
+  const bag = deps();
+  const body = { question: QUESTION, turnstileToken: "site-token" };
+  expect((await handleApi(post("/api/search", body), bag, "/api/search"))?.status).toBe(200);
+  bag.clock(1_700_000_000_000 + 120_000);
+  const again = await handleApi(post("/api/ask", body), bag, "/api/ask");
+  expect(again?.status).toBe(403);
+  expect(bag.calls.verify).toBe(1);
+});
+
+test("search over the daily cap returns a friendly 429", async () => {
+  const bag = deps({
+    claimSearch: async () => ({ ok: false, used: 1000, remaining: 0, cap: 1000, resetsAt: "2026-10-28T00:00:00.000Z" }),
+  });
+  const res = await handleApi(post("/api/search", { question: QUESTION, turnstileToken: "site-token" }), bag, "/api/search");
+  expect(res?.status).toBe(429);
+  const body = (await res!.json()) as { error: string; code: string };
+  expect(body.code).toBe("daily_cap");
+  expect(body.error).toBe(searchCapMessage(1000));
+  expect(bag.calls.search).toBe(0);
+});
+
+test("an AI Search failure gives the ask slot back", async () => {
+  const thrown = deps({
+    aiSearch: async () => {
+      throw new Error("down");
+    },
+  });
+  const res = await handleApi(post("/api/ask", { question: QUESTION, turnstileToken: "site-token" }), thrown, "/api/ask");
+  expect(res?.status).toBe(502);
+  expect(thrown.calls.claim).toBe(1);
+  expect(thrown.calls.refund).toBe(1);
+
+  const bad = deps({
+    aiSearch: async () => new Response("nope", { status: 500 }),
+  });
+  const failed = await handleApi(post("/api/ask", { question: QUESTION, turnstileToken: "site-token" }), bad, "/api/ask");
+  expect(failed?.status).toBe(502);
+  expect(bad.calls.refund).toBe(1);
+});
+
+test("a search failure gives the search slot back", async () => {
+  const bag = deps({
+    search: async () => {
+      throw new Error("down");
+    },
+  });
+  const res = await handleApi(post("/api/search", { question: QUESTION, turnstileToken: "site-token" }), bag, "/api/search");
+  expect(res?.status).toBe(502);
+  expect(bag.calls.refundSearch).toBe(1);
+});
+
+test("health is 503 until search is configured", async () => {
+  const health = new Request("https://ask-the-hub.tech-demos.theserverless.dev/api/health");
+  const down = await handleApi(health, deps({ searchReady: false }), "/api/health");
+  expect(down?.status).toBe(503);
+  const up = await handleApi(health, deps(), "/api/health");
+  expect(up?.status).toBe(200);
+  expect(((await up!.json()) as { ok: boolean }).ok).toBe(true);
+});
+
+test("a non-json or oversized body is refused before it is parsed", async () => {
+  const bag = deps();
+  const typed = new Request("https://ask-the-hub.tech-demos.theserverless.dev/api/ask", {
+    method: "POST",
+    headers: { "content-type": "text/plain" },
+    body: JSON.stringify({ question: QUESTION, turnstileToken: "site-token" }),
+  });
+  const wrongType = await handleApi(typed, bag, "/api/ask");
+  expect(wrongType?.status).toBe(400);
+  expect(((await wrongType!.json()) as { code: string }).code).toBe("invalid_question");
+
+  const tooBig = new Request("https://ask-the-hub.tech-demos.theserverless.dev/api/ask", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ question: "ok", turnstileToken: "site-token", pad: "x".repeat(MAX_BODY) }),
+  });
+  const oversized = await handleApi(tooBig, bag, "/api/ask");
+  expect(oversized?.status).toBe(400);
+  expect(bag.calls.verify).toBe(0);
+  expect(bag.calls.claim).toBe(0);
 });

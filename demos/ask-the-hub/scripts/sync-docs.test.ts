@@ -2,7 +2,13 @@ import { expect, test } from "bun:test";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { collectLocal, isDocKey, parseArgs, planDiff, runSync } from "./sync-docs.mjs";
+import { pathToFileURL } from "node:url";
+import { collectLocal, isDocKey, parseArgs, planDiff, repoRoot, runSync } from "./sync-docs.mjs";
+
+test("the repo root keeps spaces in the path", () => {
+  const url = pathToFileURL("/tmp/demo dir/demos/ask-the-hub/scripts/sync-docs.mjs");
+  expect(repoRoot(url.href)).toBe(path.resolve("/tmp/demo dir"));
+});
 
 test("keys are slug/README.md and slug/PLAN.md", () => {
   expect(isDocKey("r2-drive/README.md")).toBe(true);

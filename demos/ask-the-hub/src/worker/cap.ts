@@ -1,4 +1,7 @@
 export const DAILY_CAP = 200;
+export const SEARCH_DAILY_CAP = 1000;
+export const TOKEN_TTL_MS = 120_000;
+export const TOKEN_USE_LIMIT = 2;
 
 export type ClaimResult = {
   ok: boolean;
@@ -8,9 +11,15 @@ export type ClaimResult = {
   resetsAt: string;
 };
 
-export type Counter = {
-  get(day: string): Promise<number> | number;
-  set(day: string, count: number): Promise<void> | void;
+export type TokenDecision = "absent" | "replay" | "spent";
+
+export type CapTable = "asks" | "searches";
+
+export type CapSql = {
+  exec(query: string, ...bindings: unknown[]): {
+    toArray(): unknown[];
+    readonly rowsWritten: number;
+  };
 };
 
 export function utcDay(now: Date): string {
@@ -26,28 +35,73 @@ export function capMessage(cap: number): string {
   return `Ask the Hub has answered ${cap} questions today. It resets at midnight UTC.`;
 }
 
-/**
- * Read-then-write one day's counter. Callers that share a counter must run this
- * one at a time. AskCap does that with blockConcurrencyWhile.
- */
-export async function claimDay(counter: Counter, now: Date, cap = DAILY_CAP): Promise<ClaimResult> {
+export function searchCapMessage(cap: number): string {
+  return `Ask the Hub has searched the notes ${cap} times today. It resets at midnight UTC.`;
+}
+
+export function ensureCapSchema(sql: CapSql): void {
+  sql.exec("CREATE TABLE IF NOT EXISTS asks (day TEXT PRIMARY KEY, count INTEGER NOT NULL)");
+  sql.exec("CREATE TABLE IF NOT EXISTS searches (day TEXT PRIMARY KEY, count INTEGER NOT NULL)");
+  sql.exec("CREATE TABLE IF NOT EXISTS tokens (hash TEXT PRIMARY KEY, exp INTEGER NOT NULL, uses INTEGER NOT NULL)");
+  const columns = sql.exec("PRAGMA table_info(tokens)").toArray() as { name?: string }[];
+  if (!columns.some((column) => column.name === "uses")) {
+    sql.exec("ALTER TABLE tokens ADD COLUMN uses INTEGER NOT NULL DEFAULT 1");
+  }
+}
+
+/** Read-then-write one day's counter. AskCap runs this inside blockConcurrencyWhile. */
+export function claimSql(sql: CapSql, table: CapTable, now: Date, cap: number): ClaimResult {
+  const day = utcDay(now);
   const resetsAt = nextMidnightUtc(now);
-  const used = await counter.get(utcDay(now));
+  const row = sql.exec(`SELECT count AS n FROM ${table} WHERE day = ?`, day).toArray()[0] as { n: number } | undefined;
+  const used = row ? Number(row.n) : 0;
   if (used >= cap) return { ok: false, used, remaining: 0, cap, resetsAt };
   const next = used + 1;
-  await counter.set(utcDay(now), next);
+  sql.exec(
+    `INSERT INTO ${table} (day, count) VALUES (?, ?) ON CONFLICT(day) DO UPDATE SET count = excluded.count`,
+    day,
+    next,
+  );
   return { ok: true, used: next, remaining: cap - next, cap, resetsAt };
 }
 
-/** Promise chain with the same shape as a Durable Object input lock. */
-export function createLock() {
-  let tail: Promise<unknown> = Promise.resolve();
-  return function lock<T>(fn: () => Promise<T> | T): Promise<T> {
-    const run = tail.then(() => fn());
-    tail = run.then(
-      () => undefined,
-      () => undefined,
-    );
-    return run;
-  };
+/** Give back one slot after a failed search. Never drops below zero. */
+export function refundSql(sql: CapSql, table: CapTable, now: Date): void {
+  const day = utcDay(now);
+  const row = sql.exec(`SELECT count AS n FROM ${table} WHERE day = ?`, day).toArray()[0] as { n: number } | undefined;
+  const used = row ? Number(row.n) : 0;
+  if (used <= 0) return;
+  sql.exec(
+    `INSERT INTO ${table} (day, count) VALUES (?, ?) ON CONFLICT(day) DO UPDATE SET count = excluded.count`,
+    day,
+    used - 1,
+  );
+}
+
+/**
+ * Insert a token once, after a fresh siteverify success. The insert is the first
+ * of two uses. A later insert does not move the expiry.
+ */
+export function rememberSql(sql: CapSql, hash: string, now: number): boolean {
+  const cursor = sql.exec(
+    "INSERT INTO tokens (hash, exp, uses) VALUES (?, ?, 1) ON CONFLICT(hash) DO NOTHING",
+    hash,
+    now + TOKEN_TTL_MS,
+  );
+  return cursor.rowsWritten === 1;
+}
+
+/** Spend one saved use. Expired and exhausted rows stay as they are. */
+export function takeSql(sql: CapSql, hash: string, now: number): TokenDecision {
+  const row = sql.exec("SELECT exp, uses FROM tokens WHERE hash = ?", hash).toArray()[0] as
+    | { exp: number; uses: number }
+    | undefined;
+  if (!row) return "absent";
+  const cursor = sql.exec(
+    "UPDATE tokens SET uses = uses + 1 WHERE hash = ? AND uses < ? AND exp > ?",
+    hash,
+    TOKEN_USE_LIMIT,
+    now,
+  );
+  return cursor.rowsWritten === 1 ? "replay" : "spent";
 }

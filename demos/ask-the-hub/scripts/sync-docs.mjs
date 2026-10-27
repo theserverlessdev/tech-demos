@@ -2,12 +2,17 @@
 import { createHash, createHmac } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 export const BUCKET = "tech-demos-hub-docs";
 const REGION = "auto";
 const SERVICE = "s3";
 const DOC_NAMES = ["README.md", "PLAN.md"];
+
+export function repoRoot(metaUrl, override) {
+  if (override) return path.resolve(override);
+  return path.resolve(path.dirname(fileURLToPath(metaUrl)), "../../..");
+}
 
 export function isDocKey(key) {
   return /^[a-z0-9][a-z0-9-]*\/(README|PLAN)\.md$/.test(key);
@@ -224,7 +229,7 @@ async function remoteState(client) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const root = args.root ? path.resolve(args.root) : path.resolve(path.dirname(new URL(import.meta.url).pathname), "../../..");
+  const root = repoRoot(import.meta.url, args.root);
   const demosDir = path.join(root, "demos");
   const local = await collectLocal(demosDir);
   const accountId = process.env.R2_ACCOUNT_ID ?? "";

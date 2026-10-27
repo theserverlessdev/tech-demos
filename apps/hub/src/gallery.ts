@@ -977,7 +977,6 @@ ${cards || empty}
   </footer>
 
   ${ASK_PALETTE_MARKUP}
-  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async></script>
   <script>${GALLERY_UI_SCRIPT}</script>
   <script>${ASK_PALETTE_SCRIPT}</script>
 </body>

@@ -11,13 +11,9 @@
     "run_worker_first": true,
     "html_handling": "none"
   },
-  // Placeholder only. Do not create the instance from this repo.
-  "ai": { "binding": "AI" },
-  "ai_search": [
-    {
-      "binding": "AI_SEARCH",
-      "instance_name": "placeholder-tech-demos-hub-docs"
-    }
+  // Namespace binding only. Do not create the instance from this repo.
+  "ai_search_namespaces": [
+    { "binding": "AI_SEARCH", "namespace": "default", "remote": true }
   ],
   "durable_objects": {
     "bindings": [{ "name": "ASK_CAP", "class_name": "AskCap" }]
@@ -30,7 +26,7 @@
   ],
   "vars": {
     "DEV": "",
-    "AI_SEARCH_INSTANCE": "placeholder-tech-demos-hub-docs",
+    "AI_SEARCH_INSTANCE": "tech-demos-hub-docs",
     "TURNSTILE_SITE_KEY": "0x4AAAAAAFRUoj5qDpf7XyIW"
   },
   "secrets": { "required": ["TURNSTILE_SECRET"] },

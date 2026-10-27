@@ -67,7 +67,6 @@
 
   function applyPiece(acc, piece) {
     if (!piece) return acc;
-    if (piece.indexOf(acc) === 0) return piece;
     return acc + piece;
   }
 
@@ -108,31 +107,36 @@
     return acc;
   }
 
+  var configReady = false;
   function mountTurnstile() {
+    if (!configReady) return false;
     var host = document.getElementById("turnstile");
     var api = window.turnstile;
-    if (!host || !api || typeof api.render !== "function" || host.dataset.ready === "1") return;
+    if (!host || host.dataset.ready === "1") return true;
+    if (!api || typeof api.render !== "function") return false;
     host.dataset.ready = "1";
     widgetId = api.render(host, {
       sitekey: SITE_KEY,
+      action: "ask-the-hub",
       callback: function (value) { token = value; },
       "expired-callback": function () { token = ""; },
       "error-callback": function () { token = ""; },
     });
+    return true;
   }
-
-  var turnstileTimer = setInterval(function () {
-    if (window.turnstile && typeof window.turnstile.render === "function") {
-      mountTurnstile();
-      clearInterval(turnstileTimer);
-    }
-  }, 200);
 
   fetch("/api/config")
     .then(function (res) { return res.ok ? res.json() : null; })
     .then(function (config) {
-      if (config && config.siteKey) SITE_KEY = config.siteKey;
-      mountTurnstile();
+      if (!config || !config.siteKey) return;
+      SITE_KEY = config.siteKey;
+      configReady = true;
+      if (mountTurnstile()) return;
+      var tries = 0;
+      var timer = setInterval(function () {
+        tries += 1;
+        if (mountTurnstile() || tries >= 20) clearInterval(timer);
+      }, 200);
     })
     .catch(function () {});
 
@@ -158,22 +162,43 @@
     token = "";
     if (window.turnstile && widgetId) window.turnstile.reset(widgetId);
 
-    var search = fetch("/api/search", { method: "POST", headers: { "content-type": "application/json" }, body: payload })
-      .then(function (res) { return res.json().then(function (body) { return { res: res, body: body }; }); })
-      .then(function (out) {
-        if (!out.res.ok) throw new Error(out.body && out.body.error ? out.body.error : "Search is unavailable right now.");
-        renderChunks(out.body.chunks || []);
+    var FRIENDLY = "Search is unavailable right now.";
+    function fetchTimed(url, options) {
+      var ctrl = new AbortController();
+      var timer = setTimeout(function () { ctrl.abort(); }, 20000);
+      return fetch(url, Object.assign({}, options, { signal: ctrl.signal })).finally(function () { clearTimeout(timer); });
+    }
+    function messageFrom(body) {
+      if (body && typeof body.error === "string" && body.error) {
+        return body.resetsAt ? body.error + " Reset " + body.resetsAt + "." : body.error;
+      }
+      return FRIENDLY;
+    }
+    function readPayload(res) {
+      return res.text().then(function (text) {
+        var body = null;
+        if (text) {
+          try { body = JSON.parse(text); } catch (e) { body = null; }
+        }
+        return body;
+      });
+    }
+
+    var search = fetchTimed("/api/search", { method: "POST", headers: { "content-type": "application/json" }, body: payload })
+      .then(function (res) {
+        return readPayload(res).then(function (body) {
+          if (!res.ok || !body) throw new Error(messageFrom(body));
+          renderChunks(body.chunks || []);
+        });
       });
 
     var stream = search.then(function () {
-      return fetch("/api/ask", { method: "POST", headers: { "content-type": "application/json" }, body: payload });
+      return fetchTimed("/api/ask", { method: "POST", headers: { "content-type": "application/json" }, body: payload });
     }).then(function (res) {
       var type = res.headers.get("content-type") || "";
       if (!res.ok || type.indexOf("application/json") !== -1) {
-        return res.json().then(function (body) {
-          var message = body && body.error ? body.error : "Search is unavailable right now.";
-          if (body && body.resetsAt) message += " Reset " + body.resetsAt + ".";
-          throw new Error(message);
+        return readPayload(res).then(function (body) {
+          throw new Error(messageFrom(body));
         });
       }
       return readStream(res, function (textSoFar) { answer.textContent = textSoFar; });
@@ -181,7 +206,10 @@
 
     Promise.all([search, stream])
       .then(function () { setStatus("Answered from the indexed notes."); })
-      .catch(function (err) { setStatus(err instanceof Error ? err.message : "Search is unavailable right now."); })
+      .catch(function (err) {
+        if (err && err.name === "AbortError") setStatus(FRIENDLY);
+        else setStatus(err instanceof Error && err.message ? err.message : FRIENDLY);
+      })
       .finally(function () { ask.disabled = false; });
   });
 })();

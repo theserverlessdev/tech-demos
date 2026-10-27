@@ -43,28 +43,31 @@ export function chunksFromSearchPayload(payload: unknown): Chunk[] {
   return [];
 }
 
-type SearchEnv = {
-  AI?: {
-    autorag: (instance: string) => {
-      search: (params: { query: string; max_num_results?: number }) => Promise<unknown>;
-      aiSearch: (params: { query: string; stream: true; max_num_results?: number }) => Promise<Response>;
-    };
-  };
-  AI_SEARCH?: {
-    get: (name: string) => {
-      search: (params: { query: string }) => Promise<unknown>;
-      chatCompletions: (params: {
-        messages: { role: string; content: string }[];
-        stream: true;
-      }) => Promise<Response | ReadableStream>;
-    };
-  };
+type SearchInstance = {
+  search: (params: { query: string }) => Promise<unknown>;
+  chatCompletions: (params: {
+    messages: { role: string; content: string }[];
+    stream: true;
+  }) => Promise<Response | ReadableStream>;
+};
+
+export type SearchEnv = {
+  AI_SEARCH?: { get: (name: string) => SearchInstance };
   AI_SEARCH_INSTANCE?: string;
 };
 
 export function instanceName(env: SearchEnv): string {
   const name = env.AI_SEARCH_INSTANCE?.trim();
   return name || DEFAULT_INSTANCE;
+}
+
+export function searchConfigured(env: SearchEnv): boolean {
+  return typeof env.AI_SEARCH?.get === "function";
+}
+
+function asResponse(stream: Response | ReadableStream): Response {
+  if (stream instanceof Response) return stream;
+  return new Response(stream, { headers: { "content-type": "text/event-stream; charset=utf-8" } });
 }
 
 export function createSearch(env: SearchEnv): {
@@ -74,29 +77,17 @@ export function createSearch(env: SearchEnv): {
   const name = instanceName(env);
   return {
     async search(query) {
-      if (env.AI?.autorag) {
-        const payload = await env.AI.autorag(name).search({ query, max_num_results: 6 });
-        return chunksFromSearchPayload(payload);
-      }
-      if (env.AI_SEARCH?.get) {
-        const payload = await env.AI_SEARCH.get(name).search({ query });
-        return chunksFromSearchPayload(payload);
-      }
-      throw new Error("search_unconfigured");
+      if (!env.AI_SEARCH?.get) throw new Error("search_unconfigured");
+      const payload = await env.AI_SEARCH.get(name).search({ query });
+      return chunksFromSearchPayload(payload);
     },
     async aiSearch(query) {
-      if (env.AI?.autorag) {
-        return env.AI.autorag(name).aiSearch({ query, stream: true, max_num_results: 6 });
-      }
-      if (env.AI_SEARCH?.get) {
-        const stream = await env.AI_SEARCH.get(name).chatCompletions({
-          stream: true,
-          messages: [{ role: "user", content: query }],
-        });
-        if (stream instanceof Response) return stream;
-        return new Response(stream, { headers: { "content-type": "text/event-stream; charset=utf-8" } });
-      }
-      throw new Error("search_unconfigured");
+      if (!env.AI_SEARCH?.get) throw new Error("search_unconfigured");
+      const stream = await env.AI_SEARCH.get(name).chatCompletions({
+        stream: true,
+        messages: [{ role: "user", content: query }],
+      });
+      return asResponse(stream);
     },
   };
 }
