@@ -1,0 +1,46 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tech-demos-ask-the-hub",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none"
+  },
+  // Placeholder only. Do not create the instance from this repo.
+  "ai": { "binding": "AI" },
+  "ai_search": [
+    {
+      "binding": "AI_SEARCH",
+      "instance_name": "placeholder-tech-demos-hub-docs"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "ASK_CAP", "class_name": "AskCap" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["AskCap"] }],
+  // 7613 is r2-drive DAV_DRIVE. 7614 and 7615 are unused in this repo.
+  "ratelimits": [
+    { "name": "ASK_LIMIT", "namespace_id": "7614", "simple": { "limit": 8, "period": 60 } },
+    { "name": "SEARCH_LIMIT", "namespace_id": "7615", "simple": { "limit": 20, "period": 60 } }
+  ],
+  "vars": {
+    "DEV": "",
+    "AI_SEARCH_INSTANCE": "placeholder-tech-demos-hub-docs",
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFRUoj5qDpf7XyIW"
+  },
+  "secrets": { "required": ["TURNSTILE_SECRET"] },
+  "routes": [
+    { "pattern": "tech-demos.theserverless.dev/demos/ask-the-hub*", "zone_name": "theserverless.dev" },
+    { "pattern": "ask-the-hub.tech-demos.theserverless.dev/*", "zone_name": "theserverless.dev" }
+  ],
+  "observability": {
+    "enabled": true,
+    "logs": { "enabled": true, "head_sampling_rate": 1 },
+    "traces": { "enabled": true, "head_sampling_rate": 1 }
+  }
+}

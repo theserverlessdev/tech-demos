@@ -18,6 +18,15 @@ test("loader demos get the Dynamic Worker badge", () => {
   expect(html).toContain("reuses it while it stays warm");
 });
 
+test("the hub search button and palette stay in the page", () => {
+  expect(html).toContain('id="ask-open"');
+  expect(html).toContain('id="ask-bubble"');
+  expect(html).toContain('id="ask-dialog"');
+  expect(html).toContain("event.metaKey || event.ctrlKey");
+  expect(html).toContain("https://ask-the-hub.tech-demos.theserverless.dev");
+  expect(html).toContain('"/api/health"');
+});
+
 test("gallery scripts include menu dismiss on Escape and outside tap", () => {
   expect(GALLERY_UI_SCRIPT).toContain('event.key === "Escape"');
   expect(GALLERY_UI_SCRIPT).toContain("pointerdown");

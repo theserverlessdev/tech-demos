@@ -1,0 +1,18 @@
+{
+  "name": "@tech-demos/ask-the-hub",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --var DEV:1 --var TURNSTILE_SITE_KEY:1x00000000000000000000AA",
+    "test": "bun test",
+    "check:layout": "bun run scripts/check-layout.ts",
+    "sync": "node scripts/sync-docs.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250906.0",
+    "playwright": "1.63.0",
+    "typescript": "^5.9.2",
+    "wrangler": "^4.40.0"
+  }
+}
