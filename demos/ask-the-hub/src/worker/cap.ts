@@ -88,6 +88,7 @@ export function rememberSql(sql: CapSql, hash: string, now: number): boolean {
     hash,
     now + TOKEN_TTL_MS,
   );
+  sql.exec("DELETE FROM tokens WHERE exp <= ?", now);
   return cursor.rowsWritten === 1;
 }
 
