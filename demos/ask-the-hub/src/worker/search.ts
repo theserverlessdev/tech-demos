@@ -44,7 +44,10 @@ export function chunksFromSearchPayload(payload: unknown): Chunk[] {
 }
 
 type SearchInstance = {
-  search: (params: { query: string }) => Promise<unknown>;
+  search: (params: {
+    query: string;
+    ai_search_options?: { retrieval?: { max_num_results?: number } };
+  }) => Promise<unknown>;
   chatCompletions: (params: {
     messages: { role: string; content: string }[];
     stream: true;
@@ -78,7 +81,10 @@ export function createSearch(env: SearchEnv): {
   return {
     async search(query) {
       if (!env.AI_SEARCH?.get) throw new Error("search_unconfigured");
-      const payload = await env.AI_SEARCH.get(name).search({ query });
+      const payload = await env.AI_SEARCH.get(name).search({
+        query,
+        ai_search_options: { retrieval: { max_num_results: 6 } },
+      });
       return chunksFromSearchPayload(payload);
     },
     async aiSearch(query) {

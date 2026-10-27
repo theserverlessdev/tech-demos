@@ -25,7 +25,7 @@ bun install
 bun run --filter @tech-demos/ask-the-hub dev
 ```
 
-`DEV=1` on that command accepts Cloudflare's dummy Turnstile token on localhost. Production leaves `DEV` empty, so dummy and localhost tokens are rejected. Set `TURNSTILE_SECRET` to the shared widget secret before a real deploy. This repo does not create the bucket, the AI Search instance, or the rate-limit namespaces.
+`DEV=1` on that command accepts Cloudflare's dummy Turnstile token on localhost, and that same dummy token can be reused for later questions. Production leaves `DEV` empty, so dummy and localhost tokens are rejected, and a solved token stays limited to one search and the following ask. Set `TURNSTILE_SECRET` to the shared widget secret before a real deploy. This repo does not create the bucket, the AI Search instance, or the rate-limit namespaces.
 
 Sync the notes when you are ready to index them:
 
@@ -33,9 +33,10 @@ Sync the notes when you are ready to index them:
 R2_ACCOUNT_ID=... R2_ACCESS_KEY_ID=... R2_SECRET_ACCESS_KEY=... node demos/ask-the-hub/scripts/sync-docs.mjs --dry-run
 R2_ACCOUNT_ID=... R2_ACCESS_KEY_ID=... R2_SECRET_ACCESS_KEY=... node demos/ask-the-hub/scripts/sync-docs.mjs
 R2_ACCOUNT_ID=... R2_ACCESS_KEY_ID=... R2_SECRET_ACCESS_KEY=... node demos/ask-the-hub/scripts/sync-docs.mjs --prune
+R2_ACCOUNT_ID=... R2_ACCESS_KEY_ID=... R2_SECRET_ACCESS_KEY=... node demos/ask-the-hub/scripts/sync-docs.mjs --prune --dry-run
 ```
 
-Keys are `<slug>/README.md` and `<slug>/PLAN.md`. Unchanged files are skipped. Removed demos are deleted only with `--prune`.
+Keys are `<slug>/README.md` and `<slug>/PLAN.md`. Unchanged files are skipped. Removed demos are deleted only with `--prune`. `--prune --dry-run` lists those deletions and does not delete them.
 
 The Worker calls `env.AI_SEARCH.get(env.AI_SEARCH_INSTANCE)` on the namespace binding. `AI_SEARCH_INSTANCE` is `tech-demos-hub-docs`. This repo does not create that instance.
 

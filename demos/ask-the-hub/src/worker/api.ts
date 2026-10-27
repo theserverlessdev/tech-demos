@@ -1,6 +1,6 @@
 import { capMessage, searchCapMessage, type ClaimResult, type TokenDecision } from "./cap";
 import { createSearch, searchConfigured, type Chunk } from "./search";
-import { devEnabled, tokenHash, verifyTurnstile, type VerifyResult } from "./turnstile";
+import { DUMMY_TOKEN, devEnabled, tokenHash, verifyTurnstile, type VerifyResult } from "./turnstile";
 import { parseQuestion, readToken } from "./validate";
 import type { Env } from "./env";
 
@@ -107,7 +107,10 @@ function concatBytes(parts: Uint8Array[]): Uint8Array {
 }
 
 async function admit(token: string, request: Request, deps: Deps): Promise<VerifyResult> {
-  if (!token.trim()) return "missing";
+  const trimmed = token.trim();
+  if (!trimmed) return "missing";
+  // The dummy token is the same string on every local check. Do not spend it.
+  if (deps.dev && trimmed === DUMMY_TOKEN) return deps.verify(token, clientIp(request));
   const hash = await tokenHash(token);
   const cached = await deps.takeToken(hash);
   if (cached === "replay") return "ok";
@@ -215,7 +218,7 @@ export function depsFromEnv(env: Env): Deps {
   const search = createSearch(env);
   return {
     dev,
-    siteKey: env.TURNSTILE_SITE_KEY?.trim() || "0x4AAAAAAFRUoj5qDpf7XyIW",
+    siteKey: env.TURNSTILE_SITE_KEY?.trim() ?? "",
     searchReady: searchConfigured(env),
     async limit(name, key) {
       const binding = name === "ASK_LIMIT" ? env.ASK_LIMIT : env.SEARCH_LIMIT;

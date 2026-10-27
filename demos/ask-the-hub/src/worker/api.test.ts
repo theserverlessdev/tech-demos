@@ -214,13 +214,15 @@ test("missing, bad, and localhost tokens are rejected in production", async () =
   }
 });
 
-test("DEV=1 accepts the dummy token", async () => {
+test("DEV=1 accepts the dummy token and lets it be reused", async () => {
   const bag = deps({
     dev: true,
     verify: (token, ip) => verifyTurnstile({ secret: "1x0000000000000000000000000000000AA", token, ip, dev: true }),
   });
-  const res = await handleApi(post("/api/search", { question: QUESTION, turnstileToken: DUMMY_TOKEN }), bag, "/api/search");
-  expect(res?.status).toBe(200);
+  const body = { question: QUESTION, turnstileToken: DUMMY_TOKEN };
+  expect((await handleApi(post("/api/search", body), bag, "/api/search"))?.status).toBe(200);
+  expect((await handleApi(post("/api/ask", body), bag, "/api/ask"))?.status).toBe(200);
+  expect((await handleApi(post("/api/search", body), bag, "/api/search"))?.status).toBe(200);
 });
 
 test("a solved token can be used twice and the third replay is rejected", async () => {

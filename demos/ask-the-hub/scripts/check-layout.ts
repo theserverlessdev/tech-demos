@@ -90,7 +90,10 @@ async function start(): Promise<{ origin: string; close: () => Promise<void> }> 
   const port = await listen(server);
   return {
     origin: `http://127.0.0.1:${port}`,
-    close: () => new Promise((resolve) => server.close(() => resolve())),
+    close: () => {
+      server.closeAllConnections();
+      return new Promise<void>((resolve) => server.close(() => resolve()));
+    },
   };
 }
 
@@ -124,6 +127,7 @@ async function stubTurnstile(page: Page) {
   });
 }
 
+let failed = false;
 const server = await start();
 await import("node:fs/promises").then((fs) => fs.mkdir(shots, { recursive: true }));
 const browser = await chromium.launch({ headless: true });
@@ -179,8 +183,12 @@ try {
   await assertFits(page, "hub desktop");
   await page.screenshot({ path: path.join(shots, "hub-desktop.png") });
   console.log("layout checks passed");
+} catch (err) {
+  console.error(err instanceof Error ? err.stack ?? err.message : err);
+  failed = true;
 } finally {
   await context.close();
   await browser.close();
   await server.close();
 }
+process.exit(failed ? 1 : 0);
