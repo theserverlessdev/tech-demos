@@ -1,7 +1,8 @@
 import { capMessage, type ClaimResult } from "../shared/cap";
 import { duckdbSnippet, signConnection, signJwt, verifyConnection, verifyJwt } from "../shared/jwt";
 import { decide, isCatalog, isRole, type Explain, type Role } from "../shared/policy";
-import { bucketName, dataPath, type CatalogId } from "../shared/rows";
+import type { CatalogId } from "../shared/rows";
+import type { MapPayload } from "./map";
 import type { QueryResult } from "../shared/sql";
 import { clientIp, rateLimitKey } from "./limits";
 import {
@@ -21,18 +22,7 @@ const MAX_QUACK_BYTES = 1_000_000;
 const MAX_JSON_BYTES = 8_000;
 const MAX_SQL = 2000;
 
-export type MapCatalog = {
-  id: CatalogId;
-  durableObjectId: string;
-  dataPath: string;
-  rows: number;
-  parquet: boolean;
-};
-
-export type MapPayload = {
-  registryId: string;
-  catalogs: MapCatalog[];
-};
+export type { MapPayload };
 
 export type Deps = {
   dev: boolean;
@@ -96,11 +86,44 @@ function capExplain(role: Role, catalog: CatalogId, claim: ClaimResult): Explain
   };
 }
 
+export async function readCappedBytes(request: Request, max: number): Promise<Uint8Array | Response> {
+  const declared = request.headers.get("content-length");
+  if (declared !== null && declared !== "") {
+    const n = Number(declared);
+    if (!Number.isFinite(n) || n < 0 || n > max) return json({ error: "The request is too large.", code: "too_large" }, 413);
+  }
+  if (!request.body) return new Uint8Array();
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      size += value.byteLength;
+      if (size > max) {
+        await reader.cancel().catch(() => undefined);
+        return json({ error: "The request is too large.", code: "too_large" }, 413);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const out = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
+}
+
 async function readJson(request: Request): Promise<unknown | Response> {
-  const length = Number(request.headers.get("content-length") ?? "0");
-  if (length > MAX_JSON_BYTES) return json({ error: "The request is too large.", code: "too_large" }, 413);
-  const text = await request.text();
-  if (text.length > MAX_JSON_BYTES) return json({ error: "The request is too large.", code: "too_large" }, 413);
+  const bytes = await readCappedBytes(request, MAX_JSON_BYTES);
+  if (bytes instanceof Response) return bytes;
+  const text = new TextDecoder().decode(bytes);
   try {
     return JSON.parse(text) as unknown;
   } catch {
@@ -142,6 +165,7 @@ export async function handleRequest(request: Request, deps: Deps, path: string):
     const turnstile = typeof record.turnstile === "string" ? record.turnstile : "";
     if (!isRole(role) || !isCatalog(catalog)) return json({ error: "Pick a role and a catalog.", code: "bad_role" }, 400);
     const verdict = await deps.verify(turnstile, clientIp(request));
+    if (verdict === "unconfigured") return json({ error: "This demo is not configured.", code: "unconfigured" }, 503);
     if (verdict !== "ok") return json({ error: "The check failed. Try again.", code: "turnstile" }, 401);
     const known = await deps.resolveCatalog(catalog);
     if (!known) return json({ error: "Unknown catalog.", code: "unknown_catalog" }, 404);
@@ -167,10 +191,8 @@ export async function handleRequest(request: Request, deps: Deps, path: string):
 async function handleQuack(request: Request, deps: Deps): Promise<Response> {
   const missing = configured(deps);
   if (missing) return missing;
-  const blocked = await limited(request, deps, "QUERY_LIMIT");
-  if (blocked) return blocked;
-  const buffer = new Uint8Array(await request.arrayBuffer());
-  if (buffer.byteLength > MAX_QUACK_BYTES) return json({ error: "The request is too large.", code: "too_large" }, 413);
+  const buffer = await readCappedBytes(request, MAX_QUACK_BYTES);
+  if (buffer instanceof Response) return buffer;
   let message: QuackMessage;
   try {
     message = decodeQuack(buffer);
@@ -248,6 +270,9 @@ async function handleQuack(request: Request, deps: Deps): Promise<Response> {
     };
     return quackResponse(errorResponse(message, explain.reasons[0] ?? "Denied."), explain);
   }
+
+  const blocked = await limited(request, deps, "QUERY_LIMIT");
+  if (blocked) return blocked;
 
   const sql = message.sql ?? "";
   if (sql.length > MAX_SQL) {

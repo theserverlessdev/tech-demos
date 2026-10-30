@@ -12,7 +12,7 @@ A lakehouse catalog can sit on Workers Paid: Quack on `POST /quack`, one Durable
 
 - Run the analyst sample and read every column, including the restricted rows.
 - Run the viewer sample and see `customer` come back as null, with the restricted region removed.
-- Run the guest sample and see the statement denied before it runs.
+- Run the guest sample and see the statement denied before it runs. A guest query that only names public columns still drops `restricted` rows, and a filter on `customer` or `revenue` is denied.
 - Read the side panel: registry id, each catalog’s Durable Object id, and the `r2://` data path.
 - Copy the DuckDB CLI snippet. The token is read-only and expires in ten minutes.
 
@@ -35,12 +35,13 @@ bun run --filter @tech-demos/lake-catalog dev
 - `QUACK_JWT_SECRET` — HS256 key for demo tokens
 - `CONNECTION_SIGNING_SECRET` — HMAC key for Quack connection ids
 
-Create the R2 bucket `tech-demos-lake-catalog` and bind it as `LAKE` before deploy. The name in `wrangler.jsonc` is a placeholder. The nightly cron `0 0 * * *` rewrites each catalog’s Parquet object and reseeds its table.
+Create the R2 bucket `tech-demos-lake-catalog` and bind it as `LAKE` before deploy. The name in `wrangler.jsonc` is a placeholder. The nightly cron `0 0 * * *` is the only path that writes Parquet. A request reads R2 only when the SQLite table is empty or its UTC day marker is stale. The catalog map is built from the sample ids and counts, so opening the page does not wake a Durable Object.
 
 ## Limits
 
 - One `SELECT` from `orders` or `regions`. No comments, no second statement, no writes.
-- `QUERY_LIMIT` namespace `7621`: 12 queries per minute per IP.
+- `QUERY_LIMIT` namespace `7621`: 12 statements per minute per IP. Connection, fetch, and heartbeat frames are not counted.
+- Turnstile siteverify must name `lake-catalog.tech-demos.theserverless.dev` or `tech-demos.theserverless.dev` and the action `lake-catalog`. A missing `TURNSTILE_SECRET` returns 503.
 - `TOKEN_LIMIT` namespace `7622`: 8 token mints per minute per IP.
 - `READ_LIMIT` namespace `7623`: 60 map reads per minute per IP.
 - `CatalogRegistry`: 400 queries per UTC day for the whole demo. Over the cap the Quack error says it resets at midnight UTC.

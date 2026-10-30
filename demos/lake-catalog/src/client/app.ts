@@ -222,6 +222,7 @@ function mountTurnstile() {
   host.dataset.ready = "1";
   widgetId = api.render(host, {
     sitekey: siteKey,
+    action: "lake-catalog",
     callback: (token: string) => {
       turnstileToken = token;
       setStatus("Check passed. Pick a role and run a query.");
@@ -268,6 +269,12 @@ form?.addEventListener("submit", (event) => {
   void runQuery();
 });
 
+function resetTurnstile() {
+  turnstileToken = "";
+  const api = (window as unknown as { turnstile?: { reset?: (id: string) => void } }).turnstile;
+  if (widgetId && api?.reset) api.reset(widgetId);
+}
+
 async function runQuery() {
   if (!sqlBox || !run) return;
   const statement = sqlBox.value.trim();
@@ -279,6 +286,8 @@ async function runQuery() {
     setStatus("Finish the check above the button first.");
     return;
   }
+  const token = turnstileToken;
+  turnstileToken = "";
   run.disabled = true;
   setStatus("Minting a ten-minute token…");
   renderExplain(null, "Waiting for the catalog.");
@@ -286,35 +295,46 @@ async function runQuery() {
     const minted = await fetch("/api/token", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ role, turnstile: turnstileToken, catalog: "orders" }),
+      body: JSON.stringify({ role, turnstile: token, catalog: "orders" }),
     });
     const mintedBody = (await minted.json()) as { token?: string; snippet?: string; error?: string };
     if (!minted.ok || !mintedBody.token) {
-      setStatus(mintedBody.error || "The token was not issued.");
+      const message = mintedBody.error || "The token was not issued.";
+      renderExplain(null, message);
+      setStatus(message);
       return;
     }
     showSnippet(mintedBody.snippet || "");
     setStatus("Running the statement over Quack…");
     const captured: { explain: Explain | null; httpError: string } = { explain: null, httpError: "" };
-    const client = await QuackClient.connect(location.origin, {
-      authToken: mintedBody.token,
-      heartbeat: false,
-      clientPlatform: "lake-catalog-browser",
-      // Workers and browsers reject an unbound fetch. The SDK calls this later.
-      fetch: async (input, init) => {
-        const response = await fetch(input, init);
-        const header = response.headers.get("x-lake-explain");
-        if (header) {
-          try {
-            captured.explain = JSON.parse(header) as Explain;
-          } catch {
-            captured.explain = null;
+    let client: Awaited<ReturnType<typeof QuackClient.connect>> | null = null;
+    try {
+      client = await QuackClient.connect(location.origin, {
+        authToken: mintedBody.token,
+        heartbeat: false,
+        clientPlatform: "lake-catalog-browser",
+        // Workers and browsers reject an unbound fetch. The SDK calls this later.
+        fetch: async (input, init) => {
+          const response = await fetch(input, init);
+          const header = response.headers.get("x-lake-explain");
+          if (header) {
+            try {
+              captured.explain = JSON.parse(header) as Explain;
+            } catch {
+              captured.explain = null;
+            }
           }
-        }
-        if (!response.ok) captured.httpError = await response.clone().text();
-        return response;
-      },
-    });
+          if (!response.ok) captured.httpError = await response.clone().text();
+          return response;
+        },
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "The catalog connection failed.";
+      renderRows([], []);
+      renderExplain(null, message);
+      setStatus(message);
+      return;
+    }
     try {
       const result = await client.query(statement);
       const records = result.rows();
@@ -330,10 +350,8 @@ async function runQuery() {
     } finally {
       await client.disconnect().catch(() => undefined);
     }
-    const api = (window as unknown as { turnstile?: { reset?: (id: string) => void } }).turnstile;
-    if (widgetId && api?.reset) api.reset(widgetId);
-    turnstileToken = "";
   } finally {
+    resetTurnstile();
     run.disabled = false;
   }
 }

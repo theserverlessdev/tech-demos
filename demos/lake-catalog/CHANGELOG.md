@@ -32,4 +32,6 @@ This demo is based on [tobilg/quacklake](https://github.com/tobilg/quacklake) (M
 
 ## 2026-10-30
 
-First demo. Analyst sees the full `orders` table. Viewer gets a masked `customer` column and no `restricted` rows. Guest is denied when the statement names `customer` or `revenue`.
+First demo. Analyst sees the full `orders` table. Viewer gets a masked `customer` column and no `restricted` rows. Guest is denied when the statement names `customer` or `revenue`, and a public-column guest query uses the same row rule as viewer.
+
+Requests do not write R2. The cron publishes Parquet. SQLite is seeded only when the table is empty or the UTC day marker is stale. `/status` is a count. The page map does not wake the catalog objects. A filter on a column the role cannot read is denied.

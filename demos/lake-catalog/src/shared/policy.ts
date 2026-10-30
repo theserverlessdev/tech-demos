@@ -79,7 +79,13 @@ function splitTop(input: string, separator: string): string[] | null {
   return parts;
 }
 
-function parseSelect(sql: string, table: string, known: Set<string>): Parsed | { error: string } {
+function readableNames(role: Role, catalog: CatalogId, known: Set<string>): Set<string> {
+  if (catalog !== "orders" || role === "analyst") return known;
+  const hidden = role === "guest" ? SENSITIVE : new Set(["customer"]);
+  return new Set([...known].filter((name) => !hidden.has(name)));
+}
+
+function parseSelect(sql: string, table: string, known: Set<string>, readable: Set<string>): Parsed | { error: string } {
   const compact = sql.replace(/\s+/g, " ").trim();
   const fromParts = splitTop(compact, " from ");
   if (!fromParts || fromParts.length !== 2) return { error: `Use SELECT columns FROM ${table}.` };
@@ -124,13 +130,13 @@ function parseSelect(sql: string, table: string, known: Set<string>): Parsed | {
     columns.push(name);
   }
   if (where) {
-    const check = checkWhere(where, known);
+    const check = checkWhere(where, known, readable);
     if (check) return { error: check };
   }
   return { columns, where, limit };
 }
 
-function checkWhere(where: string, known: Set<string>): string | null {
+function checkWhere(where: string, known: Set<string>, readable: Set<string>): string | null {
   const terms = splitTop(where, " and ");
   if (!terms || terms.length === 0) return "WHERE needs a comparison.";
   for (const term of terms) {
@@ -138,6 +144,7 @@ function checkWhere(where: string, known: Set<string>): string | null {
     if (!match) return "Filters must compare a column to a number or a quoted string, joined with AND.";
     const column = (match[1] ?? "").toLowerCase();
     if (!known.has(column)) return `Unknown column ${match[1]}.`;
+    if (!readable.has(column)) return `This role cannot filter on ${column}.`;
   }
   return null;
 }
@@ -171,7 +178,7 @@ export function decide(role: Role, rawSql: string, catalog: CatalogId): Explain 
 
   const knownColumns = columnsFor(catalog);
   const known = new Set(knownColumns.map((column) => column.name));
-  const parsed = parseSelect(sql, catalog, known);
+  const parsed = parseSelect(sql, catalog, known, readableNames(role, catalog, known));
   if ("error" in parsed) return deny(role, catalog, [parsed.error]);
 
   const star = parsed.columns.length === 1 && parsed.columns[0] === "*";
@@ -192,13 +199,17 @@ export function decide(role: Role, rawSql: string, catalog: CatalogId): Explain 
     }
   }
 
-  if (catalog === "orders" && role === "viewer") {
-    if (narrowed.includes("customer")) {
+  if (catalog === "orders" && (role === "viewer" || role === "guest")) {
+    if (role === "viewer" && narrowed.includes("customer")) {
       masked.add("customer");
       reasons.push("Viewer cannot see the customer column. It is returned as NULL.");
     }
     extraWhere = "region <> 'restricted'";
-    reasons.push("Viewer cannot see rows where region is restricted.");
+    reasons.push(
+      role === "viewer"
+        ? "Viewer cannot see rows where region is restricted."
+        : "Guest cannot see rows where region is restricted.",
+    );
   }
 
   const columns: Column[] = narrowed.map((name) => {

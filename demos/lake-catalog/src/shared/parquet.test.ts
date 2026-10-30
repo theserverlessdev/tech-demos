@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { ORDER_ROWS } from "./rows";
 import { readParquet, writeParquet } from "./parquet";
-import { syncCatalog } from "./sync";
+import { publishCatalog, seedIfNeeded } from "./sync";
 import { durableSql } from "../../test/sql";
 import { Database } from "bun:sqlite";
 
@@ -15,8 +15,9 @@ test("parquet round-trips the sample orders", async () => {
   expect(Number(rows[0]?.units)).toBe(12);
 });
 
-test("sync writes the object when the bucket is empty and reads it back", async () => {
+test("a request seeds from embedded rows and only the cron writes Parquet", async () => {
   const objects = new Map<string, Uint8Array>();
+  const puts: string[] = [];
   const lake = {
     async get(key: string) {
       const hit = objects.get(key);
@@ -25,19 +26,21 @@ test("sync writes the object when the bucket is empty and reads it back", async 
       return { arrayBuffer: async () => copy.buffer.slice(copy.byteOffset, copy.byteOffset + copy.byteLength) };
     },
     async put(key: string, value: Uint8Array) {
+      puts.push(key);
       objects.set(key, value);
     },
   };
   const sql = durableSql(new Database(":memory:"));
-  const first = await syncCatalog(sql, lake, "orders", false);
-  expect(first.parquet).toBe(true);
-  expect(first.rows).toBe(ORDER_ROWS.length);
-  expect(objects.size).toBe(1);
-  const stored = [...objects.values()][0];
-  expect(stored).toBeDefined();
-  objects.set([...objects.keys()][0] ?? "", stored as Uint8Array);
-  const second = await syncCatalog(sql, lake, "orders", false);
-  expect(second.source).toBe("r2");
-  const count = sql.exec("SELECT COUNT(*) AS n FROM orders").toArray()[0] as { n: number };
-  expect(Number(count.n)).toBe(ORDER_ROWS.length);
+  const seeded = await seedIfNeeded(sql, lake, "orders", "2026-10-30");
+  expect(seeded.source).toBe("embedded");
+  expect(puts).toEqual([]);
+  const again = await seedIfNeeded(sql, lake, "orders", "2026-10-30");
+  expect(again.rows).toBe(ORDER_ROWS.length);
+  expect(puts).toEqual([]);
+  const published = await publishCatalog(sql, lake, "orders", "2026-10-30");
+  expect(published.parquet).toBe(true);
+  expect(puts).toEqual(["catalogs/orders/orders.parquet"]);
+  const fromLake = await seedIfNeeded(sql, lake, "orders", "2026-10-31");
+  expect(fromLake.source).toBe("r2");
+  expect(puts).toEqual(["catalogs/orders/orders.parquet"]);
 });

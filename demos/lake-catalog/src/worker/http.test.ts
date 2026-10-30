@@ -9,7 +9,7 @@ import { runExplained, seedEmbedded, type SqlExec } from "../shared/sql";
 import { durableSql } from "../../test/sql";
 import { DUMMY_TOKEN, verifyTurnstile } from "./turnstile";
 import { rateLimitKey } from "./limits";
-import { handleRequest, type Deps } from "./http";
+import { handleRequest, readCappedBytes, type Deps } from "./http";
 
 function memory(): { deps: Deps; sql: SqlExec; clock: { now: number } } {
   const db = new Database(":memory:");
@@ -190,6 +190,16 @@ test("production rejects the dummy token and a missing secret", async () => {
     "/api/token",
   );
   expect(rejected?.status).toBe(401);
+  deps.verify = async () => "unconfigured";
+  const unconfigured = await handleRequest(
+    new Request(`${origin}/api/token`, {
+      method: "POST",
+      body: JSON.stringify({ role: "analyst", turnstile: "solved" }),
+    }),
+    deps,
+    "/api/token",
+  );
+  expect(unconfigured?.status).toBe(503);
 });
 
 test("the daily cap stops the next query", async () => {
@@ -219,6 +229,51 @@ test("the daily cap stops the next query", async () => {
   await expect(client.query("SELECT region FROM orders")).rejects.toThrow(/400 queries today/);
   await client.disconnect().catch(() => undefined);
   expect(explain?.reasons?.[0]).toContain("midnight UTC");
+});
+
+test("the query limit counts one statement, not each Quack frame", async () => {
+  const { deps } = memory();
+  const seen: string[] = [];
+  deps.limit = async (name) => {
+    seen.push(name);
+    return true;
+  };
+  const origin = "http://127.0.0.1";
+  const minted = await handleRequest(
+    new Request(`${origin}/api/token`, {
+      method: "POST",
+      body: JSON.stringify({ role: "analyst", turnstile: DUMMY_TOKEN }),
+    }),
+    deps,
+    "/api/token",
+  );
+  const body = (await minted?.json()) as { token: string };
+  const client = await QuackClient.connect(origin, { authToken: body.token, heartbeat: false, fetch: quackFetch(deps) });
+  await client.query("SELECT region FROM orders");
+  await client.disconnect();
+  expect(seen.filter((name) => name === "QUERY_LIMIT")).toEqual(["QUERY_LIMIT"]);
+  expect(seen.filter((name) => name === "TOKEN_LIMIT")).toEqual(["TOKEN_LIMIT"]);
+});
+
+test("an oversized body is rejected from the declared length and from the stream", async () => {
+  const declared = new Request("http://127.0.0.1/api/token", {
+    method: "POST",
+    headers: { "content-length": "9000" },
+    body: "{}",
+  });
+  const early = await readCappedBytes(declared, 8_000);
+  expect(early).toBeInstanceOf(Response);
+  expect((early as Response).status).toBe(413);
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode("x".repeat(8_001)));
+      controller.close();
+    },
+  });
+  const chunked = new Request("http://127.0.0.1/api/token", { method: "POST", body: stream });
+  const { deps } = memory();
+  const blocked = await handleRequest(chunked, deps, "/api/token");
+  expect(blocked?.status).toBe(413);
 });
 
 test("ipv6 rate limit keys share a /64", () => {

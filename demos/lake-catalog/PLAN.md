@@ -36,7 +36,7 @@ flowchart LR
 
 1. Policy function: one SELECT, read-only, role decides allow, deny, or rewrite, with reasons and the SQL to run.
 2. Quack codec on `POST /quack` using `@quack-protocol/sdk`, JWT in the connection auth string, explain on `x-lake-explain`.
-3. `CatalogRegistry` charges a UTC-day cap and names each catalog. `QuackCatalog` stores the table in SQLite and refreshes it from Parquet in R2.
+3. `CatalogRegistry` charges a UTC-day cap and names each catalog. `QuackCatalog` stores the table in SQLite. The midnight cron writes Parquet. Requests only read R2, and only when the table is empty or the day marker is stale.
 4. Page: role, sample SQL, Turnstile, result, explain, Durable Object map, CLI snippet.
 5. Nightly cron reseeds both catalogs. Tests cover policy, JWT, the Quack round trip, the cap, Turnstile, and layout at 390px.
 

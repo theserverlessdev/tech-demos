@@ -1,5 +1,6 @@
 import { DEV_CONNECTION_SECRET, DEV_JWT_SECRET } from "../shared/jwt";
-import { bucketName, CATALOGS, dataPath, type CatalogId } from "../shared/rows";
+import { bucketName, CATALOGS, type CatalogId } from "../shared/rows";
+import { catalogMap } from "./map";
 import type { ClaimResult } from "../shared/cap";
 import type { QueryResult } from "../shared/sql";
 import { CatalogRegistry } from "./registry";
@@ -73,19 +74,11 @@ export function depsFromEnv(env: Env): Deps {
       return (await response.json()) as QueryResult;
     },
     async status(): Promise<MapPayload> {
-      const catalogs = [];
-      for (const id of CATALOGS) {
-        const response = await stub(id).fetch(`https://catalog/status?catalog=${id}`);
-        const body = (await response.json()) as { rows?: number; parquet?: boolean };
-        catalogs.push({
-          id,
-          durableObjectId: env.CATALOGS.idFromName(id).toString(),
-          dataPath: dataPath(bucket, id),
-          rows: Number(body.rows ?? 0),
-          parquet: Boolean(body.parquet),
-        });
-      }
-      return { registryId: registryId.toString(), catalogs };
+      return catalogMap({
+        registryId: registryId.toString(),
+        bucket,
+        objectId: (id) => env.CATALOGS.idFromName(id).toString(),
+      });
     },
     async reset() {
       for (const id of CATALOGS) {

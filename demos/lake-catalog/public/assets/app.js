@@ -6402,6 +6402,7 @@ function mountTurnstile() {
   host.dataset.ready = "1";
   widgetId = api.render(host, {
     sitekey: siteKey,
+    action: "lake-catalog",
     callback: (token) => {
       turnstileToken = token;
       setStatus("Check passed. Pick a role and run a query.");
@@ -6444,6 +6445,12 @@ form?.addEventListener("submit", (event) => {
   event.preventDefault();
   runQuery();
 });
+function resetTurnstile() {
+  turnstileToken = "";
+  const api = window.turnstile;
+  if (widgetId && api?.reset)
+    api.reset(widgetId);
+}
 async function runQuery() {
   if (!sqlBox || !run)
     return;
@@ -6456,6 +6463,8 @@ async function runQuery() {
     setStatus("Finish the check above the button first.");
     return;
   }
+  const token = turnstileToken;
+  turnstileToken = "";
   run.disabled = true;
   setStatus("Minting a ten-minute token…");
   renderExplain(null, "Waiting for the catalog.");
@@ -6463,35 +6472,46 @@ async function runQuery() {
     const minted = await fetch("/api/token", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ role, turnstile: turnstileToken, catalog: "orders" })
+      body: JSON.stringify({ role, turnstile: token, catalog: "orders" })
     });
     const mintedBody = await minted.json();
     if (!minted.ok || !mintedBody.token) {
-      setStatus(mintedBody.error || "The token was not issued.");
+      const message = mintedBody.error || "The token was not issued.";
+      renderExplain(null, message);
+      setStatus(message);
       return;
     }
     showSnippet(mintedBody.snippet || "");
     setStatus("Running the statement over Quack…");
     const captured = { explain: null, httpError: "" };
-    const client = await Yn.connect(location.origin, {
-      authToken: mintedBody.token,
-      heartbeat: false,
-      clientPlatform: "lake-catalog-browser",
-      fetch: async (input, init) => {
-        const response = await fetch(input, init);
-        const header = response.headers.get("x-lake-explain");
-        if (header) {
-          try {
-            captured.explain = JSON.parse(header);
-          } catch {
-            captured.explain = null;
+    let client = null;
+    try {
+      client = await Yn.connect(location.origin, {
+        authToken: mintedBody.token,
+        heartbeat: false,
+        clientPlatform: "lake-catalog-browser",
+        fetch: async (input, init) => {
+          const response = await fetch(input, init);
+          const header = response.headers.get("x-lake-explain");
+          if (header) {
+            try {
+              captured.explain = JSON.parse(header);
+            } catch {
+              captured.explain = null;
+            }
           }
+          if (!response.ok)
+            captured.httpError = await response.clone().text();
+          return response;
         }
-        if (!response.ok)
-          captured.httpError = await response.clone().text();
-        return response;
-      }
-    });
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "The catalog connection failed.";
+      renderRows([], []);
+      renderExplain(null, message);
+      setStatus(message);
+      return;
+    }
     try {
       const result = await client.query(statement);
       const records = result.rows();
@@ -6509,11 +6529,8 @@ async function runQuery() {
         return;
       });
     }
-    const api = window.turnstile;
-    if (widgetId && api?.reset)
-      api.reset(widgetId);
-    turnstileToken = "";
   } finally {
+    resetTurnstile();
     run.disabled = false;
   }
 }
