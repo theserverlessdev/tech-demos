@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="theme-color" content="#0e0e11" />
+  <meta name="referrer" content="no-referrer" />
+  <title>Pairlane · theserverless.dev</title>
+  <meta name="description" content="Send a file straight to another browser. A Durable Object only passes WebRTC offers, answers, and ICE." />
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Hanken+Grotesk:wght@400..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script src="./assets/theme.js"></script>
+  <link rel="stylesheet" href="./assets/pairlane.css" />
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="https://tech-demos.theserverless.dev/" aria-label="Tech Demos gallery">
+      <svg class="brand__mark" width="26" height="26" viewBox="0 -3 128 128" aria-hidden="true">
+        <g stroke="currentColor" stroke-width="6" stroke-linecap="round" opacity="0.45"><line x1="4" y1="58" x2="20" y2="58"/><line x1="1" y1="72" x2="19" y2="72"/><line x1="6" y1="86" x2="22" y2="86"/></g>
+        <path d="M44 92 C31 92 20 82 20 69 C20 57 29 47 41 46 C45 33 57 24 70 24 C85 24 98 35 100 51 C110 53 118 62 118 72 C118 83 109 92 97 92 Z" fill="none" stroke="currentColor" stroke-width="7.5" stroke-linejoin="round"/>
+        <path d="M69 36 L50 71 L63 71 L57 102 L88 60 L72 60 L80 36 Z" fill="currentColor"/>
+      </svg>
+      <span>Tech Demos</span>
+    </a>
+    <div class="topbar__title">
+      <h1>Pairlane</h1>
+      <p>WebRTC file transfer, signalling only</p>
+    </div>
+    <a class="btn btn-ghost" href="https://github.com/kiyo-e/pairlane" rel="noopener noreferrer" target="_blank">Upstream</a>
+  </header>
+
+  <p class="strip" id="status" data-kind="idle" role="status">Create a room, then open the link on the other device.</p>
+
+  <main>
+    <section class="home" id="home">
+      <div class="card">
+        <p class="eyebrow">Workers + Durable Objects</p>
+        <h2>Send a file to the other browser</h2>
+        <p class="lede">The Durable Object only introduces the two browsers. The file moves on a WebRTC data channel and never touches this server.</p>
+        <ul class="points">
+          <li><span>Proves</span> Signalling-only rooms. Offers, answers, and ICE pass through the object. File bytes stay on the data channel.</li>
+          <li><span>Try</span> Create a room, scan the QR code, and send a file. The side panel lists what the object sees, with live progress and speed.</li>
+          <li><span>Build</span> A handoff for a screenshot, a scan, or homework that never lands in an upload bucket.</li>
+        </ul>
+        <p class="note">Rooms last 10 minutes and hold two peers. Misuse can be reported.</p>
+        <div id="turnstile" class="turnstile"></div>
+        <div class="actions">
+          <button class="btn" id="create" type="button" disabled>Create room</button>
+          <button class="btn btn-ghost" id="local-check" type="button" hidden>Use the local check</button>
+        </div>
+        <form class="join" id="join-form">
+          <label for="join-code">Have a code?</label>
+          <div class="join__row">
+            <input id="join-code" name="code" maxlength="8" autocapitalize="none" autocomplete="off" spellcheck="false" inputmode="text" placeholder="8 letters" />
+            <button class="btn btn-ghost" id="join" type="submit">Join</button>
+          </div>
+        </form>
+        <p class="hint" id="form-error" role="alert"></p>
+        <p class="hint">Inspired by <a href="https://github.com/kiyo-e/pairlane">kiyo-e/pairlane</a> (MIT). STUN is <code>stun.cloudflare.com</code>. TURN stays off unless it is configured.</p>
+      </div>
+    </section>
+
+    <section class="room" id="room" hidden>
+      <div class="lane">
+        <div class="card">
+          <p class="eyebrow">Two browsers · 10 minutes</p>
+          <h2 id="room-code" class="code">--------</h2>
+          <p class="meta"><span id="countdown">10:00 left</span> · <span id="peer-count">0 / 2</span></p>
+          <div id="qr" class="qr" role="img" aria-label="QR code for this room"></div>
+          <p id="room-link" class="link"></p>
+          <button class="btn" id="copy-link" type="button">Copy link</button>
+          <p class="hint" id="copied" hidden></p>
+          <label class="file is-disabled" id="file-label">
+            <input id="file" type="file" disabled />
+            <span class="file__title">Choose a file</span>
+            <span class="file__hint">or drop it here. It goes to the other browser, not this server.</span>
+          </label>
+          <div class="progress" id="progress" hidden>
+            <div class="progress__track"><span id="progress-fill"></span></div>
+            <p id="progress-label"></p>
+          </div>
+          <a class="btn" id="save" hidden download>Save file</a>
+          <p class="note">File bytes never reach the Worker. Misuse can be reported.</p>
+        </div>
+        <aside class="tape-panel">
+          <header>
+            <h2>What the Durable Object sees</h2>
+            <p>Offers, answers, and ICE only. The tape stores the kind and the size, never the file.</p>
+          </header>
+          <ol id="tape" aria-live="polite"></ol>
+        </aside>
+      </div>
+    </section>
+  </main>
+  <script src="./assets/app.js" type="module"></script>
+</body>
+</html>

@@ -1,0 +1,2 @@
+# Cloudflare's published always-pass test secret. Safe to commit. Not the production secret.
+TURNSTILE_SECRET=1x0000000000000000000000000000000AA
