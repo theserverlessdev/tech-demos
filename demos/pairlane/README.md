@@ -38,9 +38,9 @@ The dev script sets Cloudflare's always-pass Turnstile site key and `TURNSTILE_L
 
 - Two peers. A third connection is closed.
 - The room alarm fires 10 minutes after creation and drops both sockets.
-- `CREATE_LIMIT` namespace `7620`: 4 room opens per minute per IP.
-- `CONNECT_LIMIT` namespace `7621`: 20 signalling sockets per minute per IP.
-- `READ_LIMIT` namespace `7622`: 60 reads per minute per IP.
+- `CREATE_LIMIT` namespace `7624`: 4 room opens per minute per IP.
+- `CONNECT_LIMIT` namespace `7625`: 20 signalling sockets per minute per IP.
+- `READ_LIMIT` namespace `7626`: 60 reads per minute per IP.
 - `CreateCap`: 240 rooms per UTC day for the whole demo. Over the cap the API returns 429 and midnight UTC.
 - Files are capped at 256 MB in the browser. The Worker never receives them.
 - ICE uses `stun:stun.cloudflare.com:3478`. A symmetric NAT can fail with STUN alone. TURN is optional.

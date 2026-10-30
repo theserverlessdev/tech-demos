@@ -31,7 +31,7 @@ flowchart LR
 - Workers static assets and one Worker. Workers Paid. No Containers and no Workers for Platforms.
 - Durable Object `PairRoom`, binding `ROOM`, SQLite class, hibernated WebSockets, alarm at 10 minutes.
 - Durable Object `CreateCap`, binding `CREATE_CAP`, one global SQLite counter and the set of live room ids. Guessed ids never wake `PairRoom`.
-- Rate limits `CREATE_LIMIT` namespace `7620` (4 per minute per IP), `CONNECT_LIMIT` namespace `7621` (20 per minute per IP), `READ_LIMIT` namespace `7622` (60 per minute per IP). The next taken id in this repo is `7615`.
+- Rate limits `CREATE_LIMIT` namespace `7624` (4 per minute per IP), `CONNECT_LIMIT` namespace `7625` (20 per minute per IP), `READ_LIMIT` namespace `7626` (60 per minute per IP). ask-the-hub uses `7615`. lake-catalog takes `7621`–`7623`.
 - Shared Turnstile site key `0x4AAAAAAFRUoj5qDpf7XyIW`. The dummy token passes only when `TURNSTILE_LOCAL=1` and the secret is Cloudflare's test secret.
 - ICE uses `stun:stun.cloudflare.com:3478`. Optional `TURN_URLS`, `TURN_USERNAME`, and `TURN_CREDENTIAL` append a TURN server. The demo runs without them.
 - QR codes from `uqr` (MIT), bundled into the page.
