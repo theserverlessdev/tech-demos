@@ -11,6 +11,60 @@ export type ParseSignal =
 
 const encoder = new TextEncoder();
 
+const ICE_ADDRESS = /^[A-Za-z0-9.:_-]{1,128}$/;
+
+const ICE_EXT: Record<string, (value: string) => boolean> = {
+  generation: (value) => /^\d{1,5}$/.test(value),
+  ufrag: (value) => /^[A-Za-z0-9+/]{4,256}$/.test(value),
+  "network-id": (value) => /^\d{1,5}$/.test(value),
+  "network-cost": (value) => /^\d{1,5}$/.test(value),
+  tcptype: (value) => /^(active|passive|so)$/.test(value),
+};
+
+function isPort(value: string): boolean {
+  if (!/^\d{1,5}$/.test(value)) return false;
+  const port = Number(value);
+  return port <= 65535;
+}
+
+/** RFC 8839 candidate line, plus the short Chrome extensions we actually see. */
+export function isIceCandidate(raw: string): boolean {
+  if (raw.length < 16 || raw.length > MAX_CANDIDATE_CHARS) return false;
+  if (!raw.startsWith("candidate:")) return false;
+  const parts = raw.slice("candidate:".length).split(" ");
+  if (parts.length < 8 || parts.length > 24) return false;
+  const [foundation, component, transport, priority, address, port, typWord, typ, ...rest] = parts;
+  if (!foundation || !/^[A-Za-z0-9+/]{1,32}$/.test(foundation)) return false;
+  if (!component || !/^[1-9]\d{0,2}$/.test(component)) return false;
+  if (!transport || !/^(udp|tcp)$/i.test(transport)) return false;
+  if (!priority || !/^\d{1,10}$/.test(priority)) return false;
+  if (!address || !ICE_ADDRESS.test(address)) return false;
+  if (!port || !isPort(port)) return false;
+  if (typWord !== "typ") return false;
+  if (!typ || !/^(host|srflx|prflx|relay)$/.test(typ)) return false;
+  let index = 0;
+  let extensions = 0;
+  while (index < rest.length) {
+    const key = rest[index];
+    if (!key) return false;
+    if (key === "raddr") {
+      const related = rest[index + 1];
+      const word = rest[index + 2];
+      const relatedPort = rest[index + 3];
+      if (!related || !ICE_ADDRESS.test(related) || word !== "rport" || !relatedPort || !isPort(relatedPort)) return false;
+      index += 4;
+    } else {
+      const check = ICE_EXT[key];
+      const value = rest[index + 1];
+      if (!check || value === undefined || !check(value)) return false;
+      index += 2;
+    }
+    extensions += 1;
+    if (extensions > 8) return false;
+  }
+  return true;
+}
+
 /** Accept offer, answer, or one ICE candidate. Anything else is not signalling. */
 export function parseClientSignal(text: string): ParseSignal {
   const bytes = encoder.encode(text).byteLength;
@@ -32,10 +86,9 @@ export function parseClientSignal(text: string): ParseSignal {
       return { ok: false, reason: "extra-fields", bytes };
     }
     const candidate = record.candidate;
-    if (typeof candidate !== "string" || candidate.length < 12 || candidate.length > MAX_CANDIDATE_CHARS) {
+    if (typeof candidate !== "string" || !isIceCandidate(candidate)) {
       return { ok: false, reason: "bad-candidate", bytes };
     }
-    if (!candidate.includes("candidate:")) return { ok: false, reason: "bad-candidate", bytes };
     const sdpMid = record.sdpMid;
     const sdpMLineIndex = record.sdpMLineIndex;
     if (sdpMid !== null && (typeof sdpMid !== "string" || sdpMid.length > 32 || !/^[A-Za-z0-9_+/-]*$/.test(sdpMid))) {

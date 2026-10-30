@@ -13,7 +13,7 @@ We did not copy upstream `src/room.ts`, `src/client/room.tsx`, the CLI, or the l
 | Lifetime | Room lives until it is empty | Alarm closes the room after 10 minutes |
 | ICE | Caller-supplied servers | `stun:stun.cloudflare.com:3478`, TURN only if secrets are set |
 | UI | i18n, encryption key in the URL hash | Graphite & Ember, QR code, signalling tape |
-| Abuse controls | One rate limit on create | Turnstile, per-IP limits, UTC-day cap |
+| Abuse controls | One rate limit on create | Turnstile, per-IP limits, UTC-day cap, per-socket signalling budget |
 
 ## What we cut
 
@@ -31,6 +31,7 @@ We did not copy upstream `src/room.ts`, `src/client/room.tsx`, the CLI, or the l
 ## What we added
 
 - A hard cap of two peers
+- A per-socket signalling budget. Rejected frames are not stored, and the tape is written in batches
 - A 10-minute alarm
 - The shared Turnstile widget on room creation
 - A side panel of signalling messages, with sizes and ICE types, and no file bytes

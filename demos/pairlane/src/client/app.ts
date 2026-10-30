@@ -1,5 +1,5 @@
-import { classifyData, rateLabel, reduceRecv, safeName, sendFile, sha256Hex, type RecvState } from "../shared/file";
-import { CID as CID_RE, ROOM_ID as ROOM_RE, type IceServer, type PublicConfig, type Role, type TapeEvent } from "../shared/protocol";
+import { classifyData, FILE_TOO_LARGE, joinParts, rateLabel, reduceRecv, safeName, sendFile, sha256Hex, type RecvState } from "../shared/file";
+import { CID as CID_RE, MAX_FILE_BYTES, ROOM_ID as ROOM_RE, TURNSTILE_ACTION, type IceServer, type PublicConfig, type Role, type TapeEvent } from "../shared/protocol";
 import { formatBytes } from "../shared/signal";
 import { createPeerSession, type PeerSession } from "./peer";
 import { clientBase, roomLink, socketUrl } from "./paths";
@@ -117,6 +117,7 @@ function mountTurnstile(siteKey: string, tokenBox: { token: string }, create: HT
       try {
         api.render("#turnstile", {
           sitekey: siteKey,
+          action: TURNSTILE_ACTION,
           callback: (token: string) => {
             tokenBox.token = token;
             create.disabled = false;
@@ -203,6 +204,18 @@ async function openRoom(id: string): Promise<void> {
   must<HTMLElement>("room-code").textContent = id;
   const linkNode = must<HTMLElement>("room-link");
   linkNode.textContent = link;
+  let savedUrl = "";
+  const save = must<HTMLAnchorElement>("save");
+  save.addEventListener("click", () => {
+    const url = savedUrl;
+    if (!url) return;
+    window.setTimeout(() => {
+      if (savedUrl !== url) return;
+      URL.revokeObjectURL(url);
+      savedUrl = "";
+      save.removeAttribute("href");
+    }, 1500);
+  });
   must<HTMLButtonElement>("copy-link").addEventListener("click", () => {
     const copied = must<HTMLElement>("copied");
     void navigator.clipboard.writeText(link).then(
@@ -224,6 +237,7 @@ async function openRoom(id: string): Promise<void> {
   let channel: RTCDataChannel | null = null;
   let recv: RecvState = { phase: "idle" };
   let sending = false;
+  let ignoreBody = false;
   let sentBytes = 0;
   let sentTotal = 0;
   let sentElapsed = 0;
@@ -270,6 +284,21 @@ async function openRoom(id: string): Promise<void> {
     const payload = typeof data === "string" ? data : data instanceof ArrayBuffer ? data : null;
     if (payload === null) return;
     const kind = classifyData(payload);
+    if (kind.kind === "reject") {
+      sending = false;
+      must<HTMLInputElement>("file").disabled = false;
+      setStatus("error", kind.reason);
+      return;
+    }
+    if (kind.kind === "oversize") {
+      ignoreBody = true;
+      channel.send(JSON.stringify({ type: "reject", reason: FILE_TOO_LARGE }));
+      recv = { phase: "idle" };
+      setStatus("error", FILE_TOO_LARGE);
+      return;
+    }
+    if (ignoreBody && (kind.kind === "chunk" || kind.kind === "done")) return;
+    if (kind.kind === "meta") ignoreBody = false;
     if (kind.kind === "ack") {
       sending = false;
       must<HTMLInputElement>("file").disabled = false;
@@ -298,30 +327,23 @@ async function openRoom(id: string): Promise<void> {
     if (recv.phase === "done") {
       const done = recv;
       recv = { phase: "idle" };
-      const blob = new Blob(
-        done.parts.map((part) => {
-          const copy = new ArrayBuffer(part.byteLength);
-          new Uint8Array(copy).set(part);
-          return copy;
-        }),
-        { type: done.meta.mime },
-      );
-      const hash = await sha256Hex(await blob.arrayBuffer());
+      const bytes = joinParts(done.parts, done.meta.size);
+      const hash = await sha256Hex(bytes);
       const ok = hash === done.meta.sha256;
       channel.send(JSON.stringify({ type: "ack", ok }));
       if (!ok) {
         setStatus("error", "SHA-256 did not match. The file was not saved.");
         return;
       }
-      const url = URL.createObjectURL(blob);
-      const save = must<HTMLAnchorElement>("save");
-      save.href = url;
+      const blob = new Blob([bytes], { type: done.meta.mime });
+      if (savedUrl) URL.revokeObjectURL(savedUrl);
+      savedUrl = URL.createObjectURL(blob);
+      save.href = savedUrl;
       save.download = done.meta.name;
       save.hidden = false;
       save.textContent = `Save ${done.meta.name}`;
-      save.click();
       setProgress(done.meta.size, done.meta.size, "Received");
-      setStatus("done", `Saved ${done.meta.name}. SHA-256 matches.`);
+      setStatus("done", `${done.meta.name} is ready to save. SHA-256 matches.`);
     }
   }
 
@@ -407,6 +429,7 @@ async function openRoom(id: string): Promise<void> {
     if (event.code === 4002) setStatus("error", "This room already has two peers.");
     else if (event.code === 4001) setStatus("error", "This room has expired.");
     else if (event.code === 4003) setStatus("error", "This room is open in a newer tab.");
+    else if (event.code === 4008) setStatus("error", "Signalling stopped after too many messages.");
     else if (must<HTMLElement>("status").dataset.kind !== "done") setStatus("error", "The signalling connection closed.");
   };
 
@@ -431,6 +454,10 @@ async function openRoom(id: string): Promise<void> {
 
   async function ship(picked: File): Promise<void> {
     if (!channel || channel.readyState !== "open" || sending) return;
+    if (picked.size > MAX_FILE_BYTES) {
+      setStatus("error", FILE_TOO_LARGE);
+      return;
+    }
     sending = true;
     file.disabled = true;
     setStatus("sending", `Sending ${safeName(picked.name)}`);

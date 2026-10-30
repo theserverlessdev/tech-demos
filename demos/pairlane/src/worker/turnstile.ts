@@ -1,4 +1,8 @@
+import { TURNSTILE_ACTION } from "../shared/protocol";
+
 const SITEVERIFY = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
+
+const WIDGET_HOSTS = new Set(["pairlane.tech-demos.theserverless.dev", "tech-demos.theserverless.dev"]);
 
 /** Cloudflare's published always-pass test pair. Safe to commit. */
 export const TEST_TURNSTILE_SECRET = "1x0000000000000000000000000000000AA";
@@ -7,7 +11,7 @@ export const DUMMY_TOKEN = "XXXX.DUMMY.TOKEN.XXXX";
 
 export type VerifyResult = "ok" | "missing" | "rejected";
 
-type Siteverify = { success?: boolean; hostname?: string };
+type Siteverify = { success?: boolean; hostname?: string; action?: string };
 
 export function localEnabled(value: string | undefined): boolean {
   return value === "1";
@@ -34,12 +38,12 @@ export function assessTurnstile(opts: { secret: string; siteKey: string; local: 
   return "open";
 }
 
-/** Widget hostnames. Loopback and example.com pass only in local mode. */
+/** Exact widget hosts. Loopback passes only in local mode. */
 export function allowedWidgetHost(host: string, local: boolean): boolean {
   const name = host.trim().toLowerCase();
-  if (name === "theserverless.dev" || name.endsWith(".theserverless.dev")) return true;
+  if (WIDGET_HOSTS.has(name)) return true;
   if (!local) return false;
-  return name === "localhost" || name === "127.0.0.1" || name === "::1" || name === "example.com";
+  return name === "localhost" || name === "127.0.0.1" || name === "::1";
 }
 
 export async function verifyTurnstile(opts: {
@@ -71,6 +75,7 @@ export async function verifyTurnstile(opts: {
     return "rejected";
   }
   if (!result.success) return "rejected";
+  if (result.action !== TURNSTILE_ACTION) return "rejected";
   if (!allowedWidgetHost(result.hostname ?? "", opts.local)) return "rejected";
   return "ok";
 }

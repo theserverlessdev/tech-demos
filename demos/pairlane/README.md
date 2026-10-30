@@ -37,7 +37,10 @@ The dev script sets Cloudflare's always-pass Turnstile site key and `TURNSTILE_L
 ## Limits
 
 - Two peers. A third connection is closed.
+- Each signalling socket may send 2 offers, 2 answers, 64 ICE candidates, and 120 frames in total, at about 20 messages a second. A larger frame, a fifth bad frame, or a spent budget closes the socket. Rejected frames are not stored. ICE candidates have to match candidate grammar.
 - The room alarm fires 10 minutes after creation and drops both sockets.
+- Room creation and the signalling socket require an `Origin` of `https://pairlane.tech-demos.theserverless.dev` or `https://tech-demos.theserverless.dev`. Loopback is allowed only when `TURNSTILE_LOCAL=1`.
+- Turnstile siteverify must report the action `pairlane` and one of those two hosts.
 - `CREATE_LIMIT` namespace `7624`: 4 room opens per minute per IP.
 - `CONNECT_LIMIT` namespace `7625`: 20 signalling sockets per minute per IP.
 - `READ_LIMIT` namespace `7626`: 60 reads per minute per IP.

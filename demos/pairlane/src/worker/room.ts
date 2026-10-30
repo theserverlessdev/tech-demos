@@ -1,12 +1,15 @@
 import { DurableObject } from "cloudflare:workers";
 import { admit, type Seat } from "../shared/admit";
+import { freshBudget, takeFrame, takeSignal, MAX_BAD_FRAMES, type FrameBudget } from "../shared/budget";
 import { iceServersFromEnv } from "../shared/ice";
 import {
   CID,
   CLOSE_BAD_FRAME,
   CLOSE_EXPIRED,
   CLOSE_FULL,
+  CLOSE_LIMIT,
   CLOSE_REPLACED,
+  MAX_SIGNAL_BYTES,
   ROOM_TTL_MS,
   isExpired,
   type IceServer,
@@ -24,20 +27,31 @@ type Meta = {
   seq: number;
 };
 
-type Attachment = { cid: string; role: Role; silent?: boolean };
+type Attachment = {
+  cid: string;
+  role: Role;
+  silent?: boolean;
+  budget: FrameBudget;
+};
 
 type Live = { ws: WebSocket; seat: Attachment };
 
 const TAPE_LIMIT = 40;
+const TAPE_BATCH = 8;
 
 /**
  * Signalling room. WebSocket messages are offers, answers, and ICE candidates.
  * File bytes travel on the browsers' data channel and are not accepted here.
+ * Rejected frames are not stored. Accepted tape lines are written in batches.
  */
 export class PairRoom extends DurableObject<Env> {
+  private meta: Meta | null = null;
+  private dirty = 0;
+  private lastFlushAt = 0;
+
   async create(input: { creatorCid: string; now: number }): Promise<{ expiresAt: number }> {
     if (!CID.test(input.creatorCid)) throw new Error("bad creator");
-    const existing = await this.ctx.storage.get<Meta>("meta");
+    const existing = await this.loadMeta();
     if (existing && !isExpired(existing.expiresAt, input.now)) throw new Error("exists");
     const expiresAt = input.now + ROOM_TTL_MS;
     const meta: Meta = {
@@ -47,21 +61,16 @@ export class PairRoom extends DurableObject<Env> {
       tape: [],
       seq: 0,
     };
+    this.meta = meta;
+    this.dirty = 0;
+    this.lastFlushAt = input.now;
     await this.ctx.storage.put("meta", meta);
     await this.ctx.storage.setAlarm(expiresAt);
     return { expiresAt };
   }
 
-  async status(now: number): Promise<{ expiresAt: number; peers: number; expired: boolean; full: boolean } | null> {
-    const meta = await this.ctx.storage.get<Meta>("meta");
-    if (!meta) return null;
-    const expired = isExpired(meta.expiresAt, now);
-    const peers = expired ? 0 : this.live().length;
-    return { expiresAt: meta.expiresAt, peers, expired, full: peers >= 2 };
-  }
-
   async alarm(): Promise<void> {
-    const meta = await this.ctx.storage.get<Meta>("meta");
+    const meta = await this.loadMeta();
     if (meta) {
       const event = this.nextEvent(meta, "expire", 0, "room expired · signalling only");
       for (const row of this.live()) {
@@ -70,6 +79,8 @@ export class PairRoom extends DurableObject<Env> {
         row.ws.close(CLOSE_EXPIRED, "Room expired");
       }
     }
+    this.meta = null;
+    this.dirty = 0;
     await this.ctx.storage.deleteAll();
   }
 
@@ -82,7 +93,7 @@ export class PairRoom extends DurableObject<Env> {
     if (!CID.test(cid)) return new Response("Bad peer", { status: 400 });
 
     const now = Date.now();
-    const meta = await this.ctx.storage.get<Meta>("meta");
+    const meta = await this.loadMeta();
     if (!meta || isExpired(meta.expiresAt, now)) {
       return this.reject(CLOSE_EXPIRED, "Room expired");
     }
@@ -103,7 +114,7 @@ export class PairRoom extends DurableObject<Env> {
     const client = pair[0];
     const server = pair[1];
     this.ctx.acceptWebSocket(server);
-    const seat: Attachment = { cid, role: decision.role };
+    const seat: Attachment = { cid, role: decision.role, budget: freshBudget(now) };
     server.serializeAttachment(seat);
 
     const iceServers = iceServersFromEnv(this.env).servers;
@@ -116,7 +127,7 @@ export class PairRoom extends DurableObject<Env> {
       tape: meta.tape,
       iceServers,
     });
-    await this.pushTape("join", 0, `join · ${decision.role} · signalling socket`);
+    await this.note("join", 0, `join · ${decision.role} · signalling socket`, "now");
     this.announce();
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -124,50 +135,69 @@ export class PairRoom extends DurableObject<Env> {
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
     const seat = ws.deserializeAttachment() as Attachment | null;
     if (!seat || seat.silent) return;
-    const meta = await this.ctx.storage.get<Meta>("meta");
+    const meta = await this.loadMeta();
     if (!meta || isExpired(meta.expiresAt, Date.now())) {
       this.send(ws, { type: "expired" });
       ws.close(CLOSE_EXPIRED, "Room expired");
       return;
     }
     if (typeof message !== "string") {
-      const bytes = message.byteLength;
-      await this.pushTape("reject", bytes, `reject · binary frame · ${bytes} B`);
       ws.close(CLOSE_BAD_FRAME, "Binary frames are not signalling");
       return;
     }
-    const parsed = parseClientSignal(message);
-    if (!parsed.ok) {
-      await this.pushTape("reject", parsed.bytes, `reject · ${parsed.reason} · ${parsed.bytes} B`);
+    if (message.length > MAX_SIGNAL_BYTES) {
+      ws.close(CLOSE_LIMIT, "Signalling frame is too large");
       return;
     }
-    if (!signalRoleOk(seat.role, parsed.signal)) {
-      await this.pushTape("reject", parsed.bytes, `reject · wrong role · ${parsed.bytes} B`);
+    if (!seat.budget) seat.budget = freshBudget(Date.now());
+    const frame = takeFrame(seat.budget, Date.now());
+    ws.serializeAttachment(seat);
+    if (frame !== "ok") {
+      ws.close(CLOSE_LIMIT, "Too many signalling messages");
+      return;
+    }
+
+    const parsed = parseClientSignal(message);
+    if (!parsed.ok && parsed.reason === "too-large") {
+      ws.close(CLOSE_LIMIT, "Signalling frame is too large");
+      return;
+    }
+    if (!parsed.ok || !signalRoleOk(seat.role, parsed.signal)) {
+      this.markBad(ws, seat);
       return;
     }
     const other = this.live().find((row) => row.seat.cid !== seat.cid);
-    if (!other) {
-      await this.pushTape("reject", parsed.bytes, `reject · no peer · ${parsed.bytes} B`);
+    if (!other) return;
+    if (takeSignal(seat.budget, parsed.signal.type) !== "ok") {
+      ws.serializeAttachment(seat);
+      ws.close(CLOSE_LIMIT, "Too many signalling messages");
       return;
     }
+    ws.serializeAttachment(seat);
     const summary = summarizeSignal(parsed.signal, parsed.bytes);
     this.send(other.ws, parsed.signal);
-    await this.pushTape(summary.kind, parsed.bytes, summary.summary);
+    await this.note(summary.kind, parsed.bytes, summary.summary, "batch");
   }
 
   async webSocketClose(ws: WebSocket): Promise<void> {
     const seat = ws.deserializeAttachment() as Attachment | null;
     if (!seat || seat.silent) return;
-    const meta = await this.ctx.storage.get<Meta>("meta");
+    const meta = await this.loadMeta();
     if (!meta || isExpired(meta.expiresAt, Date.now())) return;
     const still = this.live().some((row) => row.seat.cid === seat.cid);
     if (still) return;
-    await this.pushTape("leave", 0, `leave · ${seat.role}`);
+    await this.note("leave", 0, `leave · ${seat.role}`, "now");
     this.announce();
   }
 
   async webSocketError(): Promise<void> {
     this.announce();
+  }
+
+  private markBad(ws: WebSocket, seat: Attachment): void {
+    seat.budget.bad += 1;
+    ws.serializeAttachment(seat);
+    if (seat.budget.bad >= MAX_BAD_FRAMES) ws.close(CLOSE_LIMIT, "Too many bad signalling frames");
   }
 
   private live(): Live[] {
@@ -188,19 +218,33 @@ export class PairRoom extends DurableObject<Env> {
     for (const row of rows) this.send(row.ws, { type: "peer", peers, ready });
   }
 
+  private async loadMeta(): Promise<Meta | null> {
+    if (this.meta) return this.meta;
+    this.meta = (await this.ctx.storage.get<Meta>("meta")) ?? null;
+    return this.meta;
+  }
+
   private nextEvent(meta: Meta, kind: TapeEvent["kind"], bytes: number, summary: string): TapeEvent {
     meta.seq += 1;
     return { n: meta.seq, at: Date.now(), kind, bytes, summary };
   }
 
-  private async pushTape(kind: TapeEvent["kind"], bytes: number, summary: string): Promise<void> {
+  private async note(kind: TapeEvent["kind"], bytes: number, summary: string, mode: "now" | "batch"): Promise<void> {
     await this.ctx.blockConcurrencyWhile(async () => {
-      const meta = await this.ctx.storage.get<Meta>("meta");
+      const meta = await this.loadMeta();
       if (!meta) return;
       const event = this.nextEvent(meta, kind, bytes, summary);
       meta.tape = [...meta.tape, event].slice(-TAPE_LIMIT);
-      await this.ctx.storage.put("meta", meta);
+      this.meta = meta;
       for (const row of this.live()) this.send(row.ws, { type: "tape", event });
+      if (mode === "batch") {
+        this.dirty += 1;
+        const stale = Date.now() - this.lastFlushAt >= 1000;
+        if (this.dirty < TAPE_BATCH && !stale) return;
+      }
+      await this.ctx.storage.put("meta", meta);
+      this.dirty = 0;
+      this.lastFlushAt = Date.now();
     });
   }
 

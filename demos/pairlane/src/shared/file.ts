@@ -8,13 +8,21 @@ export type FileMeta = {
   sha256: string;
 };
 
+export const FILE_TOO_LARGE = "That file is over 256 MB.";
+
 export type DataKind =
   | { kind: "meta"; meta: FileMeta }
   | { kind: "chunk"; bytes: Uint8Array }
   | { kind: "done" }
   | { kind: "ack"; ok: boolean }
   | { kind: "busy" }
+  | { kind: "reject"; reason: string }
+  | { kind: "oversize" }
   | { kind: "ignore" };
+
+export function fileFits(size: number): boolean {
+  return Number.isFinite(size) && size >= 0 && size <= MAX_FILE_BYTES;
+}
 
 export function safeName(name: string): string {
   const base = name.split(/[/\\]/).pop() ?? "file";
@@ -53,13 +61,24 @@ export function classifyData(data: string | ArrayBuffer | Uint8Array): DataKind 
   if (!value || typeof value !== "object") return { kind: "ignore" };
   const record = value as Record<string, unknown>;
   if (record.type === "meta") {
+    if (typeof record.size === "number" && !fileFits(record.size)) return { kind: "oversize" };
     const meta = parseMeta(record);
     return meta ? { kind: "meta", meta } : { kind: "ignore" };
   }
   if (record.type === "done") return { kind: "done" };
   if (record.type === "ack") return { kind: "ack", ok: record.ok === true };
   if (record.type === "busy") return { kind: "busy" };
+  if (record.type === "reject") {
+    const reason = typeof record.reason === "string" ? record.reason.replace(/[\u0000-\u001f]/g, "").trim().slice(0, 120) : "";
+    return { kind: "reject", reason: reason || FILE_TOO_LARGE };
+  }
   return { kind: "ignore" };
+}
+
+/** Keep a chunk that already owns its buffer. Copy only a view into a larger one. */
+function ownChunk(bytes: Uint8Array): Uint8Array {
+  if (bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength) return bytes;
+  return bytes.slice();
 }
 
 export type RecvState =
@@ -80,14 +99,27 @@ export function reduceRecv(state: RecvState, data: string | ArrayBuffer | Uint8A
     if (state.got + kind.bytes.byteLength > state.meta.size) {
       return { phase: "error", reason: "The file is larger than its header." };
     }
-    const copy = kind.bytes.slice();
-    return { phase: "body", meta: state.meta, parts: [...state.parts, copy], got: state.got + copy.byteLength };
+    const chunk = ownChunk(kind.bytes);
+    return { phase: "body", meta: state.meta, parts: [...state.parts, chunk], got: state.got + chunk.byteLength };
   }
   if (kind.kind === "done") {
     if (state.got !== state.meta.size) return { phase: "error", reason: "The file ended early." };
     return { phase: "done", meta: state.meta, parts: state.parts };
   }
   return state;
+}
+
+/** One buffer for the hash and the Blob. Drops the chunk list so those copies can be freed. */
+export function joinParts(parts: Uint8Array[], size: number): Uint8Array<ArrayBuffer> {
+  const buffer = new ArrayBuffer(size);
+  const out = new Uint8Array(buffer);
+  let offset = 0;
+  for (const part of parts) {
+    out.set(part, offset);
+    offset += part.byteLength;
+  }
+  parts.length = 0;
+  return out;
 }
 
 export function chunkCount(size: number, chunk = CHUNK_SIZE): number {
@@ -125,6 +157,7 @@ export async function sendFile(
   file: Blob & { name?: string },
   opts?: { chunkSize?: number; onProgress?: (sent: number, total: number, elapsedMs: number) => void },
 ): Promise<{ sha256: string; name: string; size: number }> {
+  if (!fileFits(file.size)) throw new Error(FILE_TOO_LARGE);
   const chunkSize = opts?.chunkSize ?? CHUNK_SIZE;
   const buf = await file.arrayBuffer();
   const sha256 = await sha256Hex(buf);

@@ -96,7 +96,7 @@ export default {
         return new Response("This demo is unavailable.", { status: 503 });
       }
       try {
-        return await handleApi(request, env, path);
+        return await handleApi(request, env, path, local);
       } catch (err) {
         return errorResponse(err);
       }
@@ -105,7 +105,7 @@ export default {
     const wsMatch = path.match(/^\/ws\/([a-z0-9]+)$/);
     if (wsMatch && request.method === "GET") {
       if (!demoHost(url.hostname, local)) return new Response("This demo is unavailable.", { status: 503 });
-      return connectRoom(request, env, wsMatch[1] ?? "");
+      return connectRoom(request, env, wsMatch[1] ?? "", local);
     }
 
     if (!demoHost(url.hostname, local) && url.hostname.endsWith(".theserverless.dev")) {

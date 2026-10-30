@@ -17,6 +17,9 @@ test("the room source does not mention file bytes", async () => {
   expect(room).not.toContain("arrayBuffer");
   expect(room).not.toContain("from \"../shared/file");
   const readme = await Bun.file(new URL("../../README.md", import.meta.url)).text();
+  const app = await Bun.file(new URL("../client/app.ts", import.meta.url)).text();
+  expect(app).not.toContain("save.click(");
+  expect(app).toContain("revokeObjectURL");
   const page = await Bun.file(new URL("../../public/index.html", import.meta.url)).text();
   for (const text of [readme, page]) {
     expect(text.toLowerCase()).toContain("misuse can be reported");

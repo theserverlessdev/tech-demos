@@ -23,7 +23,8 @@ export const CID = new RegExp(`^[${ROOM_ALPHABET}]{${CID_LEN}}$`);
 /** Signalling JSON only. A file chunk is orders of magnitude larger and is rejected. */
 export const MAX_SIGNAL_BYTES = 16 * 1024;
 export const MAX_SDP_CHARS = 12_000;
-export const MAX_CANDIDATE_CHARS = 2_000;
+/** A real ICE candidate is short. Longer strings are not relayed. */
+export const MAX_CANDIDATE_CHARS = 300;
 
 /** Browser data-channel cap. The Worker never sees the file. */
 export const MAX_FILE_BYTES = 256 * 1024 * 1024;
@@ -32,7 +33,12 @@ export const CHUNK_SIZE = 16 * 1024;
 export const CLOSE_EXPIRED = 4001;
 export const CLOSE_FULL = 4002;
 export const CLOSE_REPLACED = 4003;
+/** Over budget, an oversized frame, or repeated bad frames. */
+export const CLOSE_LIMIT = 4008;
 export const CLOSE_BAD_FRAME = 4009;
+
+/** Siteverify action for the shared widget on this demo. */
+export const TURNSTILE_ACTION = "pairlane";
 
 export const STUN_URL = "stun:stun.cloudflare.com:3478";
 
@@ -68,14 +74,6 @@ export type CreatedRoom = {
   id: string;
   expiresAt: number;
   remaining: number;
-};
-
-export type RoomStatus = {
-  id: string;
-  expiresAt: number;
-  peers: number;
-  expired: boolean;
-  full: boolean;
 };
 
 export type ApiError = { error: { code: string; message: string } };

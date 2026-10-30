@@ -9,9 +9,9 @@ import {
   randomRoomId,
   type CreatedRoom,
   type PublicConfig,
-  type RoomStatus,
 } from "../shared/protocol";
 import type { Env } from "./env";
+import { allowedRequestOrigin } from "./origin";
 import { assessTurnstile, localEnabled, verifyTurnstile } from "./turnstile";
 
 export class HttpError extends Error {
@@ -46,7 +46,7 @@ function capStub(env: Env) {
   return env.CREATE_CAP.get(env.CREATE_CAP.idFromName("global"));
 }
 
-export async function handleApi(request: Request, env: Env, path: string): Promise<Response> {
+export async function handleApi(request: Request, env: Env, path: string, local: boolean): Promise<Response> {
   const ip = clientIp(request);
   if (path === "/api/health") {
     await limit(env.READ_LIMIT, ip, "Too many reads. Wait a minute.");
@@ -57,20 +57,16 @@ export async function handleApi(request: Request, env: Env, path: string): Promi
     return json(publicConfig(env));
   }
   if (path === "/api/rooms" && request.method === "POST") {
-    return json(await createRoom(request, env, ip), 201);
-  }
-  const statusMatch = path.match(/^\/api\/rooms\/([a-z0-9]+)$/);
-  if (statusMatch && request.method === "GET") {
-    await limit(env.READ_LIMIT, ip, "Too many reads. Wait a minute.");
-    const id = statusMatch[1] ?? "";
-    if (!ROOM_ID.test(id)) throw new HttpError(404, "room", "That room does not exist.");
-    return json(await roomStatus(env, id));
+    return json(await createRoom(request, env, ip, local), 201);
   }
   throw new HttpError(404, "route", "Not found.");
 }
 
-export async function connectRoom(request: Request, env: Env, id: string): Promise<Response> {
+export async function connectRoom(request: Request, env: Env, id: string, local: boolean): Promise<Response> {
   if (!ROOM_ID.test(id)) return new Response("Not found", { status: 404 });
+  if (!allowedRequestOrigin(request.headers.get("origin"), local)) {
+    return new Response("That origin is not allowed.", { status: 403 });
+  }
   const ip = clientIp(request);
   const { success } = await env.CONNECT_LIMIT.limit({ key: ip });
   if (!success) return new Response("Too many connections. Wait a minute.", { status: 429 });
@@ -100,10 +96,12 @@ async function limit(binding: Env["READ_LIMIT"], ip: string, message: string): P
   if (!success) throw new HttpError(429, "rate", message);
 }
 
-async function createRoom(request: Request, env: Env, ip: string): Promise<CreatedRoom> {
+async function createRoom(request: Request, env: Env, ip: string, local: boolean): Promise<CreatedRoom> {
+  if (!allowedRequestOrigin(request.headers.get("origin"), local)) {
+    throw new HttpError(403, "origin", "That origin is not allowed.");
+  }
   const secret = env.TURNSTILE_SECRET ?? "";
   const siteKey = env.TURNSTILE_SITE_KEY ?? "";
-  const local = localEnabled(env.TURNSTILE_LOCAL);
   if (assessTurnstile({ secret, siteKey, local }) === "closed") {
     throw new HttpError(503, "turnstile", "Room creation is unavailable until the Turnstile secret is set.");
   }
@@ -144,10 +142,3 @@ async function reserveId(cap: ReturnType<typeof capStub>, now: number): Promise<
   throw new HttpError(503, "id", "Could not open a room. Try again.");
 }
 
-async function roomStatus(env: Env, id: string): Promise<RoomStatus> {
-  const now = Date.now();
-  if (!(await capStub(env).known(id, now))) throw new HttpError(404, "room", "That room does not exist.");
-  const status = await env.ROOM.get(env.ROOM.idFromName(id)).status(now);
-  if (!status) throw new HttpError(404, "room", "That room does not exist.");
-  return { id, ...status };
-}
