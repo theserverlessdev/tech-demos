@@ -1,0 +1,51 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tech-demos-lake-catalog",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none"
+  },
+  // Placeholder. Create the bucket before deploy. This repo does not create it.
+  "r2_buckets": [
+    { "binding": "LAKE", "bucket_name": "tech-demos-lake-catalog" }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "CATALOG_REGISTRY", "class_name": "CatalogRegistry" },
+      { "name": "CATALOGS", "class_name": "QuackCatalog" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["CatalogRegistry", "QuackCatalog"] }
+  ],
+  "triggers": { "crons": ["0 0 * * *"] },
+  // 7615 is ask-the-hub SEARCH_LIMIT. 7621–7623 are unused in this repo.
+  "ratelimits": [
+    { "name": "QUERY_LIMIT", "namespace_id": "7621", "simple": { "limit": 12, "period": 60 } },
+    { "name": "TOKEN_LIMIT", "namespace_id": "7622", "simple": { "limit": 8, "period": 60 } },
+    { "name": "READ_LIMIT", "namespace_id": "7623", "simple": { "limit": 60, "period": 60 } }
+  ],
+  "vars": {
+    "DEV": "",
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFRUoj5qDpf7XyIW",
+    "LAKE_BUCKET": "tech-demos-lake-catalog",
+    "DAILY_QUERY_CAP": "400",
+    "TOKEN_TTL_SECONDS": "600"
+  },
+  "secrets": { "required": ["TURNSTILE_SECRET", "QUACK_JWT_SECRET", "CONNECTION_SIGNING_SECRET"] },
+  "routes": [
+    { "pattern": "tech-demos.theserverless.dev/demos/lake-catalog*", "zone_name": "theserverless.dev" },
+    { "pattern": "lake-catalog.tech-demos.theserverless.dev/*", "zone_name": "theserverless.dev" }
+  ],
+  "observability": {
+    "enabled": true,
+    "logs": { "enabled": true, "head_sampling_rate": 1 },
+    "traces": { "enabled": true, "head_sampling_rate": 1 }
+  }
+}

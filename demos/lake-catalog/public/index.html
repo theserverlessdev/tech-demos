@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark light" />
+  <meta name="theme-color" content="#0e0e11" />
+  <title>Lake Catalog · Tech Demos · theserverless.dev</title>
+  <meta name="description" content="A DuckLake-style catalog on Workers. Quack HTTP, one Durable Object per catalog, and role policies over Parquet in R2." />
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Hanken+Grotesk:wght@400..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script src="./assets/theme.js"></script>
+  <link rel="stylesheet" href="./assets/app.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="https://tech-demos.theserverless.dev/">
+      <img src="./favicon.svg" width="26" height="26" alt="" />
+      <span>Tech Demos</span>
+    </a>
+    <div class="topbar__title">
+      <h1>Lake Catalog</h1>
+      <p>Quack, policies, and one object per catalog</p>
+    </div>
+    <button class="btn btn-icon" id="theme" type="button" aria-label="Switch colour theme">Theme</button>
+  </header>
+
+  <p class="shows"><span class="shows__k">What this proves</span> A DuckLake-style catalog can live on Workers. DuckDB’s Quack HTTP protocol hits <span class="mono">POST /quack</span>. A registry Durable Object routes each catalog to its own SQLite object. JWT roles are checked against row and column rules before SQL runs. The sample table is also Parquet in R2.</p>
+
+  <section class="can" aria-labelledby="try-title">
+    <h2 id="try-title">What to try</h2>
+    <ul>
+      <li>Pick analyst, viewer, or guest and run a sample statement.</li>
+      <li>Read whether the policy allows the SQL, denies it, or rewrites it.</li>
+      <li>Open the side panel to see each catalog’s Durable Object and R2 path.</li>
+      <li>Copy the DuckDB CLI snippet. The token is read-only and lasts ten minutes.</li>
+    </ul>
+  </section>
+  <section class="can" aria-labelledby="build-title">
+    <h2 id="build-title">What you could build</h2>
+    <ul>
+      <li>A shared catalog in front of Parquet you already keep in R2.</li>
+      <li>One catalog per team, each with its own Durable Object and policy.</li>
+      <li>Short-lived tokens so analysts query from DuckDB without a warehouse login.</li>
+    </ul>
+  </section>
+
+  <p class="strip" id="status" role="status">Finish the check, then run a statement. The log stores the role and the decision, not the SQL. The catalog is read-only and resets at midnight UTC.</p>
+
+  <main class="layout">
+    <section class="panel query-panel" aria-label="Query">
+      <p class="eyebrow">Query the orders catalog</p>
+      <div class="roles" role="group" aria-label="Role">
+        <button class="btn role" type="button" data-role="analyst" aria-pressed="true">Analyst</button>
+        <button class="btn role" type="button" data-role="viewer" aria-pressed="false">Viewer</button>
+        <button class="btn role" type="button" data-role="guest" aria-pressed="false">Guest</button>
+      </div>
+      <div class="chips" id="chips"></div>
+      <form id="form">
+        <label class="stack" for="sql">SQL
+          <textarea id="sql" name="sql" rows="4" maxlength="2000" spellcheck="false">SELECT region, product, units, revenue, customer FROM orders</textarea>
+        </label>
+        <div class="submit-row">
+          <div id="turnstile" class="turnstile"></div>
+          <button class="btn btn-primary" id="run" type="submit">Run</button>
+        </div>
+      </form>
+      <div id="rows" class="rows"><p class="muted">Rows show up here.</p></div>
+    </section>
+    <section class="panel" aria-live="polite" aria-label="Policy decision">
+      <p class="eyebrow">Policy</p>
+      <div id="explain"><p class="muted">Allow, deny, or rewrite, with the reasons.</p></div>
+    </section>
+    <section class="panel" aria-label="Catalog map">
+      <p class="eyebrow">Catalog Durable Objects</p>
+      <div id="map"><p class="muted">Each catalog id maps to its own object.</p></div>
+    </section>
+    <section class="panel snippet-panel" aria-label="DuckDB snippet">
+      <div class="snippet-head">
+        <p class="eyebrow">DuckDB CLI</p>
+        <button class="btn" id="copy" type="button">Copy</button>
+      </div>
+      <pre id="snippet" class="code">Run a query to mint a ten-minute read-only token.</pre>
+    </section>
+  </main>
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async></script>
+  <script src="./assets/app.js" type="module"></script>
+</body>
+</html>
