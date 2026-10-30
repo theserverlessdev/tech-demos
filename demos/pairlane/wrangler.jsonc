@@ -1,0 +1,43 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tech-demos-pairlane",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none"
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "ROOM", "class_name": "PairRoom" },
+      { "name": "CREATE_CAP", "class_name": "CreateCap" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["PairRoom", "CreateCap"] }],
+  // 7615 is ask-the-hub SEARCH_LIMIT. lake-catalog takes 7621–7623, so these start at 7624.
+  "ratelimits": [
+    { "name": "CREATE_LIMIT", "namespace_id": "7624", "simple": { "limit": 4, "period": 60 } },
+    { "name": "CONNECT_LIMIT", "namespace_id": "7625", "simple": { "limit": 20, "period": 60 } },
+    { "name": "READ_LIMIT", "namespace_id": "7626", "simple": { "limit": 60, "period": 60 } }
+  ],
+  "vars": {
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFRUoj5qDpf7XyIW",
+    "TURNSTILE_LOCAL": "0"
+  },
+  "secrets": {
+    "required": ["TURNSTILE_SECRET"]
+  },
+  "routes": [
+    { "pattern": "tech-demos.theserverless.dev/demos/pairlane*", "zone_name": "theserverless.dev" },
+    { "pattern": "pairlane.tech-demos.theserverless.dev/*", "zone_name": "theserverless.dev" }
+  ],
+  "observability": {
+    "enabled": true,
+    "logs": { "enabled": true, "head_sampling_rate": 1 },
+    "traces": { "enabled": true, "head_sampling_rate": 1 }
+  }
+}

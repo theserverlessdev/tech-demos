@@ -107,7 +107,31 @@ const r2DriveFallbackSource = standalone("r2-drive");
 // The zone route wins, and this source only redirects if that route is missing.
 const askTheHubFallbackSource = standalone("ask-the-hub");
 
+// pairlane is a standalone Worker (ASSETS, ROOM, CREATE_CAP, CREATE_LIMIT, CONNECT_LIMIT, READ_LIMIT, Turnstile).
+// The zone route wins, and this source only redirects if that route is missing.
+const pairlaneFallbackSource = standalone("pairlane");
+
 export const demos: DemoEntry[] = [
+  {
+    slug: "pairlane",
+    title: "Pairlane",
+    description: "Send a file straight to another browser. The Durable Object only passes offers, answers, and ICE.",
+    demonstrates:
+      "A Durable Object is only the signalling room for a browser-to-browser file transfer. Offers, answers, and ICE candidates pass through the object. The file moves on a WebRTC data channel and never reaches the Worker.",
+    capabilities: [
+      "Create a room after the shared Turnstile check and get a short link and a QR code",
+      "Open the link on a phone or a second tab and send a file with live progress and speed",
+      "Read the side panel, which lists the signalling messages the Durable Object sees",
+    ],
+    useCases: [
+      "A support handoff that receives a screenshot without storing it",
+      "A classroom drop where the laptop is the only destination",
+      "A phone-to-desk scan that never lands in an upload bucket",
+    ],
+    tags: ["webrtc", "durable-objects", "turnstile"],
+    kind: "standalone",
+    source: pairlaneFallbackSource,
+  },
   {
     slug: "ask-the-hub",
     title: "Ask the Hub",
