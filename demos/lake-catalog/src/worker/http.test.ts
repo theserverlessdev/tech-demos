@@ -50,14 +50,14 @@ function memory(): { deps: Deps; sql: SqlExec; clock: { now: number } } {
             durableObjectId: "orders-do",
             dataPath: "r2://tech-demos-lake-catalog/catalogs/orders/",
             rows: ORDER_ROWS.length,
-            parquet: true,
+            parquetNote: "pending first nightly build",
           },
           {
             id: "regions",
             durableObjectId: "regions-do",
             dataPath: "r2://tech-demos-lake-catalog/catalogs/regions/",
             rows: 4,
-            parquet: true,
+            parquetNote: "pending first nightly build",
           },
         ],
       };
@@ -274,6 +274,92 @@ test("an oversized body is rejected from the declared length and from the stream
   const { deps } = memory();
   const blocked = await handleRequest(chunked, deps, "/api/token");
   expect(blocked?.status).toBe(413);
+});
+
+test("connects do not call resolveCatalog", async () => {
+  const { deps } = memory();
+  let resolves = 0;
+  deps.resolveCatalog = async () => {
+    resolves += 1;
+    return true;
+  };
+  const origin = "http://127.0.0.1";
+  const minted = await handleRequest(
+    new Request(`${origin}/api/token`, {
+      method: "POST",
+      body: JSON.stringify({ role: "analyst", turnstile: DUMMY_TOKEN }),
+    }),
+    deps,
+    "/api/token",
+  );
+  const body = (await minted?.json()) as { token: string };
+  expect(resolves).toBe(1);
+  for (let i = 0; i < 6; i++) {
+    const client = await QuackClient.connect(origin, { authToken: body.token, heartbeat: false, fetch: quackFetch(deps) });
+    await client.disconnect();
+  }
+  expect(resolves).toBe(1);
+});
+
+test("a denied statement does not spend the daily cap", async () => {
+  const { deps } = memory();
+  let charges = 0;
+  const charge = deps.charge;
+  deps.charge = async () => {
+    charges += 1;
+    return charge();
+  };
+  const origin = "http://127.0.0.1";
+  const minted = await handleRequest(
+    new Request(`${origin}/api/token`, {
+      method: "POST",
+      body: JSON.stringify({ role: "guest", turnstile: DUMMY_TOKEN }),
+    }),
+    deps,
+    "/api/token",
+  );
+  const body = (await minted?.json()) as { token: string };
+  const client = await QuackClient.connect(origin, { authToken: body.token, heartbeat: false, fetch: quackFetch(deps) });
+  await expect(client.query("SELECT customer FROM orders")).rejects.toThrow(/Guest cannot read/);
+  await client.disconnect().catch(() => undefined);
+  expect(charges).toBe(0);
+});
+
+test("a catalog failure does not return explain text", async () => {
+  const { deps } = memory();
+  deps.queryCatalog = async () => {
+    throw new Error("SELECT customer FROM orders");
+  };
+  const origin = "http://127.0.0.1";
+  const minted = await handleRequest(
+    new Request(`${origin}/api/token`, {
+      method: "POST",
+      body: JSON.stringify({ role: "analyst", turnstile: DUMMY_TOKEN }),
+    }),
+    deps,
+    "/api/token",
+  );
+  const body = (await minted?.json()) as { token: string };
+  let header: string | null = null;
+  const client = await QuackClient.connect(origin, {
+    authToken: body.token,
+    heartbeat: false,
+    fetch: async (input, init) => {
+      const response = await quackFetch(deps)(input, init);
+      const next = response.headers.get("x-lake-explain");
+      if (next) header = next;
+      return response;
+    },
+  });
+  await expect(client.query("SELECT region FROM orders")).rejects.toThrow(/could not run/);
+  await client.disconnect().catch(() => undefined);
+  expect(header).toBeNull();
+});
+
+test("json responses send nosniff", async () => {
+  const { deps } = memory();
+  const health = await handleRequest(new Request("http://127.0.0.1/api/health"), deps, "/api/health");
+  expect(health?.headers.get("x-content-type-options")).toBe("nosniff");
 });
 
 test("ipv6 rate limit keys share a /64", () => {

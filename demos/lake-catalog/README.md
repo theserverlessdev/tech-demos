@@ -13,7 +13,7 @@ A lakehouse catalog can sit on Workers Paid: Quack on `POST /quack`, one Durable
 - Run the analyst sample and read every column, including the restricted rows.
 - Run the viewer sample and see `customer` come back as null, with the restricted region removed.
 - Run the guest sample and see the statement denied before it runs. A guest query that only names public columns still drops `restricted` rows, and a filter on `customer` or `revenue` is denied.
-- Read the side panel: registry id, each catalog’s Durable Object id, and the `r2://` data path.
+- Read the side panel: registry id, each catalog’s Durable Object id, and the `r2://` data path. Parquet is marked pending until the nightly build.
 - Copy the DuckDB CLI snippet. The token is read-only and expires in ten minutes.
 
 ## What you could build

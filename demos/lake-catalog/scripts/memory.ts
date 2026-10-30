@@ -51,14 +51,14 @@ export function memoryDeps(): Deps {
             durableObjectId: "orders-do",
             dataPath: "r2://tech-demos-lake-catalog/catalogs/orders/",
             rows: ORDER_ROWS.length,
-            parquet: true,
+            parquetNote: "pending first nightly build",
           },
           {
             id: "regions",
             durableObjectId: "regions-do",
             dataPath: "r2://tech-demos-lake-catalog/catalogs/regions/",
             rows: 4,
-            parquet: true,
+            parquetNote: "pending first nightly build",
           },
         ],
       };

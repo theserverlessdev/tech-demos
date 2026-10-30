@@ -55,7 +55,14 @@ export class QuackCatalog extends DurableObject<Env> {
         } catch (err) {
           console.log(JSON.stringify({ event: "query_failed", catalog, role, name: err instanceof Error ? err.name : "error" }));
           result = {
-            explain: { ...explain, effect: "deny", reasons: ["The statement could not run."], executedSql: null, columns: [] },
+            explain: {
+              effect: "deny",
+              role,
+              catalog,
+              reasons: ["The catalog could not run the statement."],
+              executedSql: null,
+              columns: [],
+            },
             rows: [],
           };
         }

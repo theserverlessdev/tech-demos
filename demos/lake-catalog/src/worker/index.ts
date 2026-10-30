@@ -125,7 +125,11 @@ export default {
         console.log(JSON.stringify({ event: "api_error", name: err instanceof Error ? err.name : "error" }));
         return new Response(JSON.stringify({ error: "The catalog is unavailable right now.", code: "unavailable" }), {
           status: 502,
-          headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
+          headers: {
+            "content-type": "application/json; charset=utf-8",
+            "cache-control": "no-store",
+            "x-content-type-options": "nosniff",
+          },
         });
       }
       return new Response("Not found", { status: 404 });

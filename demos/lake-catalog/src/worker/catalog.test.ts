@@ -106,9 +106,10 @@ test("/api/map and /query do not put to R2 or rewrite SQLite once the catalog is
   const deps = depsFromEnv(env as unknown as Env);
   const map = await handleRequest(new Request("http://127.0.0.1/api/map"), deps, "/api/map");
   expect(map?.status).toBe(200);
-  const listed = (await map?.json()) as { catalogs: { durableObjectId: string; rows: number }[] };
+  const listed = (await map?.json()) as { catalogs: { durableObjectId: string; rows: number; parquetNote: string }[] };
   expect(listed.catalogs.map((item) => item.durableObjectId)).toEqual(["orders-do", "regions-do"]);
   expect(listed.catalogs.map((item) => item.rows)).toEqual([10, 4]);
+  expect(listed.catalogs.every((item) => item.parquetNote === "pending first nightly build")).toBe(true);
   expect(woken).toBe(false);
 
   const status = await catalog.fetch(new Request("https://catalog/status?catalog=orders"));

@@ -1,11 +1,13 @@
 import { CATALOGS, ORDER_ROWS, REGION_ROWS, dataPath, type CatalogId } from "../shared/rows";
 
+export const PARQUET_NOTE = "pending first nightly build";
+
 export type MapCatalog = {
   id: CatalogId;
   durableObjectId: string;
   dataPath: string;
   rows: number;
-  parquet: boolean;
+  parquetNote: string;
 };
 
 export type MapPayload = {
@@ -31,7 +33,7 @@ export function catalogMap(opts: {
       durableObjectId: opts.objectId(id),
       dataPath: dataPath(opts.bucket, id),
       rows: ROW_COUNTS[id],
-      parquet: true,
+      parquetNote: PARQUET_NOTE,
     })),
   };
 }

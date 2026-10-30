@@ -6376,7 +6376,7 @@ function renderMap(payload) {
     path.textContent = catalog.dataPath;
     const meta = document.createElement("p");
     meta.className = "muted";
-    meta.textContent = `${catalog.rows} rows · parquet ${catalog.parquet ? "in R2" : "not written yet"}`;
+    meta.textContent = `${catalog.rows} rows · Parquet ${catalog.parquetNote}`;
     card.append(title, id, path, meta);
     mapEl.append(card);
   });
@@ -6434,11 +6434,38 @@ async function boot() {
         siteKey = body.siteKey;
     }
   } catch {}
+  const retry = document.querySelector("#turnstile-retry");
+  const started = Date.now();
+  let notedWait = false;
   const timer = window.setInterval(() => {
-    if (mountTurnstile())
+    if (mountTurnstile()) {
       window.clearInterval(timer);
+      if (retry)
+        retry.hidden = true;
+      return;
+    }
+    if (retry && Date.now() - started > 8000) {
+      retry.hidden = false;
+      if (!notedWait && !turnstileToken) {
+        notedWait = true;
+        setStatus("The check is still loading.");
+      }
+    }
   }, 200);
-  window.setTimeout(() => window.clearInterval(timer), 8000);
+  retry?.addEventListener("click", () => {
+    const host = document.getElementById("turnstile");
+    if (host)
+      delete host.dataset.ready;
+    turnstileToken = "";
+    widgetId = "";
+    const script = document.createElement("script");
+    script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+    script.async = true;
+    document.body.append(script);
+    setStatus("Waiting for the check to load.");
+    if (mountTurnstile() && retry)
+      retry.hidden = true;
+  });
   await loadMap();
 }
 form?.addEventListener("submit", (event) => {

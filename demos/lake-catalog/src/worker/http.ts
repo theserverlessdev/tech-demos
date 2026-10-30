@@ -45,6 +45,7 @@ function json(body: unknown, status = 200, extra?: HeadersInit): Response {
   const headers = new Headers(extra);
   headers.set("content-type", "application/json; charset=utf-8");
   headers.set("cache-control", "no-store");
+  headers.set("x-content-type-options", "nosniff");
   return new Response(JSON.stringify(body), { status, headers });
 }
 
@@ -215,18 +216,6 @@ async function handleQuack(request: Request, deps: Deps): Promise<Response> {
       };
       return quackResponse(errorResponse(message, explain.reasons[0] ?? "Denied.", "denied"), explain);
     }
-    const known = await deps.resolveCatalog(claims.catalog);
-    if (!known) {
-      const explain: Explain = {
-        effect: "deny",
-        role: claims.role,
-        catalog: claims.catalog,
-        reasons: ["Unknown catalog."],
-        executedSql: null,
-        columns: [],
-      };
-      return quackResponse(errorResponse(message, "Unknown catalog."), explain);
-    }
     const connectionId = await signConnection(deps.connectionSecret as string, {
       catalog: claims.catalog,
       role: claims.role,
@@ -288,6 +277,13 @@ async function handleQuack(request: Request, deps: Deps): Promise<Response> {
     return quackResponse(errorResponse(message, explain.reasons[0] ?? "Denied.", message.connectionId), explain);
   }
 
+  const preview = decide(session.role, sql, session.catalog);
+  if (preview.effect === "deny" || !preview.executedSql) {
+    const reason = preview.reasons[0] ?? "Denied.";
+    console.log(JSON.stringify({ event: "query", catalog: session.catalog, role: session.role, effect: "deny" }));
+    return quackResponse(errorResponse(message, reason, message.connectionId), preview);
+  }
+
   const claim = await deps.charge();
   if (!claim.ok) {
     const explain = capExplain(session.role, session.catalog, claim);
@@ -300,12 +296,10 @@ async function handleQuack(request: Request, deps: Deps): Promise<Response> {
     result = await deps.queryCatalog(session.catalog, session.role, sql);
   } catch (err) {
     console.log(JSON.stringify({ event: "query_failed", name: err instanceof Error ? err.name : "error" }));
-    const explain = decide(session.role, "SELECT region FROM orders", session.catalog);
-    explain.effect = "deny";
-    explain.reasons = ["The catalog could not run the statement."];
-    explain.executedSql = null;
-    explain.columns = [];
-    return quackResponse(errorResponse(message, explain.reasons[0] ?? "Denied.", message.connectionId), explain);
+    return quackResponse(
+      errorResponse(message, "The catalog could not run the statement.", message.connectionId),
+      null,
+    );
   }
 
   if (result.explain.effect === "deny" || !result.explain.executedSql) {
