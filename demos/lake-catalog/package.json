@@ -1,0 +1,25 @@
+{
+  "name": "@tech-demos/lake-catalog",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun build src/client/app.ts --target browser --outfile public/assets/app.js",
+    "dev": "bun run scripts/ensure-dev-vars.ts && bun run build && wrangler dev --var DEV:1 --var TURNSTILE_SITE_KEY:1x00000000000000000000AA",
+    "deploy": "wrangler deploy",
+    "test": "bun test",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
+    "check:layout": "bun run build && bun run scripts/check-layout.ts",
+    "verify:selfhost": "bun run scripts/verify-selfhost.ts"
+  },
+  "dependencies": {
+    "@quack-protocol/sdk": "0.3.0",
+    "hyparquet": "1.31.5",
+    "hyparquet-writer": "0.17.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250906.0",
+    "playwright": "1.63.0",
+    "typescript": "^5.9.2",
+    "wrangler": "^4.40.0"
+  }
+}

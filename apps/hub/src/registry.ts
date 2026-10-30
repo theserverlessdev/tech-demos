@@ -107,11 +107,36 @@ const r2DriveFallbackSource = standalone("r2-drive");
 // The zone route wins, and this source only redirects if that route is missing.
 const askTheHubFallbackSource = standalone("ask-the-hub");
 
+// lake-catalog is a standalone Worker (ASSETS, LAKE, CATALOG_REGISTRY, CATALOGS, QUERY_LIMIT, TOKEN_LIMIT, READ_LIMIT, cron, Turnstile).
+// The zone route wins, and this source only redirects if that route is missing.
+const lakeCatalogFallbackSource = standalone("lake-catalog");
+
 // pairlane is a standalone Worker (ASSETS, ROOM, CREATE_CAP, CREATE_LIMIT, CONNECT_LIMIT, READ_LIMIT, Turnstile).
 // The zone route wins, and this source only redirects if that route is missing.
 const pairlaneFallbackSource = standalone("pairlane");
 
 export const demos: DemoEntry[] = [
+  {
+    slug: "lake-catalog",
+    title: "Lake Catalog",
+    description: "Run SQL as analyst, viewer, or guest. A Quack catalog on Durable Objects applies the policy first.",
+    demonstrates:
+      "DuckDB’s Quack HTTP protocol on a Worker, with one SQLite Durable Object per catalog and a registry object that routes to them. JWT roles are checked against row and column rules before SQL runs. The sample table is also Parquet in R2.",
+    capabilities: [
+      "Pick analyst, viewer, or guest and run a sample statement",
+      "See the policy allow the SQL, deny it, or rewrite it, with the reasons",
+      "Read which Durable Object holds each catalog and the R2 data path",
+      "Copy a DuckDB CLI snippet that uses a ten-minute read-only token",
+    ],
+    useCases: [
+      "A shared catalog in front of Parquet you already keep in R2",
+      "One catalog per team, each with its own Durable Object and policy",
+      "Short-lived tokens so analysts query from DuckDB without a warehouse login",
+    ],
+    tags: ["quack", "ducklake", "r2", "durable-objects", "turnstile"],
+    kind: "standalone",
+    source: lakeCatalogFallbackSource,
+  },
   {
     slug: "pairlane",
     title: "Pairlane",
