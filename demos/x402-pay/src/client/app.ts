@@ -89,6 +89,7 @@ function showConfirm(body: CallResponse): void {
       ? "Mock settlement. Not a Base Sepolia payment. Nothing is signed until you accept this exact challenge."
       : "The agent will not sign until you accept this exact charge.";
   must<HTMLElement>("confirm-copy").textContent = copy;
+  must<HTMLButtonElement>("accept").textContent = demoMode === "mock" ? "Confirm (mock)" : "Confirm and pay";
   sheet.hidden = false;
   const fields = must<HTMLDListElement>("confirm-fields");
   fields.replaceChildren();
@@ -190,7 +191,13 @@ async function boot(): Promise<void> {
   demoMode = config.mode === "mock" || config.mode === "testnet" || config.mode === "pending" ? config.mode : "pending";
   if (config.label) must<HTMLElement>("mode-note").textContent = config.label;
   if (config.mode === "pending") setStatus("pending", config.label || "Setup pending.");
-  if (config.mode === "mock") setStatus("mock", config.label || "Mock settlement. Not a Base Sepolia payment.");
+  if (config.mode === "mock") {
+    setStatus("mock", config.label || "Mock settlement. Not a Base Sepolia payment.");
+    must<HTMLElement>("square-price").textContent = "$0.01 mock";
+    must<HTMLElement>("summary-price").textContent = "$0.02 mock";
+    must<HTMLElement>("try-line").textContent = "Echo is free. Square and summarize use the labelled mock. Nothing moves on Base Sepolia.";
+    must<HTMLButtonElement>("accept").textContent = "Confirm (mock)";
+  }
   const start = must<HTMLButtonElement>("start");
   const local = must<HTMLButtonElement>("local-check");
   const tokenBox = { token: "" };
@@ -249,6 +256,8 @@ async function decide(accept: boolean): Promise<void> {
     setStatus("mock", body.label || "Mock settlement. Not a Base Sepolia payment.");
   } else if (body.status === "denied") {
     setStatus("idle", "Denied. The agent did not sign.");
+  } else if (body.status === "unknown") {
+    setStatus("error", body.label || "Outcome unknown. It may have settled on Base Sepolia. Not retried.");
   } else {
     setStatus("error", errorText(body, "Not marked paid."));
   }

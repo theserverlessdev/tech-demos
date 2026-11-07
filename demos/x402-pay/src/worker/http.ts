@@ -6,9 +6,12 @@ import {
   NETWORK,
   NETWORK_LABEL,
   PENDING_LABEL,
+  UNKNOWN_LABEL,
   SESSION_FREE_CAP,
   SESSION_PAID_CAP,
   SESSION_TTL_MS,
+  SQUARE_ATOMIC,
+  SUMMARY_ATOMIC,
   USDC_BASE_SEPOLIA,
   amountLabel,
   bindingMaterial,
@@ -33,7 +36,9 @@ import {
   dayOf,
   denyConfirmation,
   finishConfirmation,
+  finishOwned,
   insertConfirmation,
+  markUnknown,
   insertSession,
   sessionByHash,
   timelineFor,
@@ -62,7 +67,7 @@ export type Deps = {
   verify: (token: string, ip: string) => Promise<"ok" | "missing" | "rejected" | "unconfigured">;
   limit: (bucket: "session" | "call" | "confirm" | "read", key: string) => Promise<boolean>;
   probe: (sessionId: string, tool: ToolName, args: CanonicalArgs) => Promise<ToolView>;
-  pay: (sessionId: string, tool: ToolName, args: CanonicalArgs) => Promise<ToolView>;
+  pay: (sessionId: string, tool: ToolName, args: CanonicalArgs, charge: { amount: string; payTo: string }) => Promise<ToolView>;
 };
 
 const COOKIE = "x402_session";
@@ -163,7 +168,15 @@ function challengeBody(tool: ToolName, args: CanonicalArgs, row: ConfirmationRow
 
 function publicRow(row: ConfirmationRow, mode: Mode) {
   const paid = row.status === "settled" && row.settlement === "testnet";
-  const label = row.settlement === "mock" ? MOCK_LABEL : row.status === "settled" ? "Settled on Base Sepolia test USDC." : row.error_code === "setup_pending" ? PENDING_LABEL : "";
+  const label = row.status === "unknown"
+    ? UNKNOWN_LABEL
+    : row.settlement === "mock"
+      ? MOCK_LABEL
+      : row.status === "settled"
+        ? "Settled on Base Sepolia test USDC."
+        : row.error_code === "setup_pending"
+          ? PENDING_LABEL
+          : "";
   return {
     paid,
     status: row.status,
@@ -188,7 +201,7 @@ export async function handleApi(request: Request, deps: Deps, path: string, base
       mode: deps.mode,
       network: NETWORK,
       networkLabel: NETWORK_LABEL,
-      prices: { square: "$0.01", summarize: "$0.02" },
+      prices: { square: amountLabel(SQUARE_ATOMIC), summarize: amountLabel(SUMMARY_ATOMIC) },
       label: deps.mode === "pending" ? PENDING_LABEL : deps.mode === "mock" ? MOCK_LABEL : "Base Sepolia test USDC. Confirm before the agent signs.",
     });
   }
@@ -283,10 +296,9 @@ async function paidCall(deps: Deps, sessionId: string, tool: ToolName, args: Can
   }
   const day = dayOf(now);
   const sessionOk = await chargeDaily(deps.sql, `session:${sessionId}`, day, "paid", SESSION_PAID_CAP);
-  const globalOk = sessionOk && (await chargeDaily(deps.sql, "global", day, "paid", GLOBAL_PAID_CAP));
-  if (!sessionOk || !globalOk) {
+  if (!sessionOk) {
     await appendTimeline(deps.sql, sessionId, now, "cap", { tool });
-    throw new HttpError(429, "daily_cap", "The daily paid-call cap is reached. Nothing was charged.");
+    throw new HttpError(429, "daily_cap", "This session's daily paid-call cap is reached. Nothing was signed.");
   }
   const material = bindingMaterial({ tool, args, scheme: "exact", network: NETWORK, asset: USDC_BASE_SEPOLIA, amount, payTo: deps.payee });
   const binding = await sha256Hex(material);
@@ -313,6 +325,14 @@ async function paidCall(deps: Deps, sessionId: string, tool: ToolName, args: Can
   await insertConfirmation(deps.sql, row);
   await appendTimeline(deps.sql, sessionId, now, "http_402", { tool, amount, network: NETWORK, payee: deps.payee });
   return json({ ...challengeBody(tool, args, row), timeline: await timelineFor(deps.sql, sessionId), mode: deps.mode }, 402);
+}
+
+async function unknownOutcome(deps: Deps, sessionId: string, id: string, tool: string, code: "agent_error" | "interrupted"): Promise<Response> {
+  await markUnknown(deps.sql, id, code, deps.now());
+  await appendTimeline(deps.sql, sessionId, deps.now(), "unknown", { tool, code });
+  const row = await confirmationById(deps.sql, id);
+  const body = row ? publicRow(row, deps.mode) : { paid: false, status: "unknown", label: UNKNOWN_LABEL, error: code };
+  return json({ ...body, paid: false, timeline: await timelineFor(deps.sql, sessionId), mode: deps.mode });
 }
 
 async function confirm(deps: Deps, sessionId: string, id: string, binding: string, accept: boolean): Promise<Response> {
@@ -364,10 +384,23 @@ async function confirm(deps: Deps, sessionId: string, id: string, binding: strin
     await finishConfirmation(deps.sql, id, { status: "failed", errorCode: "bad_tool", now: deps.now() });
     throw new HttpError(500, "bad_tool", "The stored tool is not payable. Nothing is marked paid.");
   }
-  const view = await deps.pay(sessionId, tool, args);
+  const globalOk = await chargeDaily(deps.sql, "global", dayOf(deps.now()), "paid", GLOBAL_PAID_CAP);
+  if (!globalOk) {
+    await finishConfirmation(deps.sql, id, { status: "failed", errorCode: "cap", now: deps.now() });
+    await appendTimeline(deps.sql, sessionId, deps.now(), "cap", { tool });
+    throw new HttpError(429, "daily_cap", "The global daily paid cap is full. Nothing was signed.");
+  }
+  let view: ToolView;
+  try {
+    view = await deps.pay(sessionId, tool, args, { amount: claim.row.amount, payTo: claim.row.pay_to });
+  } catch (err) {
+    console.log(JSON.stringify({ event: "pay_interrupted", name: err instanceof Error ? err.name : "error" }));
+    return unknownOutcome(deps, sessionId, id, tool, "agent_error");
+  }
+  if (view.code === "agent_error") return unknownOutcome(deps, sessionId, id, tool, "agent_error");
   const outcome = interpretPay(deps.mode, view);
   if (outcome.kind === "settled") {
-    await finishConfirmation(deps.sql, id, {
+    await finishOwned(deps.sql, id, {
       status: "settled",
       now: deps.now(),
       text: outcome.text,
@@ -381,7 +414,7 @@ async function confirm(deps: Deps, sessionId: string, id: string, binding: strin
   } else {
     const code = outcome.kind === "failed" ? outcome.code : "not_settled";
     const message = outcome.kind === "failed" ? outcome.message : outcome.kind === "setup_pending" ? outcome.message : "The payment did not settle.";
-    await finishConfirmation(deps.sql, id, { status: "failed", now: deps.now(), errorCode: code, text: message });
+    await finishOwned(deps.sql, id, { status: "failed", now: deps.now(), errorCode: code, text: message });
     await appendTimeline(deps.sql, sessionId, deps.now(), "failed", { tool, code });
   }
   const row = await confirmationById(deps.sql, id);

@@ -1,4 +1,4 @@
-import { BUSY_MS, utcDay, type LedgerStatus } from "../shared/protocol";
+import { BUSY_MS, UNKNOWN_LABEL, utcDay, type LedgerStatus } from "../shared/protocol";
 import type { Sql } from "./sql";
 
 export type SessionRow = {
@@ -97,19 +97,21 @@ export async function confirmationById(sql: Sql, id: string): Promise<Confirmati
 export type Claim = { kind: "owned"; row: ConfirmationRow } | { kind: "replay"; row: ConfirmationRow } | { kind: "busy" } | { kind: "missing" } | { kind: "expired"; row: ConfirmationRow };
 
 /**
- * One confirm owns the row. A retry of a finished row returns that row.
+ * One confirm owns the row. A retry of a finished row returns that row and does not sign again.
  * A retry while the first attempt is still inside the busy window does not start a second payment.
- * A stale approved row is marked failed and is not settled again.
+ * A stale approved row is unknown: settlement may already have happened, so it is not marked failed.
  */
 export async function claimConfirmation(sql: Sql, id: string, sessionId: string, now: number): Promise<Claim> {
   const row = await confirmationById(sql, id);
   if (!row || row.session_id !== sessionId) return { kind: "missing" };
-  if (row.status === "settled" || row.status === "failed" || row.status === "denied") return { kind: "replay", row };
+  if (row.status === "settled" || row.status === "failed" || row.status === "denied" || row.status === "unknown") {
+    return { kind: "replay", row };
+  }
   if (row.status === "approved") {
     if (now - row.updated_at < BUSY_MS) return { kind: "busy" };
-    await finishConfirmation(sql, id, { status: "failed", errorCode: "interrupted", now });
-    const failed = await confirmationById(sql, id);
-    return { kind: "replay", row: failed ?? { ...row, status: "failed", error_code: "interrupted" } };
+    await markUnknown(sql, id, "interrupted", now);
+    const unknown = await confirmationById(sql, id);
+    return { kind: "replay", row: unknown ?? { ...row, status: "unknown", error_code: "interrupted" } };
   }
   if (row.expires_at <= now) {
     await finishConfirmation(sql, id, { status: "failed", errorCode: "expired", now });
@@ -126,21 +128,38 @@ export async function claimConfirmation(sql: Sql, id: string, sessionId: string,
   return { kind: "owned", row: owned };
 }
 
-export async function finishConfirmation(
-  sql: Sql,
-  id: string,
-  patch: {
-    status: LedgerStatus;
-    now: number;
-    text?: string;
-    transaction?: string;
-    settlement?: string;
-    errorCode?: string;
-  },
-): Promise<void> {
+type ConfirmationPatch = {
+  status: LedgerStatus;
+  now: number;
+  text?: string;
+  transaction?: string;
+  settlement?: string;
+  errorCode?: string;
+};
+
+export async function finishConfirmation(sql: Sql, id: string, patch: ConfirmationPatch): Promise<void> {
   await sql.run(
     `UPDATE confirmations SET status = ?, updated_at = ?, result_text = COALESCE(?, result_text), transaction_id = COALESCE(?, transaction_id), settlement = COALESCE(?, settlement), error_code = COALESCE(?, error_code) WHERE id = ?`,
     [patch.status, patch.now, patch.text ?? null, patch.transaction ?? null, patch.settlement ?? null, patch.errorCode ?? null, id],
+  );
+}
+
+/**
+ * The attempt that called pay may finish after a crash mark. A settled write still applies.
+ * A write does not apply once the row has left approved/unknown, so a late failure cannot hide a settlement.
+ */
+export async function finishOwned(sql: Sql, id: string, patch: ConfirmationPatch): Promise<number> {
+  return sql.run(
+    `UPDATE confirmations SET status = ?, updated_at = ?, result_text = COALESCE(?, result_text), transaction_id = COALESCE(?, transaction_id), settlement = COALESCE(?, settlement), error_code = COALESCE(?, error_code) WHERE id = ? AND (status = 'approved' OR (status = 'unknown' AND error_code IN ('interrupted', 'agent_error')))`,
+    [patch.status, patch.now, patch.text ?? null, patch.transaction ?? null, patch.settlement ?? null, patch.errorCode ?? null, id],
+  );
+}
+
+/** Only an approved row becomes unknown. A settled row is left alone. */
+export async function markUnknown(sql: Sql, id: string, errorCode: "interrupted" | "agent_error", now: number): Promise<number> {
+  return sql.run(
+    `UPDATE confirmations SET status = 'unknown', error_code = ?, updated_at = ?, result_text = ? WHERE id = ? AND status = 'approved'`,
+    [errorCode, now, UNKNOWN_LABEL, id],
   );
 }
 

@@ -38,18 +38,32 @@ sequenceDiagram
   P-->>A: challenge
   A-->>B: HTTP 402 and confirm id
   B->>A: POST /api/confirm accept
-  A->>P: pay, stored arguments
+  A->>P: pay, stored amount and payee
   P->>M: tools/call with payment
   M->>F: verify
   F-->>M: valid
   M->>M: run square
   M->>F: settle
-  F-->>M: transaction
-  M-->>A: result
-  A-->>B: settled, paid true only for testnet
+  alt the call returns
+    F-->>M: transaction or success false
+    M-->>A: result
+    A-->>B: settled or failed, paid true only for testnet
+  else the worker dies after settle may have happened
+    A-->>B: outcome unknown, not signed again
+  end
 ```
 
 A deny, an expiry, a bad binding, a failed tool, or a mock receipt stops before `paid: true`. A second confirm returns the stored row and does not call settle again.
+
+## Crash after settle
+
+Settlement happens inside PayMCP, after the tool runs. If the worker dies after that, the ledger does not know whether the facilitator submitted the transfer. The row becomes `unknown` with `paid: false` and the label "Outcome unknown. It may have settled on Base Sepolia. Not retried." A later confirm does not sign again. If the original attempt then records a real Base Sepolia receipt, that write replaces `unknown`. A crash mark does not replace a row that is already settled.
+
+Do not start a second payment to find out. Look up the payer address on a Base Sepolia explorer.
+
+## Storage
+
+Each visit adds D1 rows: a session, timeline events, confirmations, a daily counter, and, after a payment, a fingerprint. PayAgent and PayMCP also keep SQLite for the life of the Durable Object. `purgeExpiredRows` in `src/worker/retention.ts` can delete D1 sessions, timeline rows, and confirmations whose session has been expired for 24 hours, and fingerprints older than 24 hours. It is unit tested and it is not scheduled. It does not delete Durable Object storage. Do not enable a cron, and do not run a remote delete, until that cleanup is authorized in chat. This demo does not create those resources and does not delete anything remote.
 
 ## Resources to create
 
@@ -81,7 +95,7 @@ Set these on the Worker. Use a new disposable Base Sepolia key. Do not reuse a k
 | --- | --- |
 | `TURNSTILE_SECRET` | Secret for the existing widget `tech-demos-shared` |
 | `X402_PAYEE_ADDRESS` | Base Sepolia address that receives test USDC. Not the zero address and not `0x0000000000000000000000000000000000000402` |
-| `X402_CLIENT_PRIVATE_KEY` | `0x` plus 64 hex characters. Disposable testnet key with a little test ETH for gas and test USDC for the two prices |
+| `X402_CLIENT_PRIVATE_KEY` | `0x` plus 64 hex characters. Disposable testnet key. The payer signs an EIP-3009 authorization. The facilitator submits it, so this key does not need test ETH for gas. It needs test USDC for the two prices |
 
 The shared Turnstile site key is already in config: `0x4AAAAAAFRUoj5qDpf7XyIW`. Action: `x402-pay`. Add that action on the existing widget if siteverify should require it. Hostnames that pass: `x402-pay.tech-demos.theserverless.dev`, `tech-demos.theserverless.dev`.
 
@@ -95,7 +109,7 @@ printf '%s' "$X402_PAYEE_ADDRESS" | npx wrangler secret put X402_PAYEE_ADDRESS
 printf '%s' "$X402_CLIENT_PRIVATE_KEY" | npx wrangler secret put X402_CLIENT_PRIVATE_KEY
 ```
 
-Fund the disposable key from a Base Sepolia faucet. The asset the facilitator settles is Circle test USDC `0x036CbD53842c5426634e7929541eC2318f3dCF7e`. Square needs `10000` atomic units ($0.01). Summarize needs `20000` ($0.02). Leave the production vars as they are: `LOCAL_DEV` is `"0"`. Do not set `X402_MODE` or `MOCK_FACILITATOR_ORIGIN` on the deployed Worker.
+Fund the disposable key with Base Sepolia test USDC. The payer does not send the transfer, so test ETH is not required for gas. The asset the facilitator settles is Circle test USDC `0x036CbD53842c5426634e7929541eC2318f3dCF7e`. Square needs `10000` atomic units ($0.01). Summarize needs `20000` ($0.02). Leave the production vars as they are: `LOCAL_DEV` is `"0"`. Do not set `X402_MODE` or `MOCK_FACILITATOR_ORIGIN` on the deployed Worker. If either is set on a public host, `/api` returns 503 `mock_misconfigured` and nothing is signed. PayAgent and PayMCP do not see `CF-Ray`; they rely on that refusal.
 
 ## What stays off
 

@@ -11,6 +11,7 @@ import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { z } from "zod";
 import { FACILITATOR_URL, MOCK_PAYEE, NETWORK, SQUARE_ATOMIC, isPrivateKey, isTestnetTx } from "../shared/protocol";
 import { guardPayment } from "./guard";
+import { interpretPay, viewToolResult } from "./interpret";
 import { mockFacilitatorResponse, memoryStore } from "./mock-facilitator";
 import { usableTestnetPayee } from "./policy";
 import type { Sql } from "./sql";
@@ -159,6 +160,104 @@ test("paidTool challenges, rejects a bad payment, settles once, and a replay doe
     expect(wrongChain.isError).toBe(true);
     expect(executions).toBe(1);
     expect(settles).toBe(1);
+
+    const twin = structuredClone(payload) as { payload?: { signature?: string } };
+    const original = twin.payload?.signature;
+    if (!original || !twin.payload) throw new Error("the settled payment had no signature");
+    twin.payload.signature = malleableSignature(original);
+    expect(twin.payload.signature).not.toBe(original);
+    const malleableReplay = await rawCall({
+      name: "square",
+      arguments: { number: 6 },
+      _meta: { "x402/payment": btoa(JSON.stringify(twin)) },
+    });
+    expect(malleableReplay.isError).toBe(true);
+    const replayCode = (malleableReplay._meta as { "x402-pay/code"?: string } | undefined)?.["x402-pay/code"];
+    expect(replayCode).toBe("replay");
+    expect(executions).toBe(1);
+    expect(settles).toBe(1);
+  } finally {
+    server.close();
+  }
+});
+
+function malleableSignature(signature: string): string {
+  const hex = signature.slice(2);
+  const r = hex.slice(0, 64);
+  const s = BigInt(`0x${hex.slice(64, 128)}`);
+  const v = Number.parseInt(hex.slice(128, 130), 16);
+  const order = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;
+  const nextS = (order - s).toString(16).padStart(64, "0");
+  // viem emits v as 27 or 28. The malleable twin flips that pair. v xor 1 would make 27 into 26, which is not a recovery id.
+  const nextV = v === 27 ? 28 : v === 28 ? 27 : v ^ 1;
+  return `0x${r}${nextS}${nextV.toString(16).padStart(2, "0")}`;
+}
+
+test("a facilitator settle of success false does not attach a receipt or sign again", async () => {
+  let verifies = 0;
+  let executions = 0;
+  const server = createServer(async (req, res) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(chunk as Buffer);
+    const body = Buffer.concat(chunks).toString("utf8");
+    const url = req.url ?? "/";
+    if (url.includes("/settle")) {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ success: false, errorReason: "facilitator_rejected", transaction: "", network: NETWORK }));
+      return;
+    }
+    if (url.includes("/verify")) verifies += 1;
+    const request = new Request(`http://127.0.0.1${url}`, {
+      method: req.method,
+      headers: { "content-type": "application/json" },
+      body: req.method === "GET" || req.method === "HEAD" ? undefined : body,
+    });
+    const response = await mockFacilitatorResponse(request, memoryStore());
+    const text = response ? await response.text() : "";
+    res.writeHead(response?.status ?? 404, { "content-type": "application/json" });
+    res.end(text);
+  });
+  const port = await listen(server);
+  try {
+    const mcp = withX402(new McpServer({ name: "PayMCP", version: "1.0.0" }), {
+      network: NETWORK,
+      recipient: MOCK_PAYEE,
+      facilitator: { url: `http://127.0.0.1:${port}/internal/mock-facilitator` },
+    });
+    mcp.paidTool("square", "Squares a number", 0.01, { number: z.number() }, {}, async (args, extra) =>
+      guardPayment({
+        sql: memory(),
+        tool: "square",
+        amount: SQUARE_ATOMIC,
+        payee: MOCK_PAYEE,
+        extra,
+        now: Date.now(),
+        run: async () => {
+          executions += 1;
+          return { content: [{ type: "text", text: String(Number(args.number) ** 2) }] };
+        },
+      }),
+    );
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await mcp.connect(serverTransport);
+    const client = new Client({ name: "pay-agent", version: "1.0.0" });
+    await client.connect(clientTransport);
+    const rawCall = client.callTool.bind(client);
+    const payer = withX402Client(client, {
+      network: NETWORK,
+      account: toClientEvmSigner(privateKeyToAccount(generatePrivateKey())),
+      maxPaymentValue: 20000n,
+    });
+    const paid = await payer.callTool(async () => true, { name: "square", arguments: { number: 3 } });
+    expect(paid.isError).toBe(true);
+    const meta = paid._meta as Record<string, unknown> | undefined;
+    expect(meta?.["x402/payment-response"]).toBeUndefined();
+    expect(executions).toBeLessThanOrEqual(1);
+    expect(verifies).toBe(1);
+    expect(interpretPay("mock", viewToolResult(paid)).kind).toBe("failed");
+    const second = await rawCall({ name: "square", arguments: { number: 3 } });
+    expect(second.isError).toBe(true);
+    expect(verifies).toBe(1);
   } finally {
     server.close();
   }

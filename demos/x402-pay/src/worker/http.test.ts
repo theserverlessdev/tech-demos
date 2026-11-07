@@ -1,9 +1,10 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { GLOBAL_PAID_CAP, NETWORK, SESSION_PAID_CAP, SQUARE_ATOMIC, SUMMARY_ATOMIC, USDC_BASE_SEPOLIA, USDC_NAME, USDC_VERSION } from "../shared/protocol";
+import { BUSY_MS, GLOBAL_PAID_CAP, NETWORK, SESSION_PAID_CAP, SQUARE_ATOMIC, SUMMARY_ATOMIC, USDC_BASE_SEPOLIA, USDC_NAME, USDC_VERSION } from "../shared/protocol";
 import { HttpError, handleApi, type Deps } from "./http";
 import type { ToolView } from "./interpret";
+import { confirmationById, finishOwned, markUnknown } from "./ledger";
 import type { Sql } from "./sql";
 import { DUMMY_TOKEN, verifyTurnstile } from "./turnstile";
 
@@ -49,6 +50,7 @@ function view(partial: Partial<ToolView>): ToolView {
     transaction: "",
     network: "",
     code: "",
+    reason: "",
     ...partial,
   };
 }
@@ -272,7 +274,7 @@ test("setup pending and mock settlement are not reported as testnet payments", a
   expect(settledBody.label).toContain("Not a Base Sepolia");
 });
 
-test("session and global daily caps stop new challenges", async () => {
+test("the session quote cap stops new challenges and denied quotes do not use the global cap", async () => {
   const { deps, settles } = harness();
   const cookie = await session(deps);
   for (let i = 0; i < SESSION_PAID_CAP; i++) {
@@ -283,16 +285,193 @@ test("session and global daily caps stop new challenges", async () => {
   expect(blocked.status).toBe(429);
   expect(settles.n).toBe(0);
 
-  const global = harness();
+  const denied = harness();
   for (let i = 0; i < GLOBAL_PAID_CAP; i++) {
-    const one = await session(global.deps);
-    const response = await call(global.deps, one, { tool: "square", args: { number: 1 } });
-    expect(response.status).toBe(402);
+    const one = await session(denied.deps);
+    const opened = await call(denied.deps, one, { tool: "square", args: { number: 1 } });
+    expect(opened.status).toBe(402);
+    const quote = (await opened.json()) as { confirmationId: string; binding: string };
+    const rejection = await confirm(denied.deps, one, { confirmationId: quote.confirmationId, binding: quote.binding, accept: false });
+    expect(rejection.status).toBe(200);
   }
-  const extra = await session(global.deps);
-  const over = await call(global.deps, extra, { tool: "square", args: { number: 1 } });
-  expect(over.status).toBe(429);
+  expect(denied.settles.n).toBe(0);
+  const next = await session(denied.deps);
+  const opened = await call(denied.deps, next, { tool: "square", args: { number: 4 } });
+  expect(opened.status).toBe(402);
+  const quote = (await opened.json()) as { confirmationId: string; binding: string };
+  const settled = await confirm(denied.deps, next, { confirmationId: quote.confirmationId, binding: quote.binding, accept: true });
+  expect(settled.status).toBe(200);
+  expect(denied.settles.n).toBe(1);
 });
+
+test("accepted payments stop at the global cap before signing", async () => {
+  const { deps, settles } = harness();
+  for (let i = 0; i < GLOBAL_PAID_CAP; i++) {
+    const one = await session(deps);
+    const opened = await call(deps, one, { tool: "square", args: { number: 1 } });
+    const quote = (await opened.json()) as { confirmationId: string; binding: string };
+    const settled = await confirm(deps, one, { confirmationId: quote.confirmationId, binding: quote.binding, accept: true });
+    expect(settled.status).toBe(200);
+  }
+  expect(settles.n).toBe(GLOBAL_PAID_CAP);
+  const extra = await session(deps);
+  const opened = await call(deps, extra, { tool: "square", args: { number: 1 } });
+  expect(opened.status).toBe(402);
+  const quote = (await opened.json()) as { confirmationId: string; binding: string };
+  const blocked = await confirm(deps, extra, { confirmationId: quote.confirmationId, binding: quote.binding, accept: true });
+  expect(blocked.status).toBe(429);
+  expect(settles.n).toBe(GLOBAL_PAID_CAP);
+});
+
+test("two accepts settle once", async () => {
+  const { deps, settles } = harness();
+  let claims = 0;
+  let releaseClaims: () => void = () => {};
+  const bothClaims = new Promise<void>((resolve, reject) => {
+    releaseClaims = resolve;
+    setTimeout(() => reject(new Error("both confirms did not reach the compare-and-set")), 1000);
+  });
+  const run = deps.sql.run.bind(deps.sql);
+  deps.sql.run = async (query, params) => {
+    if (query.includes("status = 'requested'")) {
+      claims += 1;
+      if (claims === 2) releaseClaims();
+      await bothClaims;
+    }
+    return run(query, params);
+  };
+  const cookie = await session(deps);
+  const opened = await call(deps, cookie, { tool: "square", args: { number: 4 } });
+  const quote = (await opened.json()) as { confirmationId: string; binding: string };
+  const [left, right] = await Promise.all([
+    confirm(deps, cookie, { confirmationId: quote.confirmationId, binding: quote.binding, accept: true }),
+    confirm(deps, cookie, { confirmationId: quote.confirmationId, binding: quote.binding, accept: true }),
+  ]);
+  const statuses = [left.status, right.status].sort((a, b) => a - b);
+  expect(statuses).toEqual([200, 409]);
+  const bodies = (await Promise.all([left.json(), right.json()])) as { paid?: boolean; error?: string; status?: string }[];
+  expect(bodies.some((body) => body.status === "settled" && body.paid === true)).toBe(true);
+  expect(bodies.some((body) => body.error === "in_progress")).toBe(true);
+  expect(claims).toBe(2);
+  expect(settles.n).toBe(1);
+});
+
+test("confirm passes the stored amount and payee to the signer", async () => {
+  const seen: { amount: string; payTo: string }[] = [];
+  const { deps } = harness({
+    pay: async (_session, _tool, _args, charge) => {
+      seen.push(charge);
+      return view({ text: "16", success: true, transaction: `0x${"ab".repeat(32)}`, network: NETWORK });
+    },
+  });
+  const cookie = await session(deps);
+  const opened = await call(deps, cookie, { tool: "square", args: { number: 4 } });
+  const quote = (await opened.json()) as { confirmationId: string; binding: string; challenge: { payTo: string; amount: string } };
+  await confirm(deps, cookie, { confirmationId: quote.confirmationId, binding: quote.binding, accept: true });
+  expect(seen).toEqual([{ amount: quote.challenge.amount, payTo: quote.challenge.payTo }]);
+  expect(seen[0]?.amount).toBe(SQUARE_ATOMIC);
+  expect(seen[0]?.payTo).toBe(PAYEE);
+});
+
+test("a thrown pay is unknown, is not retried, and a late settlement still wins", async () => {
+  const { deps, settles, clock } = harness({
+    pay: async () => {
+      settles.n += 1;
+      throw new Error("worker died");
+    },
+  });
+  const cookie = await session(deps);
+  const opened = await call(deps, cookie, { tool: "square", args: { number: 4 } });
+  const quote = (await opened.json()) as { confirmationId: string; binding: string };
+  const crashed = await confirm(deps, cookie, { confirmationId: quote.confirmationId, binding: quote.binding, accept: true });
+  const crashedBody = (await crashed.json()) as { paid: boolean; status: string; label: string };
+  expect(crashed.status).toBe(200);
+  expect(crashedBody.paid).toBe(false);
+  expect(crashedBody.status).toBe("unknown");
+  expect(crashedBody.label).toContain("Outcome unknown");
+  expect(crashedBody.label).toContain("Not retried");
+
+  clock.now += BUSY_MS + 1000;
+  const retry = await confirm(deps, cookie, { confirmationId: quote.confirmationId, binding: quote.binding, accept: true });
+  const retryBody = (await retry.json()) as { paid: boolean; status: string };
+  expect(retryBody.status).toBe("unknown");
+  expect(retryBody.paid).toBe(false);
+  expect(settles.n).toBe(1);
+
+  const wrote = await finishOwned(deps.sql, quote.confirmationId, {
+    status: "settled",
+    now: clock.now,
+    text: "16",
+    transaction: `0x${"cd".repeat(32)}`,
+    settlement: "testnet",
+  });
+  expect(wrote).toBe(1);
+  const row = await confirmationById(deps.sql, quote.confirmationId);
+  expect(row?.status).toBe("settled");
+  expect(row?.settlement).toBe("testnet");
+  const clobber = await markUnknown(deps.sql, quote.confirmationId, "interrupted", clock.now);
+  expect(clobber).toBe(0);
+  const still = await confirmationById(deps.sql, quote.confirmationId);
+  expect(still?.status).toBe("settled");
+});
+
+test("a settlement that arrives after the crash mark is recorded and is not signed twice", async () => {
+  let release: (view: ToolView) => void = () => {};
+  const { deps, settles, clock } = harness({
+    pay: () => {
+      settles.n += 1;
+      return new Promise((resolve) => {
+        release = resolve;
+      });
+    },
+  });
+  const cookie = await session(deps);
+  const opened = await call(deps, cookie, { tool: "square", args: { number: 4 } });
+  const quote = (await opened.json()) as { confirmationId: string; binding: string };
+  const pending = confirm(deps, cookie, { confirmationId: quote.confirmationId, binding: quote.binding, accept: true });
+  await viWait(() => settles.n === 1);
+  clock.now += BUSY_MS + 1000;
+  const retry = await confirm(deps, cookie, { confirmationId: quote.confirmationId, binding: quote.binding, accept: true });
+  const retryBody = (await retry.json()) as { paid: boolean; status: string; label: string };
+  expect(retryBody.status).toBe("unknown");
+  expect(retryBody.paid).toBe(false);
+  expect(retryBody.label).toContain("Outcome unknown");
+  expect(settles.n).toBe(1);
+  release(view({ text: "16", success: true, transaction: `0x${"ab".repeat(32)}`, network: NETWORK }));
+  const first = await pending;
+  const firstBody = (await first.json()) as { paid: boolean; status: string };
+  expect(first.status).toBe(200);
+  expect(firstBody.status).toBe("settled");
+  expect(firstBody.paid).toBe(true);
+  expect(settles.n).toBe(1);
+});
+
+test("an agent error after an owned confirm is unknown and is not retried", async () => {
+  const { deps, settles, clock } = harness({
+    pay: async () => {
+      settles.n += 1;
+      return view({ isError: true, code: "agent_error", text: "The agent could not complete that call." });
+    },
+  });
+  const cookie = await session(deps);
+  const opened = await call(deps, cookie, { tool: "square", args: { number: 4 } });
+  const quote = (await opened.json()) as { confirmationId: string; binding: string };
+  const crashed = await confirm(deps, cookie, { confirmationId: quote.confirmationId, binding: quote.binding, accept: true });
+  const body = (await crashed.json()) as { paid: boolean; status: string };
+  expect(body.status).toBe("unknown");
+  expect(body.paid).toBe(false);
+  clock.now += BUSY_MS + 1000;
+  await confirm(deps, cookie, { confirmationId: quote.confirmationId, binding: quote.binding, accept: true });
+  expect(settles.n).toBe(1);
+});
+
+async function viWait(ready: () => boolean): Promise<void> {
+  for (let i = 0; i < 20; i++) {
+    if (ready()) return;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  throw new Error("the pay call did not start");
+}
 
 test("a paid tool that skips the challenge is not returned as a result", async () => {
   const { deps } = harness({ probe: async () => view({ text: "16", success: true }) });

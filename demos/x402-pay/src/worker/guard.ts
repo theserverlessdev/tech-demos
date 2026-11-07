@@ -39,7 +39,8 @@ function decodePayload(token: string): PaymentPayload | null {
 
 /**
  * Runs the tool only after the payload matches the catalog and the signature checks out.
- * Returning an error keeps the SDK from settling. A repeated signature does not run again.
+ * Returning an error keeps the SDK from settling.
+ * The replay key is the payer and the authorization nonce. A re-encoded signature of the same authorization does not run again.
  */
 export async function guardPayment(opts: {
   sql: Sql;
@@ -58,9 +59,10 @@ export async function guardPayment(opts: {
   const decision = assessPayload(payload, boundFor(opts.tool, opts.payee, opts.amount), Math.floor(opts.now / 1000));
   if (!decision.ok) return textResult(decision.message, decision.code);
   if (!(await signatureMatches(payload))) return textResult("The payment signature does not match Base Sepolia.", "unsigned");
-  const signature = payload.payload?.signature;
-  if (typeof signature !== "string") return textResult("The payment has no usable signature.", "unsigned");
-  const fingerprint = await sha256Hex(signature);
+  const from = payload.payload?.authorization?.from;
+  const nonce = payload.payload?.authorization?.nonce;
+  if (typeof from !== "string" || typeof nonce !== "string") return textResult("The payment has no usable authorization.", "unsigned");
+  const fingerprint = await sha256Hex(`${from.toLowerCase()}:${nonce.toLowerCase()}`);
   const claim = await claimFingerprint(opts.sql, fingerprint, opts.now);
   if (claim !== "new") return textResult("This payment was already used. It was not settled again.", claim === "replay" ? "replay" : "failed");
   try {

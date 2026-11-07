@@ -9,6 +9,7 @@ export type ToolView = {
   transaction: string;
   network: string;
   code: string;
+  reason: string;
 };
 
 export type PayView =
@@ -38,6 +39,7 @@ export function viewToolResult(raw: unknown): ToolView {
   const network = receipt && typeof receipt.network === "string" ? receipt.network : "";
   const success = receipt?.success === true;
   const code = typeof meta["x402-pay/code"] === "string" ? meta["x402-pay/code"] : "";
+  const reason = error && typeof error.error === "string" ? error.error : "";
   return {
     text,
     isError: body.isError === true,
@@ -47,6 +49,7 @@ export function viewToolResult(raw: unknown): ToolView {
     transaction,
     network,
     code,
+    reason,
   };
 }
 
@@ -56,6 +59,11 @@ export function viewToolResult(raw: unknown): ToolView {
  */
 export function interpretPay(mode: Mode, view: ToolView): PayView {
   if (view.setup) return { kind: "setup_pending", message: PENDING_LABEL };
+  // A fresh challenge uses PAYMENT_REQUIRED. A failed settle comes back with accepts attached and a different reason.
+  const freshChallenge = view.reason === "" || view.reason === "PAYMENT_REQUIRED";
+  if (view.challenge && !freshChallenge) {
+    return { kind: "failed", code: "not_settled", message: view.text || "The payment did not settle. Nothing is marked paid." };
+  }
   if (view.challenge) return { kind: "challenge", requirement: view.challenge };
   if (view.isError || !view.success) {
     return { kind: "failed", code: view.code || "not_settled", message: view.text || "The payment did not settle. Nothing is marked paid." };

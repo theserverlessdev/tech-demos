@@ -44,10 +44,11 @@ export const MAX_BODY_BYTES = 8192;
 
 export const MOCK_LABEL = "Mock settlement. Not a Base Sepolia payment.";
 export const PENDING_LABEL = "Setup pending. The testnet payee and signing key are not set. No charge was made.";
+export const UNKNOWN_LABEL = "Outcome unknown. It may have settled on Base Sepolia. Not retried.";
 
 export type ToolName = "echo" | "square" | "summarize";
 export type Mode = "pending" | "mock" | "testnet";
-export type LedgerStatus = "requested" | "approved" | "settled" | "failed" | "denied";
+export type LedgerStatus = "requested" | "approved" | "settled" | "failed" | "denied" | "unknown";
 
 export type CanonicalArgs = Record<string, string | number>;
 

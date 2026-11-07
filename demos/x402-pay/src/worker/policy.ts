@@ -80,8 +80,8 @@ export function payeeForMode(mode: "pending" | "mock" | "testnet", configured: s
 }
 
 /**
- * Mock mode is on only for a loopback worker that opted in and named a facilitator origin.
- * A deployed host never takes this branch, even if the flag is set.
+ * Mock mode is on only when the caller says local, the flag is mock, and the facilitator origin is loopback.
+ * PayAgent and PayMCP pass local from LOCAL_DEV alone. The session API is what refuses a public host that still has those vars set.
  */
 export function resolveMode(opts: {
   local: boolean;
@@ -115,6 +115,39 @@ export function usableTestnetPayee(value: string | undefined): value is `0x${str
   if (!value || !isAddress(value)) return false;
   if (sameAddress(value, ZERO) || sameAddress(value, MOCK_PAYEE)) return false;
   return true;
+}
+
+/** Exactly one requirement, and it matches the bound the visitor confirmed. */
+export function acceptsBound(requirements: unknown[], bound: Bound): boolean {
+  if (requirements.length !== 1) return false;
+  const row = record(requirements[0]);
+  if (!row) return false;
+  return assessRequirement(
+    {
+      scheme: row.scheme,
+      network: row.network,
+      asset: row.asset,
+      amount: row.amount,
+      payTo: row.payTo,
+      maxTimeoutSeconds: row.maxTimeoutSeconds,
+      extra: row.extra,
+    },
+    bound,
+  ).ok;
+}
+
+export type CatalogCharge = { amount: string; payTo: string };
+
+/**
+ * The signer uses the confirmed row. It may sign only when that row is the catalog price and payee.
+ * A mismatch returns before any key is loaded.
+ */
+export function signableCharge(
+  row: CatalogCharge,
+  catalog: CatalogCharge,
+): { ok: true; amount: string; payTo: string } | { ok: false; code: "altered" } {
+  if (row.amount !== catalog.amount || !sameAddress(row.payTo, catalog.payTo)) return { ok: false, code: "altered" };
+  return { ok: true, amount: row.amount, payTo: row.payTo };
 }
 
 export function assessRequirement(req: Requirement, bound: Bound): Decision {

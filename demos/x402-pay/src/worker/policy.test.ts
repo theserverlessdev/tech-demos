@@ -10,7 +10,7 @@ import {
   USDC_NAME,
   USDC_VERSION,
 } from "../shared/protocol";
-import { assessPayload, assessRequirement, boundFor, resolveMode, signatureMatches, usableTestnetPayee, type PaymentPayload, type Requirement } from "./policy";
+import { acceptsBound, assessPayload, assessRequirement, boundFor, resolveMode, signableCharge, signatureMatches, usableTestnetPayee, type PaymentPayload, type Requirement } from "./policy";
 
 const TYPES = {
   TransferWithAuthorization: [
@@ -133,4 +133,38 @@ test("mock mode cannot be selected on a public host or against a public facilita
   expect(resolveMode({ local: true, modeFlag: "mock", facilitatorOrigin: "https://x402.org/facilitator", payee: undefined, privateKey: undefined })).toBe("pending");
   expect(resolveMode({ local: true, modeFlag: "mock", facilitatorOrigin: "http://127.0.0.1:8796", payee: undefined, privateKey: undefined })).toBe("mock");
   expect(resolveMode({ local: false, modeFlag: undefined, facilitatorOrigin: undefined, payee: undefined, privateKey: undefined })).toBe("pending");
+});
+
+function oneRequirement(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    scheme: "exact",
+    network: NETWORK,
+    asset: USDC_BASE_SEPOLIA,
+    amount: SQUARE_ATOMIC,
+    payTo: payee,
+    maxTimeoutSeconds: 60,
+    extra: { name: USDC_NAME, version: USDC_VERSION },
+    ...overrides,
+  };
+}
+
+test("acceptsBound allows one exact Base Sepolia requirement and rejects the rest", () => {
+  const bound = boundFor("square", payee, SQUARE_ATOMIC);
+  expect(acceptsBound([oneRequirement(), oneRequirement()], bound)).toBe(false);
+  expect(acceptsBound([oneRequirement({ network: "eip155:8453" })], bound)).toBe(false);
+  expect(acceptsBound([oneRequirement({ asset: USDC_BASE_MAINNET })], bound)).toBe(false);
+  expect(acceptsBound([oneRequirement({ amount: "20000" })], bound)).toBe(false);
+  expect(acceptsBound([oneRequirement({ payTo: "0x3333333333333333333333333333333333333333" })], bound)).toBe(false);
+  expect(acceptsBound([oneRequirement()], bound)).toBe(true);
+});
+
+test("signableCharge rejects a confirmed payee or amount that is not the catalog", () => {
+  const catalog = { amount: SQUARE_ATOMIC, payTo: payee };
+  const otherPayee = signableCharge({ amount: SQUARE_ATOMIC, payTo: "0x3333333333333333333333333333333333333333" }, catalog);
+  expect(otherPayee.ok).toBe(false);
+  if (!otherPayee.ok) expect(otherPayee.code).toBe("altered");
+  const otherAmount = signableCharge({ amount: "20000", payTo: payee }, catalog);
+  expect(otherAmount.ok).toBe(false);
+  const match = signableCharge({ amount: SQUARE_ATOMIC, payTo: payee }, catalog);
+  expect(match).toEqual({ ok: true, amount: SQUARE_ATOMIC, payTo: payee });
 });

@@ -10,7 +10,7 @@ This demo follows [cloudflare/agents `examples/x402-mcp`](https://github.com/clo
 | Client | React, Vite, kumo, `withX402Client` | A small script. `withX402Client` stays inside PayAgent |
 | Confirm | Four hex characters, no expiry | Bound to tool, arguments, amount, network, token, payee. Two minutes. Single use |
 | Money | Base Sepolia via the public facilitator | Base Sepolia only, and rejected otherwise. Missing secrets stay unpaid |
-| Record | None | D1: requested, approved, settled, failed, denied |
+| Record | None | D1: one row moves through requested, approved, settled, failed, denied, or unknown |
 | Visitors | A wallet key in the example environment | Turnstile, an HttpOnly session, no key in the browser |
 
 ## What we cut
@@ -30,3 +30,5 @@ This demo follows [cloudflare/agents `examples/x402-mcp`](https://github.com/clo
 ## 2026-11-07
 
 First demo. Echo is free. Square is $0.01 test USDC. Summarize is $0.02 test USDC and calls Workers AI only after verification. The session API maps the MCP payment challenge to HTTP 402. A retry of the same confirm does not settle again. A mock facilitator exists only on loopback and is labelled as not a Base Sepolia payment.
+
+A crash after settlement may have happened is `unknown`, not `failed`, and is not signed again. A late receipt from that same attempt can still be stored. The global paid cap is charged when an accept owns the row. Replay identity is the payer and the nonce. A public host with mock vars set returns 503. Cleanup of old D1 rows is implemented and tested, and it is not scheduled.

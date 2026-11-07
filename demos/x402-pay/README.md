@@ -6,7 +6,7 @@ This follows [cloudflare/agents `examples/x402-mcp`](https://github.com/cloudfla
 
 ## What this proves
 
-`paidTool` can price an MCP tool. The client receives a payment challenge, and this demo maps that challenge to **HTTP 402**. PayAgent, a Durable Object, signs only after a confirm that names the tool, the arguments, the amount, Base Sepolia, test USDC, and the payee. The tool runs after verification. D1 keeps requested, approved, settled, and failed as different rows. A failure is not shown as paid.
+`paidTool` can price an MCP tool. The client receives a payment challenge, and this demo maps that challenge to **HTTP 402**. PayAgent, a Durable Object, signs only after a confirm that names the tool, the arguments, the amount, Base Sepolia, test USDC, and the payee. The tool runs after verification. One ledger row moves through requested, approved, and then settled, failed, denied, or unknown. The timeline keeps each step. A failure is not shown as paid. An unknown row is not shown as paid and is not signed again.
 
 ## What you can try
 
@@ -49,7 +49,8 @@ bunx wrangler dev --port 8798 \
 - Network on the wire is `eip155:84532` only. `base`, `base-sepolia`, `eip155:8453`, and `eip155:1` are rejected.
 - Token is Base Sepolia test USDC `0x036CbD53842c5426634e7929541eC2318f3dCF7e`. Mainnet USDC is rejected.
 - Confirm lasts two minutes, matches one exact binding, and is single-use.
-- Session paid cap: 6 per UTC day. Global paid cap: 40 per UTC day. Free echo: 30 per session per UTC day.
+- If the worker stops after settlement may have happened, the row is unknown. It is not marked failed, and a retry does not sign again. Check that payer on a Base Sepolia explorer before assuming the charge did not happen.
+- Session paid quotes: 6 per UTC day. Global paid accepts: 40 per UTC day. A denied quote does not use the global cap. Free echo: 30 per session per UTC day.
 - Rate limits: `SESSION_LIMIT` `7631` (6/min), `CALL_LIMIT` `7632` (20/min), `CONFIRM_LIMIT` `7633` (10/min), `READ_LIMIT` `7634` (60/min).
 - Turnstile action `x402-pay`. Hosts: `x402-pay.tech-demos.theserverless.dev` and `tech-demos.theserverless.dev`.
 - Summary input 1500 characters, output 500. Echo 280 characters.

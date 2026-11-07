@@ -54,13 +54,20 @@ function errorResponse(err: unknown): Response {
   );
 }
 
-async function agentCall(env: Env, sessionId: string, path: string, tool: ToolName, args: CanonicalArgs): Promise<ToolView> {
+async function agentCall(
+  env: Env,
+  sessionId: string,
+  path: string,
+  tool: ToolName,
+  args: CanonicalArgs,
+  charge?: { amount: string; payTo: string },
+): Promise<ToolView> {
   const stub = env.PAY_AGENT.get(env.PAY_AGENT.idFromName(sessionId));
   const response = await stub.fetch(
     new Request(`https://pay-agent.internal${path}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ tool, args }),
+      body: JSON.stringify(charge ? { tool, args, amount: charge.amount, payTo: charge.payTo } : { tool, args }),
     }),
   );
   const body = (await response.json()) as Partial<ToolView>;
@@ -74,6 +81,7 @@ async function agentCall(env: Env, sessionId: string, path: string, tool: ToolNa
     transaction: typeof body.transaction === "string" ? body.transaction : "",
     network: typeof body.network === "string" ? body.network : "",
     code: typeof body.code === "string" ? body.code : "",
+    reason: typeof body.reason === "string" ? body.reason : "",
   };
 }
 
@@ -91,7 +99,7 @@ function buildDeps(env: Env, local: boolean): Deps {
     local,
     mode,
     payee: payeeForMode(mode, env.X402_PAYEE_ADDRESS),
-      siteKey: env.TURNSTILE_SITE_KEY ?? "",
+    siteKey: env.TURNSTILE_SITE_KEY ?? "",
     verify: (token, ip) => verifyTurnstile({ secret: env.TURNSTILE_SECRET ?? "", token, ip, local }),
     limit: async (bucket, key) => {
       const binding = bucket === "session" ? env.SESSION_LIMIT : bucket === "call" ? env.CALL_LIMIT : bucket === "confirm" ? env.CONFIRM_LIMIT : env.READ_LIMIT;
@@ -99,7 +107,7 @@ function buildDeps(env: Env, local: boolean): Deps {
       return result.success;
     },
     probe: (sessionId, tool, args) => agentCall(env, sessionId, "/probe", tool, args),
-    pay: (sessionId, tool, args) => agentCall(env, sessionId, "/pay", tool, args),
+    pay: (sessionId, tool, args, charge) => agentCall(env, sessionId, "/pay", tool, args, charge),
   };
 }
 
@@ -142,6 +150,13 @@ export default {
     if (url.pathname === BASE_PATH) return Response.redirect(`${url.origin}${BASE_PATH}/${url.search}`, 308);
     if (!demoHost(url.hostname, local)) return new Response("This demo is unavailable.", { status: 503 });
     if (path.startsWith("/api/")) {
+      // PayMCP and PayAgent treat LOCAL_DEV=1 as local without seeing CF-Ray. They trust this gate.
+      if (!local && (env.X402_MODE || env.MOCK_FACILITATOR_ORIGIN)) {
+        return Response.json(
+          { paid: false, error: { code: "mock_misconfigured", message: "Mock mode is configured on a public host. Paid calls are off." } },
+          { status: 503, headers: { "cache-control": "no-store" } },
+        );
+      }
       try {
         return await handleApi(request, buildDeps(env, local), path, base);
       } catch (err) {

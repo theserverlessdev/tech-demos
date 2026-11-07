@@ -38,7 +38,7 @@
       <h2>Pay for a tool call after you confirm the exact charge</h2>
       <ul class="points">
         <li><span>Proves</span> An agent can take an HTTP 402 challenge, wait for a confirm bound to the amount, network, token, payee, tool, and arguments, then sign.</li>
-        <li><span>Try</span> Echo is free. Square is $0.01 and summarize is $0.02 in test USDC. Deny one, then confirm one and read the timeline.</li>
+        <li><span>Try</span> <span id="try-line">Echo is free. Square is $0.01 and summarize is $0.02 in test USDC. Deny one, then confirm one and read the timeline.</span></li>
         <li><span>Build</span> A metered MCP tool, a confirm step before an agent spends, or a ledger that keeps a failed call distinct from a settled one.</li>
       </ul>
       <p class="note" id="mode-note">No mainnet payment is accepted. A missing testnet key stays on setup pending.</p>
@@ -61,13 +61,13 @@
           <button class="btn" type="submit">Call echo</button>
         </form>
         <form id="square-form" class="tool">
-          <div class="tool__head"><h3>Square</h3><span class="pill pill-pay">$0.01 test USDC</span></div>
+          <div class="tool__head"><h3>Square</h3><span class="pill pill-pay" id="square-price">$0.01 test USDC</span></div>
           <label for="square">Number</label>
           <input id="square" name="number" inputmode="decimal" autocomplete="off" placeholder="4" />
           <button class="btn" type="submit">Call square</button>
         </form>
         <form id="summary-form" class="tool">
-          <div class="tool__head"><h3>Summarize</h3><span class="pill pill-pay">$0.02 test USDC</span></div>
+          <div class="tool__head"><h3>Summarize</h3><span class="pill pill-pay" id="summary-price">$0.02 test USDC</span></div>
           <label for="summary">Text</label>
           <textarea id="summary" name="text" maxlength="1500" rows="4" placeholder="A short note to summarize"></textarea>
           <button class="btn" type="submit">Call summarize</button>
@@ -86,7 +86,7 @@
         </section>
         <section class="card">
           <h2>Timeline</h2>
-          <p class="hint">402, approval, payment, verification, settlement, result. A failure is not marked paid.</p>
+          <p class="hint">402, approval, payment, verification, settlement, result. A failure is not marked paid. An unknown outcome is not marked paid and is not retried.</p>
           <ol id="timeline" aria-live="polite"></ol>
           <p class="result" id="result" hidden></p>
         </section>
