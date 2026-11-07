@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="theme-color" content="#0e0e11" />
+  <meta name="referrer" content="no-referrer" />
+  <title>x402 Pay · theserverless.dev</title>
+  <meta name="description" content="Confirm a Base Sepolia charge, then an agent pays for an MCP tool over HTTP 402." />
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Hanken+Grotesk:wght@400..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script src="./assets/theme.js"></script>
+  <link rel="stylesheet" href="./assets/x402.css" />
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="https://tech-demos.theserverless.dev/" aria-label="Tech Demos gallery">
+      <svg class="brand__mark" width="26" height="26" viewBox="0 -3 128 128" aria-hidden="true">
+        <g stroke="currentColor" stroke-width="6" stroke-linecap="round" opacity="0.45"><line x1="4" y1="58" x2="20" y2="58"/><line x1="1" y1="72" x2="19" y2="72"/><line x1="6" y1="86" x2="22" y2="86"/></g>
+        <path d="M44 92 C31 92 20 82 20 69 C20 57 29 47 41 46 C45 33 57 24 70 24 C85 24 98 35 100 51 C110 53 118 62 118 72 C118 83 109 92 97 92 Z" fill="none" stroke="currentColor" stroke-width="7.5" stroke-linejoin="round"/>
+        <path d="M69 36 L50 71 L63 71 L57 102 L88 60 L72 60 L80 36 Z" fill="currentColor"/>
+      </svg>
+      <span>Tech Demos</span>
+    </a>
+    <div class="topbar__title">
+      <h1>x402 Pay</h1>
+      <p>HTTP 402 for MCP tools</p>
+    </div>
+  </header>
+  <p class="strip" id="status" data-kind="idle" role="status">Base Sepolia test USDC only. The signing key stays on the Worker.</p>
+  <main>
+    <section class="card" id="intro">
+      <p class="eyebrow">Agents SDK · x402</p>
+      <h2>Pay for a tool call after you confirm the exact charge</h2>
+      <ul class="points">
+        <li><span>Proves</span> An agent can take an HTTP 402 challenge, wait for a confirm bound to the amount, network, token, payee, tool, and arguments, then sign.</li>
+        <li><span>Try</span> Echo is free. Square is $0.01 and summarize is $0.02 in test USDC. Deny one, then confirm one and read the timeline.</li>
+        <li><span>Build</span> A metered MCP tool, a confirm step before an agent spends, or a ledger that keeps a failed call distinct from a settled one.</li>
+      </ul>
+      <p class="note" id="mode-note">No mainnet payment is accepted. A missing testnet key stays on setup pending.</p>
+      <div id="gate">
+        <div id="turnstile" class="turnstile"></div>
+        <div class="actions">
+          <button class="btn" id="start" type="button" disabled>Start session</button>
+          <button class="btn btn-ghost" id="local-check" type="button" hidden>Use the local check</button>
+        </div>
+        <p class="hint" id="form-error" role="alert"></p>
+      </div>
+    </section>
+    <div class="layout" id="workspace" hidden>
+      <section class="card">
+        <h2>Tools</h2>
+        <form id="echo-form" class="tool">
+          <div class="tool__head"><h3>Echo</h3><span class="pill">Free</span></div>
+          <label for="echo">Message</label>
+          <input id="echo" name="message" maxlength="280" autocomplete="off" placeholder="hello" />
+          <button class="btn" type="submit">Call echo</button>
+        </form>
+        <form id="square-form" class="tool">
+          <div class="tool__head"><h3>Square</h3><span class="pill pill-pay">$0.01 test USDC</span></div>
+          <label for="square">Number</label>
+          <input id="square" name="number" inputmode="decimal" autocomplete="off" placeholder="4" />
+          <button class="btn" type="submit">Call square</button>
+        </form>
+        <form id="summary-form" class="tool">
+          <div class="tool__head"><h3>Summarize</h3><span class="pill pill-pay">$0.02 test USDC</span></div>
+          <label for="summary">Text</label>
+          <textarea id="summary" name="text" maxlength="1500" rows="4" placeholder="A short note to summarize"></textarea>
+          <button class="btn" type="submit">Call summarize</button>
+        </form>
+      </section>
+      <div class="side">
+        <section class="card" id="confirm" hidden>
+          <p class="eyebrow">Confirm before sign</p>
+          <h2>Payment required</h2>
+          <p id="confirm-copy">The agent will not sign until you accept this exact charge.</p>
+          <dl id="confirm-fields"></dl>
+          <div class="actions">
+            <button class="btn" id="accept" type="button">Confirm and pay</button>
+            <button class="btn btn-ghost" id="deny" type="button">Deny</button>
+          </div>
+        </section>
+        <section class="card">
+          <h2>Timeline</h2>
+          <p class="hint">402, approval, payment, verification, settlement, result. A failure is not marked paid.</p>
+          <ol id="timeline" aria-live="polite"></ol>
+          <p class="result" id="result" hidden></p>
+        </section>
+      </div>
+    </div>
+  </main>
+  <script src="./assets/app.js" type="module"></script>
+</body>
+</html>

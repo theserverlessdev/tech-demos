@@ -23,14 +23,14 @@ Mainnet, other networks, other tokens, and any payee the server did not configur
 ## Stack
 
 - Workers Paid, static assets, one Worker. Bun. No React, Vite, or other UI framework. The page is a small script, same shape as the other standalone demos.
-- `agents@0.33.0` `withX402` / `paidTool` and `withX402Client`. Peer `@modelcontextprotocol/sdk@1.32.2`. The installed x402 packages are `@x402/core@2.29.0` and `@x402/evm@2.29.0` (2.30.0 is inside the three-day install age gate). `viem@2.57.16` signs. `zod@4.6.7` describes tool inputs.
+- `agents@0.33.0` `withX402` / `paidTool` and `withX402Client`. Peers `@modelcontextprotocol/sdk@1.32.2`, `@modelcontextprotocol/server@2.4.0`, and `@modelcontextprotocol/client@2.4.0`. The installed x402 packages are `@x402/core@2.29.0` and `@x402/evm@2.29.0` (2.30.0 is inside the three-day install age gate). `viem@2.57.16` signs. `zod@4.6.7` describes tool inputs.
 - Network on the wire is CAIP-2 `eip155:84532` (Base Sepolia). The SDK also accepts the legacy name `base-sepolia` and normalizes it. This demo accepts only `eip155:84532`.
 - Asset is Circle test USDC `0x036CbD53842c5426634e7929541eC2318f3dCF7e`, six decimals. $0.01 is `10000` atomic units. $0.02 is `20000`.
 - Facilitator for a real attempt is only `https://x402.org/facilitator`. There is no env override.
 - PayMCP and PayAgent are SQLite Durable Objects. The payee and the signing key are read from runtime secrets inside the object. They are not written to agent state, D1, logs, or the browser.
 - D1 `tech-demos-x402-pay` is the ledger, the session store, the daily counters, and the timeline. One additive migration.
 - Rate limits `SESSION_LIMIT` `7631`, `CALL_LIMIT` `7632`, `CONFIRM_LIMIT` `7633`, `READ_LIMIT` `7634`. pairlane uses `7624`–`7626`.
-- Shared Turnstile site key `0x4AAAAAAFRUoj5qDpf7XyIW`, action `x402-pay`, exact hosts `x402-pay.tech-demos.theserverless.dev` and `tech-demos.theserverless.dev`. Loopback is accepted only while local mode is on.
+- Shared Turnstile site key `0x4AAAAAAFRUoj5qDpf7XyIW`, action `x402-pay`, exact hosts `x402-pay.tech-demos.theserverless.dev` and `tech-demos.theserverless.dev`. Loopback is accepted while local mode is on. Wrangler dev rewrites the host to the zone route, so local mode also accepts that host when `LOCAL_DEV=1` and the request has no `CF-Ray`. A deployed request has `CF-Ray`, so the flag does not open local mode there.
 - Workers AI model `@cf/meta/llama-3.2-1b-instruct` for the summary. Input and output are capped.
 
 `paidTool` in agents 0.33.0 does not emit an HTTP status. It returns an MCP tool error whose `_meta["x402/error"]` carries the payment requirements. The session API maps that challenge to HTTP 402 so the timeline shows the status the protocol is named for. The retry still goes through `withX402Client`, which places the payment in `_meta["x402/payment"]`. The SDK verifies, runs the handler, then settles. A handler error skips settlement. That is why a failed summary is not marked paid.

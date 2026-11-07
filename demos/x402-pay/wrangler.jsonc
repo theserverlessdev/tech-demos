@@ -1,0 +1,52 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tech-demos-x402-pay",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none"
+  },
+  "ai": { "binding": "AI" },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "tech-demos-x402-pay",
+      "database_id": "00000000-0000-4000-8000-000000000402",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "PAY_MCP", "class_name": "PayMCP" },
+      { "name": "PAY_AGENT", "class_name": "PayAgent" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["PayMCP", "PayAgent"] }],
+  "build": { "command": "bun run build" },
+  "ratelimits": [
+    // pairlane uses 7624–7626. These ids are not used elsewhere in the repo.
+    { "name": "SESSION_LIMIT", "namespace_id": "7631", "simple": { "limit": 6, "period": 60 } },
+    { "name": "CALL_LIMIT", "namespace_id": "7632", "simple": { "limit": 20, "period": 60 } },
+    { "name": "CONFIRM_LIMIT", "namespace_id": "7633", "simple": { "limit": 10, "period": 60 } },
+    { "name": "READ_LIMIT", "namespace_id": "7634", "simple": { "limit": 60, "period": 60 } }
+  ],
+  "vars": {
+    "AI_MODEL": "@cf/meta/llama-3.2-1b-instruct",
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFRUoj5qDpf7XyIW",
+    "LOCAL_DEV": "0"
+  },
+  "secrets": {
+    "required": ["TURNSTILE_SECRET", "X402_PAYEE_ADDRESS", "X402_CLIENT_PRIVATE_KEY"]
+  },
+  "routes": [
+    { "pattern": "tech-demos.theserverless.dev/demos/x402-pay", "zone_name": "theserverless.dev" },
+    { "pattern": "tech-demos.theserverless.dev/demos/x402-pay/*", "zone_name": "theserverless.dev" },
+    { "pattern": "x402-pay.tech-demos.theserverless.dev/*", "zone_name": "theserverless.dev" }
+  ],
+  "workers_dev": false,
+  "observability": { "enabled": true }
+}
