@@ -15,7 +15,7 @@
     {
       "binding": "DB",
       "database_name": "tech-demos-x402-pay",
-      "database_id": "00000000-0000-4000-8000-000000000402",
+      "database_id": "1c71bfc7-6f35-426d-8502-c483d81e62e5",
       "migrations_dir": "migrations"
     }
   ],

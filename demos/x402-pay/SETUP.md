@@ -80,7 +80,7 @@ Each visit adds D1 rows: a session, timeline events, confirmations, a daily coun
 | `CONFIRM_LIMIT` | Rate limit namespace `7633` | 10 per minute |
 | `READ_LIMIT` | Rate limit namespace `7634` | 60 per minute |
 
-`wrangler.jsonc` uses the placeholder database id `00000000-0000-4000-8000-000000000402`. Replace that id with the D1 database you create. Do not point it at another demo's database.
+`wrangler.jsonc` binds `DB` to D1 `tech-demos-x402-pay`, id `1c71bfc7-6f35-426d-8502-c483d81e62e5`. Do not point it at another demo's database.
 
 Routes, already declared:
 
@@ -100,10 +100,9 @@ Set these on the Worker. Use a new disposable Base Sepolia key. Do not reuse a k
 
 The shared Turnstile site key is already in config: `0x4AAAAAAFRUoj5qDpf7XyIW`. Action: `x402-pay`. Add that action on the existing widget if siteverify should require it. Hostnames that pass: `x402-pay.tech-demos.theserverless.dev`, `tech-demos.theserverless.dev`.
 
-Suggested commands, after `wrangler login`, from this folder. Replace the database id in `wrangler.jsonc` first.
+Suggested commands, after `wrangler login`, from this folder. The D1 database already exists.
 
 ```sh
-npx wrangler d1 create tech-demos-x402-pay
 npx wrangler d1 migrations apply DB --remote
 printf '%s' "$TURNSTILE_SECRET" | npx wrangler secret put TURNSTILE_SECRET
 printf '%s' "$X402_PAYEE_ADDRESS" | npx wrangler secret put X402_PAYEE_ADDRESS
