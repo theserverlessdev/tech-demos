@@ -115,7 +115,32 @@ const lakeCatalogFallbackSource = standalone("lake-catalog");
 // The zone route wins, and this source only redirects if that route is missing.
 const pairlaneFallbackSource = standalone("pairlane");
 
+// x402-pay is a standalone Worker (ASSETS, AI, DB, PayMCP, PayAgent, session/call/confirm/read limits, Turnstile).
+// The zone route wins, and this source only redirects if that route is missing.
+const x402PayFallbackSource = standalone("x402-pay");
+
 export const demos: DemoEntry[] = [
+  {
+    slug: "x402-pay",
+    title: "x402 Pay",
+    description: "Confirm a testnet charge, then the agent pays for an MCP tool over HTTP 402.",
+    demonstrates:
+      "PayMCP mixes a free tool with paid tools. PayAgent, a Durable Object, receives the HTTP 402 challenge and signs only after a confirm bound to the amount, Base Sepolia, test USDC, payee, tool, and arguments. The tool runs after verification. D1 records requested, approved, settled, or failed.",
+    capabilities: [
+      "Call echo for free after the shared Turnstile check",
+      "Call square or summarize and confirm or deny the exact testnet charge",
+      "Read the timeline from the 402 through approval, payment, verification, and the result",
+      "See setup pending when the testnet key is absent, with no row shown as paid",
+    ],
+    useCases: [
+      "An MCP tool that charges per call",
+      "A confirm step before an agent spends",
+      "A ledger that keeps a failed call distinct from a settled one",
+    ],
+    tags: ["x402", "mcp", "agents", "durable-objects", "d1", "turnstile"],
+    kind: "standalone",
+    source: x402PayFallbackSource,
+  },
   {
     slug: "lake-catalog",
     title: "Lake Catalog",
