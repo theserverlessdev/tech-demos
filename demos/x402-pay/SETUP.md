@@ -44,12 +44,13 @@ sequenceDiagram
   F-->>M: valid
   M->>M: run square
   M->>F: settle
-  alt the call returns
-    F-->>M: transaction or success false
-    M-->>A: result
-    A-->>B: settled or failed, paid true only for testnet
-  else the worker dies after settle may have happened
-    A-->>B: outcome unknown, not signed again
+  alt a receipt this demo accepts
+    F-->>M: Base Sepolia transaction
+    M-->>A: receipt
+    A-->>B: settled, paid true only for a Base Sepolia hash
+  else settle throws, returns HTTP 500 or success false, or the worker dies
+    M-->>A: payment required, or nothing
+    A-->>B: unknown, not signed again
   end
 ```
 
@@ -57,7 +58,7 @@ A deny, an expiry, a bad binding, a failed tool, or a mock receipt stops before 
 
 ## Crash after settle
 
-Settlement happens inside PayMCP, after the tool runs. If the worker dies after that, the ledger does not know whether the facilitator submitted the transfer. The row becomes `unknown` with `paid: false` and the label "Outcome unknown. It may have settled on Base Sepolia. Not retried." A later confirm does not sign again. If the original attempt then records a real Base Sepolia receipt, that write replaces `unknown`. A crash mark does not replace a row that is already settled.
+Settlement happens inside PayMCP, after the tool runs. If the worker dies after that, the ledger does not know whether the facilitator submitted the transfer. The same gap exists when settle returns. `agents@0.33.0` turns a thrown settle, including an HTTP 500, into a normal payment-required result with reason `SETTLEMENT_FAILED`, and it turns `success: false` into a payment-required result that omits the transaction. Neither proves the transfer did not happen. A success receipt with the wrong network or a hash this demo does not accept does not prove that either. Those rows become `unknown` with `paid: false` and the label "Outcome unknown. It may have settled on Base Sepolia. Not retried." The stored text is that sentence, not the raw x402 error JSON. A later confirm does not sign again. A later failed result does not replace `unknown`. Only a receipt this demo accepts as settled does. A settled row stays settled.
 
 Do not start a second payment to find out. Look up the payer address on a Base Sepolia explorer.
 

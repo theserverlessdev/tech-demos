@@ -5,7 +5,7 @@ import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { MAX_PAYMENT_ATOMIC, NETWORK, isPrivateKey, priceOf, type CanonicalArgs, type ToolName } from "../shared/protocol";
 import type { Env } from "./env";
 import { viewToolResult, type ToolView } from "./interpret";
-import { acceptsBound, boundFor, payeeForMode, resolveMode, signableCharge, type CatalogCharge } from "./policy";
+import { boundFor, confirmBound, payeeForMode, resolveMode, signableCharge, type CatalogCharge } from "./policy";
 
 export class PayAgent extends Agent<Env> {
   initialState = { phase: "ready" };
@@ -131,7 +131,7 @@ export class PayAgent extends Agent<Env> {
     if (!client) {
       return { text: "The payer is not ready.", isError: true, setup: false, challenge: null, success: false, transaction: "", network: "", code: "mcp_unavailable", reason: "" };
     }
-    const result = await client.callTool(async (requirements) => acceptsBound(requirements, bound), { name: tool, arguments: args });
+    const result = await client.callTool(confirmBound(bound), { name: tool, arguments: args });
     return viewToolResult(result);
   }
 }

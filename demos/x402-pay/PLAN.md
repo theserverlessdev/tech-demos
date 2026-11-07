@@ -12,7 +12,7 @@ A visitor passes the shared Turnstile check and opens a session. Three tools are
 - `square` is $0.01 test USDC.
 - `summarize` is $0.02 test USDC and calls Workers AI after a verified payment.
 
-A paid call with no payment returns **HTTP 402** and a challenge. The confirm step is bound to the tool, arguments, amount, network, token, and payee, expires quickly, and is single-use. The PayAgent Durable Object signs only after that confirm. The tool runs only after verification. A D1 row records requested, approved, settled, or failed. The page shows that timeline.
+A paid call with no payment returns **HTTP 402** and a challenge. The confirm step is bound to the tool, arguments, amount, network, token, and payee, expires quickly, and is single-use. The PayAgent Durable Object signs only after that confirm. The tool runs only after verification. A D1 row records requested, approved, and then settled, failed, denied, or unknown. The page shows that timeline.
 
 When the payee address or the signing key is missing, paid tools fail closed and the page says setup is pending. Nothing is labelled paid. A mock facilitator exists only when local mode is explicit. Its result says it is not a Base Sepolia payment.
 
@@ -57,7 +57,7 @@ The SDK client prefers the configured network and otherwise falls back to every 
 - Summary input is at most 1500 characters. Output is at most 500 characters. One model call per verified attempt. The model runs after verify and before settle. Session quote cap is 6 per UTC day. Global paid cap is 40, charged when an accept owns the row, so a denied quote does not use it. Free calls are capped per session per day.
 - Logs are event names and error codes. Bodies, cookies, keys, and payment tokens are not logged.
 - Mock mode requires `X402_MODE=mock`, local Turnstile mode, and `MOCK_FACILITATOR_ORIGIN`. Production wrangler config sets none of these. A public host that still has those vars set gets 503 `mock_misconfigured` before a session can pay. A mock result has `paid: false`.
-- A crash after settle may have happened is stored as `unknown`, not `failed`. A retry does not sign. A late receipt from the original attempt can still be recorded. D1 growth is documented. The purge function is tested and not scheduled.
+- A settle that may have happened is stored as `unknown`, not `failed`. That covers a crash, a thrown settle, an HTTP 500, a facilitator `success: false`, and a success receipt that is not an accepted Base Sepolia hash. A retry does not sign. A late failure does not replace unknown. A late accepted receipt can still be recorded, and settled stays settled. D1 growth is documented. The purge function is tested and not scheduled.
 
 ## Test plan
 
@@ -69,7 +69,7 @@ The SDK client prefers the configured network and otherwise falls back to every 
 - session isolation
 - idempotent confirm retry
 - session and global caps
-- tool failure and a facilitator `success: false` leave `paid: false`, with no payment response and no second signature
+- a tool failure before settle leaves `paid: false`. A facilitator `success: false` or an HTTP 500 from settle leaves the row `unknown`, with one verify and no second signature
 - missing secrets fail closed
 - mock success is labelled and is not testnet
 - the official `paidTool` path against a local facilitator: challenge, rejection, one settlement, replay does not settle again

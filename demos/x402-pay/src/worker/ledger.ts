@@ -145,18 +145,18 @@ export async function finishConfirmation(sql: Sql, id: string, patch: Confirmati
 }
 
 /**
- * The attempt that called pay may finish after a crash mark. A settled write still applies.
- * A write does not apply once the row has left approved/unknown, so a late failure cannot hide a settlement.
+ * The attempt that called pay may finish after the row is unknown.
+ * Only a settled write replaces unknown. A late failure does not.
  */
 export async function finishOwned(sql: Sql, id: string, patch: ConfirmationPatch): Promise<number> {
   return sql.run(
-    `UPDATE confirmations SET status = ?, updated_at = ?, result_text = COALESCE(?, result_text), transaction_id = COALESCE(?, transaction_id), settlement = COALESCE(?, settlement), error_code = COALESCE(?, error_code) WHERE id = ? AND (status = 'approved' OR (status = 'unknown' AND error_code IN ('interrupted', 'agent_error')))`,
-    [patch.status, patch.now, patch.text ?? null, patch.transaction ?? null, patch.settlement ?? null, patch.errorCode ?? null, id],
+    `UPDATE confirmations SET status = ?, updated_at = ?, result_text = COALESCE(?, result_text), transaction_id = COALESCE(?, transaction_id), settlement = COALESCE(?, settlement), error_code = COALESCE(?, error_code) WHERE id = ? AND (status = 'approved' OR (status = 'unknown' AND ? = 'settled'))`,
+    [patch.status, patch.now, patch.text ?? null, patch.transaction ?? null, patch.settlement ?? null, patch.errorCode ?? null, id, patch.status],
   );
 }
 
 /** Only an approved row becomes unknown. A settled row is left alone. */
-export async function markUnknown(sql: Sql, id: string, errorCode: "interrupted" | "agent_error", now: number): Promise<number> {
+export async function markUnknown(sql: Sql, id: string, errorCode: "interrupted" | "agent_error" | "settle_unknown", now: number): Promise<number> {
   return sql.run(
     `UPDATE confirmations SET status = 'unknown', error_code = ?, updated_at = ?, result_text = ? WHERE id = ? AND status = 'approved'`,
     [errorCode, now, UNKNOWN_LABEL, id],

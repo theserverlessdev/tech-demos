@@ -1,4 +1,4 @@
-import { MOCK_LABEL, NETWORK, PENDING_LABEL, isMockTx, isTestnetTx, type Mode } from "../shared/protocol";
+import { MOCK_LABEL, NETWORK, PENDING_LABEL, UNKNOWN_LABEL, isMockTx, isTestnetTx, type Mode } from "../shared/protocol";
 
 export type ToolView = {
   text: string;
@@ -17,6 +17,7 @@ export type PayView =
   | { kind: "challenge"; requirement: Record<string, unknown> }
   | { kind: "setup_pending"; message: string }
   | { kind: "failed"; code: string; message: string }
+  | { kind: "unknown"; message: string }
   | { kind: "settled"; settlement: "testnet" | "mock"; paid: boolean; transaction: string; text: string; label: string };
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -53,26 +54,38 @@ export function viewToolResult(raw: unknown): ToolView {
   };
 }
 
+const FAILED_MESSAGE = "The payment did not settle. Nothing is marked paid.";
+
 /**
  * `paid` is true only for a testnet settlement with a real transaction hash.
- * A mock receipt stays unpaid. A testnet response that carries a mock id is a failure.
+ * A mock receipt stays unpaid. Anything else that is not a handler failure is unknown:
+ * agents@0.33.0 `dist/mcp/client/x402.js` turns a thrown settle into
+ * `paymentRequired("SETTLEMENT_FAILED")` and a `success: false` settle into
+ * `paymentRequired(errorReason)`, and neither result includes the transaction.
  */
 export function interpretPay(mode: Mode, view: ToolView): PayView {
   if (view.setup) return { kind: "setup_pending", message: PENDING_LABEL };
-  // A fresh challenge uses PAYMENT_REQUIRED. A failed settle comes back with accepts attached and a different reason.
   const freshChallenge = view.reason === "" || view.reason === "PAYMENT_REQUIRED";
-  if (view.challenge && !freshChallenge) {
-    return { kind: "failed", code: "not_settled", message: view.text || "The payment did not settle. Nothing is marked paid." };
+  if (view.challenge && freshChallenge) return { kind: "challenge", requirement: view.challenge };
+  // The wrapper emits INVALID_PAYMENT before settlePayment. @x402 does not use that string.
+  if (view.challenge && view.reason === "INVALID_PAYMENT") {
+    return { kind: "failed", code: "not_settled", message: "The payment was rejected before settlement. Nothing is marked paid." };
   }
-  if (view.challenge) return { kind: "challenge", requirement: view.challenge };
-  if (view.isError || !view.success) {
-    return { kind: "failed", code: view.code || "not_settled", message: view.text || "The payment did not settle. Nothing is marked paid." };
+  if (view.challenge) return { kind: "unknown", message: UNKNOWN_LABEL };
+  if (view.success) {
+    if (mode === "testnet" && view.network === NETWORK && isTestnetTx(view.transaction)) {
+      return { kind: "settled", settlement: "testnet", paid: true, transaction: view.transaction, text: view.text, label: "Settled on Base Sepolia test USDC." };
+    }
+    if (mode === "mock" && view.network === NETWORK && isMockTx(view.transaction)) {
+      return { kind: "settled", settlement: "mock", paid: false, transaction: view.transaction, text: view.text, label: MOCK_LABEL };
+    }
+    return { kind: "unknown", message: UNKNOWN_LABEL };
   }
-  if (mode === "testnet" && view.network === NETWORK && isTestnetTx(view.transaction)) {
-    return { kind: "settled", settlement: "testnet", paid: true, transaction: view.transaction, text: view.text, label: "Settled on Base Sepolia test USDC." };
-  }
-  if (mode === "mock" && view.network === NETWORK && isMockTx(view.transaction)) {
-    return { kind: "settled", settlement: "mock", paid: false, transaction: view.transaction, text: view.text, label: MOCK_LABEL };
-  }
-  return { kind: "failed", code: "not_settled", message: "The receipt did not match Base Sepolia. Nothing is marked paid." };
+  return { kind: "failed", code: view.code || "not_settled", message: safeFailureMessage(view.text) };
+}
+
+function safeFailureMessage(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed || trimmed.startsWith("{") || trimmed.includes("\"accepts\"") || trimmed.includes("\"x402Version\"")) return FAILED_MESSAGE;
+  return trimmed.slice(0, 180);
 }

@@ -182,7 +182,7 @@ function publicRow(row: ConfirmationRow, mode: Mode) {
     status: row.status,
     settlement: row.settlement,
     label,
-    text: row.result_text ?? "",
+    text: publicText(row.status, row.result_text),
     transaction: row.transaction_id ?? "",
     error: row.error_code,
     mode,
@@ -327,9 +327,23 @@ async function paidCall(deps: Deps, sessionId: string, tool: ToolName, args: Can
   return json({ ...challengeBody(tool, args, row), timeline: await timelineFor(deps.sql, sessionId), mode: deps.mode }, 402);
 }
 
-async function unknownOutcome(deps: Deps, sessionId: string, id: string, tool: string, code: "agent_error" | "interrupted"): Promise<Response> {
-  await markUnknown(deps.sql, id, code, deps.now());
-  await appendTimeline(deps.sql, sessionId, deps.now(), "unknown", { tool, code });
+function publicText(status: string, value: string | null): string {
+  const text = value ?? "";
+  const raw = text.startsWith("{") || text.includes("\"accepts\"") || text.includes("\"x402Version\"");
+  if (status === "unknown") return raw ? UNKNOWN_LABEL : text;
+  if (raw) return "The payment did not settle. Nothing is marked paid.";
+  return text;
+}
+
+async function unknownOutcome(
+  deps: Deps,
+  sessionId: string,
+  id: string,
+  tool: string,
+  code: "agent_error" | "interrupted" | "settle_unknown",
+): Promise<Response> {
+  const marked = await markUnknown(deps.sql, id, code, deps.now());
+  if (marked === 1) await appendTimeline(deps.sql, sessionId, deps.now(), "unknown", { tool, code });
   const row = await confirmationById(deps.sql, id);
   const body = row ? publicRow(row, deps.mode) : { paid: false, status: "unknown", label: UNKNOWN_LABEL, error: code };
   return json({ ...body, paid: false, timeline: await timelineFor(deps.sql, sessionId), mode: deps.mode });
@@ -411,11 +425,13 @@ async function confirm(deps: Deps, sessionId: string, id: string, binding: strin
       tool,
       transaction: outcome.transaction,
     });
+  } else if (outcome.kind === "unknown") {
+    return unknownOutcome(deps, sessionId, id, tool, "settle_unknown");
   } else {
     const code = outcome.kind === "failed" ? outcome.code : "not_settled";
     const message = outcome.kind === "failed" ? outcome.message : outcome.kind === "setup_pending" ? outcome.message : "The payment did not settle.";
-    await finishOwned(deps.sql, id, { status: "failed", now: deps.now(), errorCode: code, text: message });
-    await appendTimeline(deps.sql, sessionId, deps.now(), "failed", { tool, code });
+    const wrote = await finishOwned(deps.sql, id, { status: "failed", now: deps.now(), errorCode: code, text: message });
+    if (wrote === 1) await appendTimeline(deps.sql, sessionId, deps.now(), "failed", { tool, code });
   }
   const row = await confirmationById(deps.sql, id);
   if (!row) throw new HttpError(500, "missing", "The ledger row disappeared. Nothing further was charged.");

@@ -133,7 +133,12 @@ export function acceptsBound(requirements: unknown[], bound: Bound): boolean {
       extra: row.extra,
     },
     bound,
-  ).ok;
+    ).ok;
+}
+
+/** Sign-time callback. A false return declines before the client builds a payment. */
+export function confirmBound(bound: Bound): (requirements: unknown[]) => Promise<boolean> {
+  return async (requirements) => acceptsBound(requirements, bound);
 }
 
 export type CatalogCharge = { amount: string; payTo: string };

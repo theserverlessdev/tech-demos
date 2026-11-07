@@ -13,7 +13,7 @@ import { FACILITATOR_URL, MOCK_PAYEE, NETWORK, SQUARE_ATOMIC, isPrivateKey, isTe
 import { guardPayment } from "./guard";
 import { interpretPay, viewToolResult } from "./interpret";
 import { mockFacilitatorResponse, memoryStore } from "./mock-facilitator";
-import { usableTestnetPayee } from "./policy";
+import { boundFor, confirmBound, usableTestnetPayee } from "./policy";
 import type { Sql } from "./sql";
 
 const migration = readFileSync(new URL("../../migrations/0001_ledger.sql", import.meta.url), "utf8");
@@ -129,7 +129,7 @@ test("paidTool challenges, rejects a bad payment, settles once, and a replay doe
       account: toClientEvmSigner(account),
       maxPaymentValue: 20000n,
     });
-    const paid = await payer.callTool(async () => true, { name: "square", arguments: { number: 6 } });
+    const paid = await payer.callTool(confirmBound(boundFor("square", MOCK_PAYEE, SQUARE_ATOMIC)), { name: "square", arguments: { number: 6 } });
     expect(paid.isError).toBeFalsy();
     const paidText = paid.content?.[0] && "text" in paid.content[0] ? paid.content[0].text : "";
     expect(paidText).toBe("36");
@@ -248,15 +248,94 @@ test("a facilitator settle of success false does not attach a receipt or sign ag
       account: toClientEvmSigner(privateKeyToAccount(generatePrivateKey())),
       maxPaymentValue: 20000n,
     });
-    const paid = await payer.callTool(async () => true, { name: "square", arguments: { number: 3 } });
+    const declined = await payer.callTool(
+      confirmBound(boundFor("square", "0x3333333333333333333333333333333333333333", SQUARE_ATOMIC)),
+      { name: "square", arguments: { number: 3 } },
+    );
+    const declinedText = declined.content?.[0] && "text" in declined.content[0] ? declined.content[0].text : "";
+    expect(declinedText).toBe("User declined payment");
+    expect(verifies).toBe(0);
+    expect(executions).toBe(0);
+    const paid = await payer.callTool(confirmBound(boundFor("square", MOCK_PAYEE, SQUARE_ATOMIC)), { name: "square", arguments: { number: 3 } });
     expect(paid.isError).toBe(true);
     const meta = paid._meta as Record<string, unknown> | undefined;
     expect(meta?.["x402/payment-response"]).toBeUndefined();
     expect(executions).toBeLessThanOrEqual(1);
     expect(verifies).toBe(1);
-    expect(interpretPay("mock", viewToolResult(paid)).kind).toBe("failed");
+    expect(interpretPay("mock", viewToolResult(paid)).kind).toBe("unknown");
     const second = await rawCall({ name: "square", arguments: { number: 3 } });
     expect(second.isError).toBe(true);
+    expect(verifies).toBe(1);
+  } finally {
+    server.close();
+  }
+});
+
+test("a facilitator settle HTTP 500 is unknown and is verified once", async () => {
+  let verifies = 0;
+  let executions = 0;
+  const server = createServer(async (req, res) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(chunk as Buffer);
+    const body = Buffer.concat(chunks).toString("utf8");
+    const url = req.url ?? "/";
+    if (url.includes("/settle")) {
+      res.writeHead(500, { "content-type": "text/plain" });
+      res.end("upstream");
+      return;
+    }
+    if (url.includes("/verify")) verifies += 1;
+    const request = new Request(`http://127.0.0.1${url}`, {
+      method: req.method,
+      headers: { "content-type": "application/json" },
+      body: req.method === "GET" || req.method === "HEAD" ? undefined : body,
+    });
+    const response = await mockFacilitatorResponse(request, memoryStore());
+    const text = response ? await response.text() : "";
+    res.writeHead(response?.status ?? 404, { "content-type": "application/json" });
+    res.end(text);
+  });
+  const port = await listen(server);
+  try {
+    const mcp = withX402(new McpServer({ name: "PayMCP", version: "1.0.0" }), {
+      network: NETWORK,
+      recipient: MOCK_PAYEE,
+      facilitator: { url: `http://127.0.0.1:${port}/internal/mock-facilitator` },
+    });
+    mcp.paidTool("square", "Squares a number", 0.01, { number: z.number() }, {}, async (args, extra) =>
+      guardPayment({
+        sql: memory(),
+        tool: "square",
+        amount: SQUARE_ATOMIC,
+        payee: MOCK_PAYEE,
+        extra,
+        now: Date.now(),
+        run: async () => {
+          executions += 1;
+          return { content: [{ type: "text", text: String(Number(args.number) ** 2) }] };
+        },
+      }),
+    );
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await mcp.connect(serverTransport);
+    const client = new Client({ name: "pay-agent", version: "1.0.0" });
+    await client.connect(clientTransport);
+    const payer = withX402Client(client, {
+      network: NETWORK,
+      account: toClientEvmSigner(privateKeyToAccount(generatePrivateKey())),
+      maxPaymentValue: 20000n,
+    });
+    const paid = await payer.callTool(confirmBound(boundFor("square", MOCK_PAYEE, SQUARE_ATOMIC)), {
+      name: "square",
+      arguments: { number: 3 },
+    });
+    expect(paid.isError).toBe(true);
+    const meta = paid._meta as Record<string, unknown> | undefined;
+    expect(meta?.["x402/payment-response"]).toBeUndefined();
+    const outcome = interpretPay("mock", viewToolResult(paid));
+    expect(outcome.kind).toBe("unknown");
+    if (outcome.kind === "unknown") expect(outcome.message).not.toContain("accepts");
+    expect(executions).toBeLessThanOrEqual(1);
     expect(verifies).toBe(1);
   } finally {
     server.close();
@@ -295,7 +374,7 @@ test.skipIf(process.env.X402_LIVE_TEST !== "1")("settles one square call on Base
     account: toClientEvmSigner(privateKeyToAccount(key)),
     maxPaymentValue: 20000n,
   });
-  const paid = await payer.callTool(async () => true, { name: "square", arguments: { number: 7 } });
+  const paid = await payer.callTool(confirmBound(boundFor("square", payee, SQUARE_ATOMIC)), { name: "square", arguments: { number: 7 } });
   const receipt = (paid._meta as { "x402/payment-response"?: { success?: boolean; transaction?: string; network?: string } } | undefined)?.["x402/payment-response"];
   const text = paid.content?.[0] && "text" in paid.content[0] ? paid.content[0].text : "";
   if (paid.isError || !receipt?.success || receipt.network !== NETWORK || !isTestnetTx(receipt.transaction ?? "") || text !== "49") {
