@@ -1,0 +1,31 @@
+{
+  "name": "@tech-demos/x402-pay",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun build src/client/app.ts --outdir public/assets --target browser --minify",
+    "dev": "bun run build && wrangler dev --port 8798 --var TURNSTILE_SITE_KEY:1x00000000000000000000AA --var LOCAL_DEV:1",
+    "deploy": "bun run build && wrangler d1 migrations apply DB --remote && wrangler deploy",
+    "test": "bun test src",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
+    "check:layout": "bun run build && bun run scripts/check-layout.ts",
+    "verify:selfhost": "bun run scripts/verify-selfhost.ts",
+    "cf-typegen": "wrangler types"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/client": "2.4.0",
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "@modelcontextprotocol/server": "2.4.0",
+    "@x402/core": "2.29.0",
+    "@x402/evm": "2.29.0",
+    "agents": "0.33.0",
+    "viem": "2.57.16",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250906.0",
+    "playwright": "1.63.0",
+    "typescript": "^5.9.2",
+    "wrangler": "^4.40.0"
+  }
+}
