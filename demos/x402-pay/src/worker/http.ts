@@ -425,7 +425,7 @@ async function confirm(deps: Deps, sessionId: string, id: string, binding: strin
       tool,
       transaction: outcome.transaction,
     });
-  } else if (outcome.kind === "unknown") {
+  } else if (outcome.kind === "unknown" || outcome.kind === "challenge") {
     return unknownOutcome(deps, sessionId, id, tool, "settle_unknown");
   } else {
     const code = outcome.kind === "failed" ? outcome.code : "not_settled";

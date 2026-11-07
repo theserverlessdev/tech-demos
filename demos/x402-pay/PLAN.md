@@ -53,11 +53,11 @@ The SDK client prefers the configured network and otherwise falls back to every 
 - The confirm binds tool, canonical arguments, scheme `exact`, network, asset, amount, and payee. It expires in two minutes and moves `requested` to `approved` with a compare-and-set. A second accept does not start a second settlement.
 - The browser never receives the signing key, the payment payload, or the signature. The ledger stores a hash of the payer address and the authorization nonce, not the signature bytes.
 - Each session is its own PayAgent name plus an HttpOnly cookie. Another session's cookie cannot read the timeline or submit the confirm.
-- Paid execution follows a verified payment. A paid tool result that arrives without a challenge is discarded. `paid: true` is set only when the mode is testnet, the facilitator reported success, the network is Base Sepolia, and the transaction is a 66-character `0x` hash. A `mock:` transaction in testnet mode is a failure.
+- Paid execution follows a verified payment. A paid tool result that arrives without a challenge is discarded. `paid: true` is set only when the mode is testnet, the facilitator reported success, the network is Base Sepolia, and the transaction is a 66-character `0x` hash. A `mock:` transaction in testnet mode is unknown, not proof that nothing was paid.
 - Summary input is at most 1500 characters. Output is at most 500 characters. One model call per verified attempt. The model runs after verify and before settle. Session quote cap is 6 per UTC day. Global paid cap is 40, charged when an accept owns the row, so a denied quote does not use it. Free calls are capped per session per day.
 - Logs are event names and error codes. Bodies, cookies, keys, and payment tokens are not logged.
 - Mock mode requires `X402_MODE=mock`, local Turnstile mode, and `MOCK_FACILITATOR_ORIGIN`. Production wrangler config sets none of these. A public host that still has those vars set gets 503 `mock_misconfigured` before a session can pay. A mock result has `paid: false`.
-- A settle that may have happened is stored as `unknown`, not `failed`. That covers a crash, a thrown settle, an HTTP 500, a facilitator `success: false`, and a success receipt that is not an accepted Base Sepolia hash. A retry does not sign. A late failure does not replace unknown. A late accepted receipt can still be recorded, and settled stays settled. D1 growth is documented. The purge function is tested and not scheduled.
+- A settle that may have happened is stored as `unknown`, not `failed`. Every payment-required result from an owned pay is unknown, regardless of the reason text. A crash, a thrown settle, an HTTP 500, and a success receipt that is not an accepted Base Sepolia hash are unknown too. The quote probe stays a 402 and is not this classification. A handler error with no payment-required payload stays failed. A retry does not sign. A late failure does not replace unknown. A late accepted receipt can still be recorded, and settled stays settled. D1 growth is documented. The purge function is tested and not scheduled.
 
 ## Test plan
 
@@ -69,7 +69,7 @@ The SDK client prefers the configured network and otherwise falls back to every 
 - session isolation
 - idempotent confirm retry
 - session and global caps
-- a tool failure before settle leaves `paid: false`. A facilitator `success: false` or an HTTP 500 from settle leaves the row `unknown`, with one verify and no second signature
+- a handler failure with no payment-required payload leaves `paid: false`. A facilitator `success: false` whose reason is `INVALID_PAYMENT`, `PAYMENT_REQUIRED`, empty, or any other string, and an HTTP 500 from settle, leave the row `unknown`, with one verify and no second signature
 - missing secrets fail closed
 - mock success is labelled and is not testnet
 - the official `paidTool` path against a local facilitator: challenge, rejection, one settlement, replay does not settle again

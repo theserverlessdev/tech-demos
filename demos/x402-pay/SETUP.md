@@ -48,8 +48,8 @@ sequenceDiagram
     F-->>M: Base Sepolia transaction
     M-->>A: receipt
     A-->>B: settled, paid true only for a Base Sepolia hash
-  else settle throws, returns HTTP 500 or success false, or the worker dies
-    M-->>A: payment required, or nothing
+  else any payment-required result, or the worker dies
+    M-->>A: challenge, whatever the reason text, or nothing
     A-->>B: unknown, not signed again
   end
 ```
@@ -58,7 +58,7 @@ A deny, an expiry, a bad binding, a failed tool, or a mock receipt stops before 
 
 ## Crash after settle
 
-Settlement happens inside PayMCP, after the tool runs. If the worker dies after that, the ledger does not know whether the facilitator submitted the transfer. The same gap exists when settle returns. `agents@0.33.0` turns a thrown settle, including an HTTP 500, into a normal payment-required result with reason `SETTLEMENT_FAILED`, and it turns `success: false` into a payment-required result that omits the transaction. Neither proves the transfer did not happen. A success receipt with the wrong network or a hash this demo does not accept does not prove that either. Those rows become `unknown` with `paid: false` and the label "Outcome unknown. It may have settled on Base Sepolia. Not retried." The stored text is that sentence, not the raw x402 error JSON. A later confirm does not sign again. A later failed result does not replace `unknown`. Only a receipt this demo accepts as settled does. A settled row stays settled.
+Settlement happens inside PayMCP, after the tool runs. If the worker dies after that, the ledger does not know whether the facilitator submitted the transfer. The same gap exists for every payment-required result from that owned pay. `agents@0.33.0` returns `success: false` as `paymentRequired(errorReason)` and passes the reason through verbatim, including an empty string, `PAYMENT_REQUIRED`, and `INVALID_PAYMENT`. A thrown settle, including an HTTP 500, becomes `paymentRequired("SETTLEMENT_FAILED")`. None of those strings prove the transfer was not submitted, and the transaction is omitted. A success receipt with the wrong network or a hash this demo does not accept does not prove that either. The quote probe is a different call: it returns HTTP 402 before signing. A handler error with no payment-required payload stays `failed`, because the SDK skips settle. Every other owned-pay result becomes `unknown` with `paid: false` and the label "Outcome unknown. It may have settled on Base Sepolia. Not retried." The stored text is that sentence, not the raw x402 error JSON. A later confirm does not sign again. A later failed result does not replace `unknown`. Only a receipt this demo accepts as settled does. A settled row stays settled.
 
 Do not start a second payment to find out. Look up the payer address on a Base Sepolia explorer.
 

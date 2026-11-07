@@ -193,9 +193,10 @@ function malleableSignature(signature: string): string {
   return `0x${r}${nextS}${nextV.toString(16).padStart(2, "0")}`;
 }
 
-test("a facilitator settle of success false does not attach a receipt or sign again", async () => {
+test("a facilitator settle of success false is unknown for every reason string", async () => {
   let verifies = 0;
   let executions = 0;
+  let settleReason = "facilitator_rejected";
   const server = createServer(async (req, res) => {
     const chunks: Buffer[] = [];
     for await (const chunk of req) chunks.push(chunk as Buffer);
@@ -203,7 +204,7 @@ test("a facilitator settle of success false does not attach a receipt or sign ag
     const url = req.url ?? "/";
     if (url.includes("/settle")) {
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ success: false, errorReason: "facilitator_rejected", transaction: "", network: NETWORK }));
+      res.end(JSON.stringify({ success: false, errorReason: settleReason, transaction: "", network: NETWORK }));
       return;
     }
     if (url.includes("/verify")) verifies += 1;
@@ -256,16 +257,25 @@ test("a facilitator settle of success false does not attach a receipt or sign ag
     expect(declinedText).toBe("User declined payment");
     expect(verifies).toBe(0);
     expect(executions).toBe(0);
-    const paid = await payer.callTool(confirmBound(boundFor("square", MOCK_PAYEE, SQUARE_ATOMIC)), { name: "square", arguments: { number: 3 } });
-    expect(paid.isError).toBe(true);
-    const meta = paid._meta as Record<string, unknown> | undefined;
-    expect(meta?.["x402/payment-response"]).toBeUndefined();
-    expect(executions).toBeLessThanOrEqual(1);
-    expect(verifies).toBe(1);
-    expect(interpretPay("mock", viewToolResult(paid)).kind).toBe("unknown");
+    const reasons = ["INVALID_PAYMENT", "PAYMENT_REQUIRED", "", "facilitator_rejected"];
+    for (const reason of reasons) {
+      settleReason = reason;
+      const beforeVerify = verifies;
+      const beforeRun = executions;
+      const paid = await payer.callTool(confirmBound(boundFor("square", MOCK_PAYEE, SQUARE_ATOMIC)), { name: "square", arguments: { number: 3 } });
+      expect(paid.isError).toBe(true);
+      const meta = paid._meta as Record<string, unknown> | undefined;
+      expect(meta?.["x402/payment-response"]).toBeUndefined();
+      const seen = viewToolResult(paid);
+      expect(seen.challenge).not.toBeNull();
+      expect(seen.reason).toBe(reason);
+      expect(interpretPay("mock", seen).kind).toBe("unknown");
+      expect(verifies).toBe(beforeVerify + 1);
+      expect(executions).toBe(beforeRun + 1);
+    }
     const second = await rawCall({ name: "square", arguments: { number: 3 } });
     expect(second.isError).toBe(true);
-    expect(verifies).toBe(1);
+    expect(verifies).toBe(reasons.length);
   } finally {
     server.close();
   }

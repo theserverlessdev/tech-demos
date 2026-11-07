@@ -57,20 +57,15 @@ export function viewToolResult(raw: unknown): ToolView {
 const FAILED_MESSAGE = "The payment did not settle. Nothing is marked paid.";
 
 /**
- * `paid` is true only for a testnet settlement with a real transaction hash.
- * A mock receipt stays unpaid. Anything else that is not a handler failure is unknown:
- * agents@0.33.0 `dist/mcp/client/x402.js` turns a thrown settle into
- * `paymentRequired("SETTLEMENT_FAILED")` and a `success: false` settle into
- * `paymentRequired(errorReason)`, and neither result includes the transaction.
+ * Used only after an owned pay. The quote probe reads `view.challenge` itself and does not call this.
+ * `paid` is true only for a testnet settlement with a real transaction hash. A mock receipt stays unpaid.
+ * Any payment-required result is unknown. agents@0.33.0 `dist/mcp/client/x402.js` line 189 returns
+ * `paymentRequired(s.errorReason ?? "SETTLEMENT_FAILED")`, so the reason can be empty, `PAYMENT_REQUIRED`,
+ * or `INVALID_PAYMENT` after settle may already have been submitted. The text is not evidence.
+ * A handler failure has no payment-required payload: the SDK skips settle when the handler returns an error.
  */
 export function interpretPay(mode: Mode, view: ToolView): PayView {
   if (view.setup) return { kind: "setup_pending", message: PENDING_LABEL };
-  const freshChallenge = view.reason === "" || view.reason === "PAYMENT_REQUIRED";
-  if (view.challenge && freshChallenge) return { kind: "challenge", requirement: view.challenge };
-  // The wrapper emits INVALID_PAYMENT before settlePayment. @x402 does not use that string.
-  if (view.challenge && view.reason === "INVALID_PAYMENT") {
-    return { kind: "failed", code: "not_settled", message: "The payment was rejected before settlement. Nothing is marked paid." };
-  }
   if (view.challenge) return { kind: "unknown", message: UNKNOWN_LABEL };
   if (view.success) {
     if (mode === "testnet" && view.network === NETWORK && isTestnetTx(view.transaction)) {

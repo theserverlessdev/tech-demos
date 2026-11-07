@@ -457,37 +457,28 @@ test("a settlement that arrives after the crash mark is recorded and is not sign
 
 test("a settle error stays unknown and a late failure does not replace it", async () => {
   const raw = JSON.stringify({ error: "SETTLEMENT_FAILED", accepts: [{ amount: SQUARE_ATOMIC }], x402Version: 2 });
-  const direct = harness({
-    pay: async () => view({ isError: true, challenge: challenge(SQUARE_ATOMIC), reason: "SETTLEMENT_FAILED", text: raw }),
-  });
-  const cookie = await session(direct.deps);
-  const opened = await call(direct.deps, cookie, { tool: "square", args: { number: 4 } });
-  const quote = (await opened.json()) as { confirmationId: string; binding: string };
-  const response = await confirm(direct.deps, cookie, { confirmationId: quote.confirmationId, binding: quote.binding, accept: true });
-  const body = (await response.json()) as { paid: boolean; status: string; label: string; text: string };
-  expect(body.status).toBe("unknown");
-  expect(body.paid).toBe(false);
-  expect(body.label).toContain("Outcome unknown");
-  expect(body.text).not.toContain("accepts");
-  expect(body.text).not.toContain("SETTLEMENT_FAILED");
-  const resolved = await finishOwned(direct.deps.sql, quote.confirmationId, {
-    status: "settled",
-    now: Date.UTC(2026, 10, 7, 13, 0, 0),
-    text: "16",
-    transaction: `0x${"ef".repeat(32)}`,
-    settlement: "testnet",
-  });
-  expect(resolved).toBe(1);
-  const afterReceipt = await confirmationById(direct.deps.sql, quote.confirmationId);
-  expect(afterReceipt?.status).toBe("settled");
-  const lateFail = await finishOwned(direct.deps.sql, quote.confirmationId, {
-    status: "failed",
-    now: Date.UTC(2026, 10, 7, 13, 1, 0),
-    errorCode: "not_settled",
-    text: "late failure",
-  });
-  expect(lateFail).toBe(0);
-  expect((await confirmationById(direct.deps.sql, quote.confirmationId))?.status).toBe("settled");
+  for (const reason of ["INVALID_PAYMENT", "PAYMENT_REQUIRED", "", "not-a-known-reason"]) {
+    const direct = harness({
+      pay: async () => view({
+        isError: true,
+        challenge: challenge(SQUARE_ATOMIC),
+        reason,
+        text: JSON.stringify({ error: reason, accepts: [{ amount: SQUARE_ATOMIC }], x402Version: 2 }),
+      }),
+    });
+    const cookie = await session(direct.deps);
+    const opened = await call(direct.deps, cookie, { tool: "square", args: { number: 4 } });
+    const quote = (await opened.json()) as { confirmationId: string; binding: string };
+    const response = await confirm(direct.deps, cookie, { confirmationId: quote.confirmationId, binding: quote.binding, accept: true });
+    const body = (await response.json()) as { paid: boolean; status: string; label: string; text: string };
+    expect(body.status).toBe("unknown");
+    expect(body.paid).toBe(false);
+    expect(body.label).toContain("Outcome unknown");
+    expect(body.text).not.toContain("accepts");
+    const row = await confirmationById(direct.deps.sql, quote.confirmationId);
+    expect(row?.status).toBe("unknown");
+    expect(row?.error_code).toBe("settle_unknown");
+  }
 
   const rejected = harness({
     pay: async () => view({
@@ -561,6 +552,40 @@ test("a settle error stays unknown and a late failure does not replace it", asyn
   expect(firstBody.text).not.toContain("accepts");
   const row = await confirmationById(deps.sql, deferredQuote.confirmationId);
   expect(row?.status).toBe("unknown");
+  expect(row?.error_code).toBe("interrupted");
+  expect(settles.n).toBe(1);
+});
+
+test("a late receipt through confirm resolves settle_unknown and does not sign again", async () => {
+  let release: (view: ToolView) => void = () => {};
+  const { deps, settles, clock } = harness({
+    pay: () => {
+      settles.n += 1;
+      return new Promise((resolve) => {
+        release = resolve;
+      });
+    },
+  });
+  const cookie = await session(deps);
+  const opened = await call(deps, cookie, { tool: "square", args: { number: 4 } });
+  const quote = (await opened.json()) as { confirmationId: string; binding: string };
+  const pending = confirm(deps, cookie, { confirmationId: quote.confirmationId, binding: quote.binding, accept: true });
+  await viWait(() => settles.n === 1);
+  const marked = await markUnknown(deps.sql, quote.confirmationId, "settle_unknown", clock.now);
+  expect(marked).toBe(1);
+  expect((await confirmationById(deps.sql, quote.confirmationId))?.error_code).toBe("settle_unknown");
+  release(view({ text: "16", success: true, transaction: `0x${"ef".repeat(32)}`, network: NETWORK }));
+  const first = await pending;
+  const firstBody = (await first.json()) as { paid: boolean; status: string };
+  expect(first.status).toBe(200);
+  expect(firstBody.status).toBe("settled");
+  expect(firstBody.paid).toBe(true);
+  expect(settles.n).toBe(1);
+  clock.now += BUSY_MS + 1000;
+  const retry = await confirm(deps, cookie, { confirmationId: quote.confirmationId, binding: quote.binding, accept: true });
+  const retryBody = (await retry.json()) as { paid: boolean; status: string };
+  expect(retryBody.status).toBe("settled");
+  expect(retryBody.paid).toBe(true);
   expect(settles.n).toBe(1);
 });
 
