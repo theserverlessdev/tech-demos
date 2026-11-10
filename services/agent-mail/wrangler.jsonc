@@ -1,0 +1,71 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "agent-mail",
+  "main": "src/index.ts",
+  // Newest date the pinned local Workers runtime accepts. Raise it with the runtime.
+  "compatibility_date": "2026-08-22",
+  "compatibility_flags": ["nodejs_compat"],
+  // database_id and POLICY_AUD are resource ids, not secrets.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "agent-mail",
+      "database_id": "b82ef780-1715-4987-a6e5-841b0b5c7aa9",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "MAIL_BUCKET",
+      "bucket_name": "agent-mail"
+    }
+  ],
+  // Unrestricted binding. The Worker only sends from an inbox on MAIL_DOMAIN.
+  // Restricting senders here would block new inboxes until a redeploy.
+  "send_email": [{ "name": "EMAIL" }],
+  "vars": {
+    "MAIL_DOMAIN": "agents.theserverless.dev",
+    "PUBLIC_ORIGIN": "https://agents.theserverless.dev",
+    "TEAM_DOMAIN": "https://theserverlessdev.cloudflareaccess.com",
+    "POLICY_AUD": "3d1c9fc7ef7c5c384934b5edd070862ba4405742c2a020a449cd907f4fb54574",
+    // First admin. Change this var to bootstrap a different email. The Worker reads the var.
+    "ADMIN_EMAIL": "hello@anks.in",
+    "APPROVE_LINK_TTL_HOURS": "168",
+    // Zone id for theserverless.dev. This is an id, not a secret.
+    "CF_ZONE_ID": "e60a45645a0c2f830636bfe7c121ca86",
+    "ROUTING_WORKER_NAME": "agent-mail"
+  },
+  "triggers": { "crons": ["17 * * * *"] },
+  // Custom domain for HTTP only. It does not change MX records. See DEPLOY.md.
+  "routes": [{ "pattern": "agents.theserverless.dev", "custom_domain": true }],
+  "workers_dev": false,
+  // `wrangler dev --env dev` does not inherit bindings. It also drops the custom domain
+  // so the request host stays 127.0.0.1. DEV_PANEL_EMAIL is honored only on that host.
+  "env": {
+    "dev": {
+      "workers_dev": true,
+      "routes": [],
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "agent-mail",
+          "database_id": "b82ef780-1715-4987-a6e5-841b0b5c7aa9",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "r2_buckets": [{ "binding": "MAIL_BUCKET", "bucket_name": "agent-mail" }],
+      "send_email": [{ "name": "EMAIL" }],
+      "vars": {
+        "MAIL_DOMAIN": "agents.theserverless.dev",
+        "PUBLIC_ORIGIN": "https://agents.theserverless.dev",
+        "TEAM_DOMAIN": "https://theserverlessdev.cloudflareaccess.com",
+        "POLICY_AUD": "3d1c9fc7ef7c5c384934b5edd070862ba4405742c2a020a449cd907f4fb54574",
+        "ADMIN_EMAIL": "hello@anks.in",
+        "APPROVE_LINK_TTL_HOURS": "168",
+        "CF_ZONE_ID": "e60a45645a0c2f830636bfe7c121ca86",
+        "ROUTING_WORKER_NAME": "agent-mail"
+      }
+    }
+  },
+  "observability": { "enabled": true }
+}
