@@ -251,6 +251,7 @@ async function handleDelete(request: Request, ctx: DavCtx): Promise<Response> {
     const keys: string[] = [];
     for await (const object of listAll(ctx.bucket, "", true)) keys.push(object.key);
     if (keys.length) await ctx.bucket.delete(keys);
+    await releaseLocks(ctx, "");
     return new Response(null, { status: 204 });
   }
   const resource = await ctx.bucket.head(ctx.key);
@@ -260,6 +261,7 @@ async function handleDelete(request: Request, ctx: DavCtx): Promise<Response> {
     for await (const object of listAll(ctx.bucket, `${ctx.key}/`, true)) keys.push(object.key);
   }
   await ctx.bucket.delete(keys);
+  await releaseLocks(ctx, ctx.key);
   return new Response(null, { status: 204 });
 }
 
@@ -415,11 +417,20 @@ async function transfer(request: Request, ctx: DavCtx, move: boolean): Promise<R
     if (!put) return new Response("Precondition Failed", { status: 412 });
     if (move) await ctx.bucket.delete(job.key, true);
   }
+  if (move) await releaseLocks(ctx, ctx.key);
   if (existing) return new Response(null, { status: 204 });
   return new Response("", {
     status: 201,
     headers: { Location: resourceHref(ctx.mountPath, destination, collection) },
   });
+}
+
+async function releaseLocks(ctx: DavCtx, path: string): Promise<void> {
+  const prefix = path === "" ? "" : `${path}/`;
+  for (const lock of await ctx.locks.list(ctx.now)) {
+    const covered = path === "" || lock.path === path || lock.path.startsWith(prefix);
+    if (covered) await ctx.locks.remove(lock.token, ctx.now);
+  }
 }
 
 function lockHeaders(request: Request): Headers {

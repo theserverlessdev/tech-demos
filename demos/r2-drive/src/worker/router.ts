@@ -138,9 +138,20 @@ export async function wipeDrive(deps: Deps, drive: DriveRow, now: number): Promi
 export async function wipeExpired(deps: Deps): Promise<number> {
   const now = deps.now();
   const rows = await deps.repo.listExpired(now);
-  for (const row of rows) await wipeDrive(deps, row, now);
-  await deps.repo.purge(now - 30 * 24 * 60 * 60 * 1000);
-  return rows.length;
+  let wiped = 0;
+  try {
+    for (const row of rows) {
+      try {
+        await wipeDrive(deps, row, now);
+        wiped += 1;
+      } catch (err) {
+        console.error(JSON.stringify({ event: "wipe_failed", drive: row.id, error: err instanceof Error ? err.name : "error" }));
+      }
+    }
+  } finally {
+    await deps.repo.purge(now - 30 * 24 * 60 * 60 * 1000);
+  }
+  return wiped;
 }
 
 async function handleDav(request: Request, deps: Deps, target: DavTarget): Promise<Response> {

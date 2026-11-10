@@ -2,6 +2,7 @@ import { classifyData, FILE_TOO_LARGE, joinParts, rateLabel, reduceRecv, safeNam
 import { CID as CID_RE, MAX_FILE_BYTES, ROOM_ID as ROOM_RE, TURNSTILE_ACTION, type IceServer, type PublicConfig, type Role, type TapeEvent } from "../shared/protocol";
 import { formatBytes } from "../shared/signal";
 import { createPeerSession, type PeerSession } from "./peer";
+import { receivedFile } from "./receive";
 import { clientBase, roomLink, socketUrl } from "./paths";
 import { qrSvg } from "./qr";
 
@@ -335,7 +336,7 @@ async function openRoom(id: string): Promise<void> {
         setStatus("error", "SHA-256 did not match. The file was not saved.");
         return;
       }
-      const blob = new Blob([bytes], { type: done.meta.mime });
+      const blob = receivedFile(bytes);
       if (savedUrl) URL.revokeObjectURL(savedUrl);
       savedUrl = URL.createObjectURL(blob);
       save.href = savedUrl;

@@ -179,11 +179,19 @@ export async function lookupCode(db: D1Database, code: string): Promise<CodeRow 
   return db.prepare("SELECT * FROM auth_codes WHERE code_hash = ?").bind(codeHash).first<CodeRow>();
 }
 
-export async function claimCode(db: D1Database, code: string, now: number): Promise<CodeRow | null> {
+export async function claimCode(
+  db: D1Database,
+  code: string,
+  now: number,
+  clientId: string,
+  redirectUri: string,
+): Promise<CodeRow | null> {
   const codeHash = await sha256Hex(code);
   const claimed = await db
-    .prepare("UPDATE auth_codes SET used_at = ? WHERE code_hash = ? AND used_at IS NULL AND expires_at > ?")
-    .bind(now, codeHash, now)
+    .prepare(
+      "UPDATE auth_codes SET used_at = ? WHERE code_hash = ? AND used_at IS NULL AND expires_at > ? AND client_id = ? AND redirect_uri = ?",
+    )
+    .bind(now, codeHash, now, clientId, redirectUri)
     .run();
   if ((claimed.meta.changes ?? 0) !== 1) {
     const existing = await db.prepare("SELECT * FROM auth_codes WHERE code_hash = ?").bind(codeHash).first<CodeRow>();

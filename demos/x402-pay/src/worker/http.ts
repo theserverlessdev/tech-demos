@@ -35,6 +35,7 @@ import {
   confirmationById,
   dayOf,
   denyConfirmation,
+  expireIfRequested,
   finishConfirmation,
   finishOwned,
   insertConfirmation,
@@ -80,7 +81,13 @@ function readCookie(header: string | null): string {
   if (!header) return "";
   for (const part of header.split(";")) {
     const [name, ...rest] = part.trim().split("=");
-    if (name === COOKIE) return decodeURIComponent(rest.join("="));
+    if (name === COOKIE) {
+      try {
+        return decodeURIComponent(rest.join("="));
+      } catch {
+        throw new HttpError(400, "bad_cookie", "Start a session first.");
+      }
+    }
   }
   return "";
 }
@@ -329,6 +336,7 @@ async function paidCall(deps: Deps, sessionId: string, tool: ToolName, args: Can
 
 function publicText(status: string, value: string | null): string {
   const text = value ?? "";
+  if (status === "settled") return text;
   const raw = text.startsWith("{") || text.includes("\"accepts\"") || text.includes("\"x402Version\"");
   if (status === "unknown") return raw ? UNKNOWN_LABEL : text;
   if (raw) return "The payment did not settle. Nothing is marked paid.";
@@ -362,9 +370,12 @@ async function confirm(deps: Deps, sessionId: string, id: string, binding: strin
       return json({ ...publicRow(existing, deps.mode), paid: false, timeline: await timelineFor(deps.sql, sessionId) });
     }
     if (existing.expires_at <= now) {
-      await finishConfirmation(deps.sql, id, { status: "failed", errorCode: "expired", now });
-      await appendTimeline(deps.sql, sessionId, now, "expired", { tool: existing.tool });
+      const expired = await expireIfRequested(deps.sql, id, now);
       const row = await confirmationById(deps.sql, id);
+      if (expired !== 1) {
+        return json({ ...(row ? publicRow(row, deps.mode) : { paid: false, status: existing.status }), paid: false, timeline: await timelineFor(deps.sql, sessionId) });
+      }
+      await appendTimeline(deps.sql, sessionId, now, "expired", { tool: existing.tool });
       return json({ ...(row ? publicRow(row, deps.mode) : { paid: false, status: "failed" }), paid: false, timeline: await timelineFor(deps.sql, sessionId) }, 403);
     }
     await denyConfirmation(deps.sql, id, sessionId, now);

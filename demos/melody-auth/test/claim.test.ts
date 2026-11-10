@@ -43,16 +43,48 @@ const row = {
 };
 
 test("claimCode requires meta.changes === 1", async () => {
-  const won = await claimCode(mockDb([{ changes: 1 }, { row }]), "fresh-code", Date.now());
+  const won = await claimCode(mockDb([{ changes: 1 }, { row }]), "fresh-code", Date.now(), "melody-sample", "http://127.0.0.1:8788/");
   expect(won?.id).toBe("code_1");
 
-  const lost = await claimCode(mockDb([{ changes: 0 }, { row }, { changes: 1 }]), "fresh-code", Date.now());
+  const lost = await claimCode(mockDb([{ changes: 0 }, { row }, { changes: 1 }]), "fresh-code", Date.now(), "melody-sample", "http://127.0.0.1:8788/");
   expect(lost).toBeNull();
 });
 
 test("code reuse revokes only the stored family", async () => {
-  const lost = await claimCode(mockDb([{ changes: 0 }, { row }, { changes: 1 }]), "used-code", Date.now());
+  const lost = await claimCode(mockDb([{ changes: 0 }, { row }, { changes: 1 }]), "used-code", Date.now(), "melody-sample", "http://127.0.0.1:8788/");
   expect(lost).toBeNull();
+});
+
+test("claimCode binds client_id and redirect_uri and does not burn a mismatch", async () => {
+  const queries: string[] = [];
+  const binds: unknown[][] = [];
+  const fresh = { ...row, used_at: null, family_id: null };
+  const db = {
+    prepare(sql: string) {
+      queries.push(sql);
+      const statement = {
+        bind(...args: unknown[]) {
+          binds.push(args);
+          return statement;
+        },
+        async run() {
+          return { success: true, meta: { changes: 0 } };
+        },
+        async first() {
+          return fresh;
+        },
+      };
+      return statement;
+    },
+  } as unknown as D1Database;
+  const lost = await claimCode(db, "fresh-code", 50, "other-client", "https://evil.example/cb");
+  expect(lost).toBeNull();
+  expect(queries).toEqual([
+    "UPDATE auth_codes SET used_at = ? WHERE code_hash = ? AND used_at IS NULL AND expires_at > ? AND client_id = ? AND redirect_uri = ?",
+    "SELECT * FROM auth_codes WHERE code_hash = ?",
+  ]);
+  expect(binds[0]?.slice(3)).toEqual(["other-client", "https://evil.example/cb"]);
+  expect(queries.some((query) => query.includes("revoked_at"))).toBe(false);
 });
 
 test("rotateRefreshAtomic requires first-stmt meta.changes === 1", async () => {

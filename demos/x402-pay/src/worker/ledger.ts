@@ -114,9 +114,17 @@ export async function claimConfirmation(sql: Sql, id: string, sessionId: string,
     return { kind: "replay", row: unknown ?? { ...row, status: "unknown", error_code: "interrupted" } };
   }
   if (row.expires_at <= now) {
-    await finishConfirmation(sql, id, { status: "failed", errorCode: "expired", now });
-    const expired = await confirmationById(sql, id);
-    return { kind: "expired", row: expired ?? { ...row, status: "failed", error_code: "expired" } };
+    await expireIfRequested(sql, id, now);
+    const current = await confirmationById(sql, id);
+    if (!current) return { kind: "missing" };
+    if (current.status === "failed" && current.error_code === "expired") return { kind: "expired", row: current };
+    if (current.status === "approved") {
+      if (now - current.updated_at < BUSY_MS) return { kind: "busy" };
+      await markUnknown(sql, id, "interrupted", now);
+      const unknown = await confirmationById(sql, id);
+      return { kind: "replay", row: unknown ?? { ...current, status: "unknown", error_code: "interrupted" } };
+    }
+    return { kind: "replay", row: current };
   }
   const changed = await sql.run(
     `UPDATE confirmations SET status = 'approved', updated_at = ? WHERE id = ? AND session_id = ? AND status = 'requested' AND expires_at > ?`,
@@ -136,6 +144,14 @@ type ConfirmationPatch = {
   settlement?: string;
   errorCode?: string;
 };
+
+/** Expiry may only move a row that is still requested. An in-flight accept keeps its status. */
+export async function expireIfRequested(sql: Sql, id: string, now: number): Promise<number> {
+  return sql.run(
+    `UPDATE confirmations SET status = 'failed', updated_at = ?, error_code = 'expired' WHERE id = ? AND status = 'requested'`,
+    [now, id],
+  );
+}
 
 export async function finishConfirmation(sql: Sql, id: string, patch: ConfirmationPatch): Promise<void> {
   await sql.run(
