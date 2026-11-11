@@ -96,6 +96,7 @@ bun run scripts/agent-check.ts https://tech-demos.theserverless.dev/demos/cloudf
 | New unique Dynamic Worker IDs for each day | `DYNAMIC_WORKER_DAILY_CAP = 60` | `wrangler.jsonc`, `Meter` |
 | Agent turns for each IP | 6 each minute | `AGENT_LIMIT` binding |
 | Gadget creates, code saves, and binding changes for each IP | 12 each minute | `CODE_LIMIT` binding |
+| Gadget method calls (browser proxy and agent `callGadget`) for each IP and each workspace | 360 each 10 seconds | `GADGET_LIMIT` binding |
 | Gadget AI completions for each workspace | 6 each minute | `AGENT_LIMIT` binding |
 | Abandoned-tab idle close (user RPC, not ping) | 20 minutes | `workspace.ts` |
 | Gadget CPU and subrequests | 500 ms, 50 | Worker Loader `limits` |

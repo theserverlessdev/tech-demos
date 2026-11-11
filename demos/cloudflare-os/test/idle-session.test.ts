@@ -229,7 +229,7 @@ test("workspace user RPCs go through beginSession; gadget proxy does not auto-to
   expect(workspace).toMatch(/#live\(\) \{\s*this\.#ws\.beginSession\(\);/);
   expect(workspace).toContain("decideUserRpc");
   expect(workspace).toContain("noteActivity()");
-  const proxyIdx = workspace.indexOf("connectToGadget(id: string, viewer: Viewer)");
+  const proxyIdx = workspace.indexOf("connectToGadget(id: string, viewer: Viewer, ip: string)");
   const callIdx = workspace.indexOf("async #callGadget");
   expect(proxyIdx).toBeGreaterThan(0);
   expect(workspace.slice(proxyIdx, proxyIdx + 900)).not.toContain("self.touchActivity()");

@@ -18,6 +18,7 @@ import type {
 import { runAgent, type AgentHost } from "./agent";
 import { BLUEPRINT_INFOS, getBlueprint } from "./blueprints";
 import { decidePing, decideUserRpc, idleErrorMessage, idleReason, nextIdleAlarmAt, SESSION_IDLE_MS } from "./idle";
+import { assertGadgetLimit } from "./limits";
 import { assertBudget, meter } from "./meter";
 import { APPROVAL_TIMEOUT_MS, GADGET_CALL_TIMEOUT_MS, GADGET_METHOD_TIMEOUT_MS } from "./timeouts";
 
@@ -365,7 +366,7 @@ export class Workspace extends DurableObject<Env> {
         return;
       }
       this.#setAgentStatus("Thinking");
-      await runAgent(this.#agentHost(viewer));
+      await runAgent(this.#agentHost(viewer, ip));
     } catch (err) {
       console.error("agent failed", err);
       this.#addChat({ role: "assistant", content: `The agent stopped with an error: ${errorMessage(err)}` });
@@ -380,7 +381,7 @@ export class Workspace extends DurableObject<Env> {
     this.#queueSnapshot();
   }
 
-  #agentHost(viewer: Viewer): AgentHost {
+  #agentHost(viewer: Viewer, ip: string): AgentHost {
     return {
       env: this.env,
       viewer,
@@ -391,7 +392,7 @@ export class Workspace extends DurableObject<Env> {
       createGadget: (blueprintId, title) => this.createGadget(blueprintId, title, viewer, "the agent"),
       createCustomGadget: (spec) => this.#createCustomGadget(spec, viewer),
       writeFile: (id, path, content) => this.writeFile(id, path, content, viewer, "the agent"),
-      callGadget: (id, method, args) => this.#callGadget(id, method, args, "agent", "agent"),
+      callGadget: (id, method, args) => this.#callGadget(id, method, args, "agent", "agent", ip),
       focus: (id) => this.#broadcast({ type: "focus", gadget: this.#gadget(id).id }),
       history: () =>
         this.ctx.storage.sql
@@ -681,11 +682,12 @@ export class Workspace extends DurableObject<Env> {
     this.#broadcast({ type: "rpc", event: { ...event, at: Date.now() } });
   }
 
-  async #callGadget(id: string, method: string, args: unknown, via: RpcEvent["via"], who: string) {
+  async #callGadget(id: string, method: string, args: unknown, via: RpcEvent["via"], who: string, ip: string) {
     const g = this.#gadget(id);
     if (!/^[A-Za-z_$][\w$]*$/.test(method) || method.startsWith("__") || ["constructor", "fetch", "alarm", "subscribe"].includes(method)) {
       throw new Error(`"${method}" is not a callable gadget method.`);
     }
+    await this.#assertGadgetLimit(ip);
     const list = Array.isArray(args) ? args : args === undefined ? [] : [args];
     const started = Date.now();
     try {
@@ -703,7 +705,7 @@ export class Workspace extends DurableObject<Env> {
    * stub in a Proxy that looks like an RpcTarget, which is the same workaround upstream uses. The Proxy
    * also records each call for the shell's RPC trace.
    */
-  connectToGadget(id: string, viewer: Viewer) {
+  connectToGadget(id: string, viewer: Viewer, ip: string) {
     const g = this.#gadget(id);
     const facet = this.#facet(g);
     const self = this;
@@ -715,16 +717,17 @@ export class Workspace extends DurableObject<Env> {
         if (prop.startsWith("__")) return undefined;
         return (...args: unknown[]) => {
           const started = Date.now();
-          return (Reflect.apply(method, target, args) as Promise<unknown>).then(
-            (value) => {
-              self.#rpcEvent({ gadget: g.id, method: prop, ms: Date.now() - started, ok: true, via: "ui", who: viewer.name });
+          const fail = (err: unknown) => {
+            self.#rpcEvent({ gadget: g.id, method: String(prop), ms: Date.now() - started, ok: false, via: "ui", who: viewer.name });
+            self.#broadcast({ type: "log", gadget: g.id, level: "error", message: `${errorMessage(err)} (in ${String(prop)}())` });
+            throw err;
+          };
+          return self.#assertGadgetLimit(ip).then(
+            () => (Reflect.apply(method, target, args) as Promise<unknown>).then((value) => {
+              self.#rpcEvent({ gadget: g.id, method: String(prop), ms: Date.now() - started, ok: true, via: "ui", who: viewer.name });
               return value;
-            },
-            (err) => {
-              self.#rpcEvent({ gadget: g.id, method: prop, ms: Date.now() - started, ok: false, via: "ui", who: viewer.name });
-              self.#broadcast({ type: "log", gadget: g.id, level: "error", message: `${errorMessage(err)} (in ${prop}())` });
-              throw err;
-            },
+            }, fail),
+            fail,
           );
         };
       },
@@ -804,6 +807,11 @@ export class Workspace extends DurableObject<Env> {
     if (!success) throw new Error("Too many gadget changes from your network. Wait a minute, then try again.");
   }
 
+  /** Browser and agent gadget RPCs share one cap per network and per workspace. */
+  async #assertGadgetLimit(ip: string) {
+    await assertGadgetLimit(this.env.GADGET_LIMIT, ip, this.#workspaceId());
+  }
+
   setAutoApprove(gadgetId: string, binding: BindingName, enabled: boolean) {
     const g = this.#gadget(gadgetId);
     const key = `${g.id}:${binding}`;
@@ -879,7 +887,7 @@ export class WorkspaceClient extends RpcTarget {
 
   connectToGadget(id: string) {
     this.#live();
-    return this.#ws.connectToGadget(id, this.#viewer);
+    return this.#ws.connectToGadget(id, this.#viewer, this.#ip);
   }
 
   getFiles(id: string) {

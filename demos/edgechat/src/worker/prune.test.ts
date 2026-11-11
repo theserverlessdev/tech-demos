@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { pruneOldData } from "./prune";
+import { BIND_CHUNK, chunkBinds, pruneOldData } from "./prune";
 
 type Bound = { sql: string; args: unknown[] };
 
@@ -62,13 +62,20 @@ test("prune deletes more than 100 due rows in batches under the D1 parameter cap
     for (let i = 0; i < 120; i++) insert.run(`msg_due_${i}`, old + i);
   });
   write();
+  const attach = db.query(
+    "INSERT INTO attachments (id, room_id, r2_key, filename, content_type, size, created_at) VALUES (?, 'spam', ?, 'old.bin', 'application/octet-stream', 1, ?)",
+  );
+  const orphans = db.transaction(() => {
+    for (let i = 0; i < 120; i++) attach.run(`att_orphan_${i}`, `uploads/orphan-${i}.bin`, now - 11 * 60 * 1000);
+  });
+  orphans();
   db.exec(`INSERT INTO attachments (id, room_id, r2_key, filename, content_type, size, created_at) VALUES
-    ('att_old', 'spam', 'uploads/old.bin', 'old.bin', 'application/octet-stream', 1, ${now - 11 * 60 * 1000}),
     ('att_new', 'fresh', 'uploads/new.bin', 'new.bin', 'application/octet-stream', 1, ${young})`);
 
   const result = await pruneOldData(env, now);
 
   expect(result.deletedMessages).toBe(120);
+  expect(result.deletedAttachments).toBe(120);
   expect(db.query("SELECT COUNT(*) AS n FROM messages WHERE id NOT LIKE 'msg_lobby_%'").get()).toEqual({ n: 0 });
   expect(db.query("SELECT COUNT(*) AS n FROM messages WHERE id LIKE 'msg_lobby_%'").get()).toEqual({ n: 2 });
   expect(db.query("SELECT id FROM rooms WHERE id = 'fresh'").get()).toEqual({ id: "fresh" });
@@ -79,9 +86,23 @@ test("prune deletes more than 100 due rows in batches under the D1 parameter cap
 
   const messageDeletes = log.filter((entry) => entry.sql.startsWith("DELETE FROM messages"));
   expect(messageDeletes.length).toBeGreaterThan(1);
+  const attachmentDeletes = log.filter((entry) => entry.sql.startsWith("DELETE FROM attachments"));
+  expect(attachmentDeletes.length).toBeGreaterThan(1);
   for (const entry of log) {
     const placeholders = entry.sql.match(/\?/g)?.length ?? 0;
-    expect(placeholders).toBeLessThanOrEqual(91);
-    expect(entry.args.length).toBeLessThanOrEqual(91);
+    expect(placeholders).toBeLessThanOrEqual(BIND_CHUNK + 1);
+    expect(entry.args.length).toBeLessThanOrEqual(BIND_CHUNK + 1);
+    expect(entry.args.length).toBeLessThanOrEqual(100);
   }
+});
+
+test("chunkBinds keeps each IN list under D1's 100-parameter limit", () => {
+  const ids = Array.from({ length: 250 }, (_, i) => `id_${i}`);
+  const parts = chunkBinds(ids);
+  expect(BIND_CHUNK).toBe(90);
+  expect(parts).toHaveLength(3);
+  expect(parts[0]).toHaveLength(90);
+  expect(parts[1]).toHaveLength(90);
+  expect(parts[2]).toHaveLength(70);
+  for (const part of parts) expect(part.length + 1).toBeLessThanOrEqual(100);
 });
