@@ -16,13 +16,18 @@ type Siteverify = {
   "error-codes"?: string[];
 };
 
-function allowTestHosts(env: Env, secret: string): boolean {
-  return !hostedMode(env) || DUMMY_SECRETS.has(secret);
+function allowTestHosts(env: Env): boolean {
+  return !hostedMode(env);
+}
+
+export function isDummyTurnstileSecret(secret: string | undefined): boolean {
+  return Boolean(secret && DUMMY_SECRETS.has(secret));
 }
 
 export async function verifyTurnstile(env: Env, token: string, ip: string): Promise<boolean> {
   const secret = env.TURNSTILE_SECRET_KEY;
   if (!secret) return false;
+  if (hostedMode(env) && isDummyTurnstileSecret(secret)) return false;
   if (!token || token.length > 2048) return false;
 
   let result: Siteverify;
@@ -51,8 +56,8 @@ export async function verifyTurnstile(env: Env, token: string, ip: string): Prom
     expected = "";
   }
   const testHost = host === "localhost" || host === "127.0.0.1" || host === "example.com";
-  if (testHost && !allowTestHosts(env, secret)) return false;
-  if (!testHost && result.action && result.action !== ACTION) return false;
+  if (testHost && !allowTestHosts(env)) return false;
+  if (!testHost && result.action !== ACTION) return false;
   return testHost || host === expected;
 }
 

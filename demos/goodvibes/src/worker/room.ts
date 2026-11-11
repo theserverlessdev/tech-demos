@@ -114,6 +114,7 @@ export class VibeRoom extends DurableObject<Env> {
   }
 
   async alarm(): Promise<void> {
+    if (await this.wipeIfEmpty()) return;
     const now = Date.now();
     if (this.game.phase === "countdown" && now >= this.game.endsAt) {
       await this.beginPlay();
@@ -279,11 +280,16 @@ export class VibeRoom extends DurableObject<Env> {
       this.broadcast({ type: "leave", id: state.id }, ws);
       this.broadcast({ type: "presence", players: this.players() }, ws);
     }
-    if (this.listedSockets().length === 0) {
-      this.game = emptyGame();
-      await this.ctx.storage.deleteAlarm();
-      await this.ctx.storage.deleteAll();
-    }
+    await this.wipeIfEmpty();
+  }
+
+  /** Empty rooms still occupy SQLite until the last socket drop or a leftover alarm. */
+  private async wipeIfEmpty(): Promise<boolean> {
+    if (this.listedSockets().length > 0) return false;
+    this.game = emptyGame();
+    await this.ctx.storage.deleteAlarm();
+    await this.ctx.storage.deleteAll();
+    return true;
   }
 
   private async startRound(ws: WebSocket): Promise<void> {

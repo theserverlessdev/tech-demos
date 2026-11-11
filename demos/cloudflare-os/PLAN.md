@@ -93,10 +93,11 @@ sandboxed iframe (client.js) ◀───── Workspace DO (SQLite: gadgets, f
   user RPC starts a fresh idle window, so reconnect works. Gadget RPCs count as activity only after a
   recent pointer or key gesture. The shell counts each failed connect once, then shows Paused · tap to
   reconnect instead of giving up silently.
-- The rate limit is 6 agent turns per minute per IP. Each workspace can have 8 gadgets or fewer.
+- The rate limit is 6 agent turns per minute per IP. Gadget method calls are 360 per 10 seconds per IP and per workspace (`GADGET_LIMIT`), enough for Pixel Board's 60 ms stroke flush. Each workspace can have 8 gadgets or fewer.
 - Blueprint gadgets share Dynamic Workers by content hash.
 - Visitors can save gadget code, and each new code version is a new Dynamic Worker ID. The `Meter` DO
-  caps new IDs at `DYNAMIC_WORKER_DAILY_CAP` (default `60`) each day. Each gadget Worker also has a CPU limit
+  caps new IDs at `DYNAMIC_WORKER_DAILY_CAP` (default `60`) each day, and each network gets 15% of that
+  cap. Reused code hashes do not increment either count. Each gadget Worker also has a CPU limit
   of 500 ms and a limit of 50 subrequests.
 - The demo uses no Containers, no Browser Rendering, and no Workers for Platforms.
 

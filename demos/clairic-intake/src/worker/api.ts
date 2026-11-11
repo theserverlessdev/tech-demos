@@ -5,7 +5,7 @@ import { SAMPLES } from "../shared/samples";
 import { parseCorrections, validateFields, validateImage, validateState } from "../shared/schema";
 import type { Answer } from "../shared/types";
 import { enqueueBundledInbox, newId, publicInbox } from "./batch";
-import { insertUpload, listInbox, reserveCalls, reviewInbox, spendUsed, type ReserveResult } from "./db";
+import { insertUpload, listInbox, refundCalls, reserveCalls, reviewInbox, spendUsed, type ReserveResult } from "./db";
 import { clientIp, hashIp } from "./ip";
 import { runClairic, runCompare, runDecide, useMock } from "./models";
 import { isLocalRequest, isTestSiteKey, resolveTurnstileSecret, verifyTurnstile, type TurnstileAction } from "./turnstile";
@@ -108,22 +108,24 @@ async function extract(request: Request, env: Env): Promise<Response> {
   if (guard) throw new HttpError(400, guard.code, guard.message);
   const calls = compare ? 2 : 1;
   await reserveOrThrow(env, ipKey, now, calls);
-  let uploadId: string | null = null;
-  if (image?.ok) {
-    uploadId = newId();
-    const key = `intake/${visitor.id}/${uploadId}`;
-    await env.BUCKET.put(key, image.image.bytes, {
-      httpMetadata: { contentType: image.image.content_type },
-      customMetadata: { created: String(now) },
-    });
-    await insertUpload(env, { id: uploadId, visitorId: visitor.id, key, contentType: image.image.content_type, bytes: image.image.bytes.byteLength, now });
-  }
   try {
+    let uploadId: string | null = null;
+    if (image?.ok) {
+      uploadId = newId();
+      const key = `intake/${visitor.id}/${uploadId}`;
+      await env.BUCKET.put(key, image.image.bytes, {
+        httpMetadata: { contentType: image.image.content_type },
+        customMetadata: { created: String(now) },
+      });
+      await insertUpload(env, { id: uploadId, visitorId: visitor.id, key, contentType: image.image.content_type, bytes: image.image.bytes.byteLength, now });
+    }
     const extraction = await runClairic(env, state.state, fields.fields, image?.ok ? image.image : null, now);
     const comparison = compare ? await runCompare(env, state.state, fields.fields) : undefined;
     return json({ ...extraction, comparison, id: newId(), uploadId, labelled: extraction.source === "mock" }, 200, visitor, request);
   } catch (err) {
+    await refundCalls(env.DB, ipKey, now, calls);
     console.warn(JSON.stringify({ event: "extract_failed", error: err instanceof Error ? err.message : "error" }));
+    if (err instanceof HttpError) throw err;
     throw new HttpError(502, "ai_failed", "The model did not return a usable extraction.");
   }
 }
@@ -140,7 +142,9 @@ async function decide(request: Request, env: Env): Promise<Response> {
     const decision = await runDecide(env, answers);
     return json({ ...decision, labelled: decision.source === "mock" }, 200, visitor, request);
   } catch (err) {
+    await refundCalls(env.DB, ipKey, now, 1);
     console.warn(JSON.stringify({ event: "decide_failed", error: err instanceof Error ? err.message : "error" }));
+    if (err instanceof HttpError) throw err;
     throw new HttpError(502, "ai_failed", "Clef did not return a decision.");
   }
 }

@@ -43,6 +43,9 @@ export type ObjectRow = {
   firstSeen: number;
 };
 
+/** One cron pass. Each wipe does several D1 calls, so the page stays small. */
+export const EXPIRED_DRIVE_BATCH = 40;
+
 export interface DriveRepo {
   mintKilled(): Promise<boolean>;
   setMintKilled(killed: boolean): Promise<void>;
@@ -162,7 +165,10 @@ export class MemoryRepo implements DriveRepo {
     return this.objects.filter((row) => row.driveId === driveId);
   }
   async listExpired(now: number): Promise<DriveRow[]> {
-    return this.drives.filter((row) => dueForWipe(row, now));
+    return this.drives
+      .filter((row) => dueForWipe(row, now))
+      .sort((a, b) => a.expiresAt - b.expiresAt)
+      .slice(0, EXPIRED_DRIVE_BATCH);
   }
   async purge(before: number): Promise<void> {
     const ids = new Set(this.drives.filter((row) => row.wipedAt !== null && row.wipedAt < before).map((row) => row.id));
@@ -341,9 +347,10 @@ export class D1Repo implements DriveRepo {
       .prepare(
         `SELECT * FROM drives WHERE
            (status = 'active' AND expires_at <= ?1) OR
-           (status = 'frozen' AND frozen_at IS NOT NULL AND frozen_at <= ?2)`,
+           (status = 'frozen' AND frozen_at IS NOT NULL AND frozen_at <= ?2)
+         ORDER BY expires_at LIMIT ?3`,
       )
-      .bind(now, now - FROZEN_KEEP_MS)
+      .bind(now, now - FROZEN_KEEP_MS, EXPIRED_DRIVE_BATCH)
       .all<Record<string, D1Value>>();
     return result.results.map(mapDrive);
   }
@@ -351,9 +358,9 @@ export class D1Repo implements DriveRepo {
     const expired = await this.db.prepare("SELECT id FROM drives WHERE wiped_at IS NOT NULL AND wiped_at < ?1").bind(before).all<{ id: string }>();
     const ids = expired.results.map((row) => row.id);
     if (ids.length) {
-      const marks = ids.map(() => "?").join(", ");
-      await this.db.prepare(`DELETE FROM objects WHERE drive_id IN (${marks})`).bind(...ids).run();
-      await this.db.prepare(`DELETE FROM drives WHERE id IN (${marks})`).bind(...ids).run();
+      const json = JSON.stringify(ids);
+      await this.db.prepare("DELETE FROM objects WHERE drive_id IN (SELECT value FROM json_each(?1))").bind(json).run();
+      await this.db.prepare("DELETE FROM drives WHERE id IN (SELECT value FROM json_each(?1))").bind(json).run();
     }
     await this.db.prepare("DELETE FROM verifications WHERE created_at < ?1").bind(before).run();
     await this.db.prepare("DELETE FROM reports WHERE created_at < ?1").bind(before).run();

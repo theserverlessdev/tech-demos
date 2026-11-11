@@ -1,5 +1,9 @@
 import { DurableObject } from "cloudflare:workers";
 import { AGENT_STEP_RESERVE_USD, COMPLETION_RESERVE_USD, applySettle } from "./cost";
+import { networkKey } from "./limits";
+import { loaderClaimDecision, loaderIpCap } from "./loader";
+
+export { loaderClaimDecision, loaderIpCap, LOADER_IP_SHARE } from "./loader";
 
 export {
   AGENT_STEP_RESERVE_USD,
@@ -34,23 +38,36 @@ export class Meter extends DurableObject<Env> {
 
   /**
    * Each unique Dynamic Worker ID costs money after the monthly allowance. Visitors can save code, so the
-   * demo caps how many new IDs it loads each day.
+   * demo caps how many new IDs it loads each day, and each network gets a share of that cap.
    */
-  claimLoader(id: string): { ok: boolean; count: number; cap: number } {
+  claimLoader(id: string, ip = "unknown"): { ok: boolean; count: number; cap: number; reason?: "global" | "ip" } {
     const kv = this.ctx.storage.kv;
     const day = new Date().toISOString().slice(0, 10);
     const cap = Number(this.env.DYNAMIC_WORKER_DAILY_CAP) || 60;
-    if (kv.get(`loader:${day}:${id}`)) return { ok: true, count: (kv.get<number>(`loaders:${day}`) ?? 0) as number, cap };
+    const ipCap = loaderIpCap(cap);
+    const ipKey = `loaderip:${day}:${networkKey(ip)}`;
+    if (kv.get(`loader:${day}:${id}`)) {
+      return loaderClaimDecision({
+        alreadyClaimed: true,
+        globalCount: (kv.get<number>(`loaders:${day}`) ?? 0) as number,
+        ipCount: 0,
+        globalCap: cap,
+        ipCap,
+      });
+    }
     const count = (kv.get<number>(`loaders:${day}`) ?? 0) as number;
+    const ipCount = (kv.get<number>(ipKey) ?? 0) as number;
     if (count === 0) {
       for (const [key] of kv.list({ prefix: "loader" })) {
-        if (!key.startsWith(`loader:${day}:`) && key !== `loaders:${day}`) kv.delete(key);
+        if (!key.startsWith(`loader:${day}:`) && key !== `loaders:${day}` && !key.startsWith(`loaderip:${day}:`)) kv.delete(key);
       }
     }
-    if (count >= cap) return { ok: false, count, cap };
+    const decision = loaderClaimDecision({ alreadyClaimed: false, globalCount: count, ipCount, globalCap: cap, ipCap });
+    if (!decision.ok) return decision;
     kv.put(`loader:${day}:${id}`, 1);
     kv.put(`loaders:${day}`, count + 1);
-    return { ok: true, count: count + 1, cap };
+    kv.put(ipKey, ipCount + 1);
+    return decision;
   }
 
   /** Check and hold spend in one step, so concurrent callers cannot all pass the check. */

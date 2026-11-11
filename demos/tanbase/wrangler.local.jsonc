@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  // Distinct from production `tech-demos-tanbase` so `wrangler deploy -c wrangler.local.jsonc` cannot overwrite the live worker.
+  // Distinct from production `tech-demos-tanbase` so `wrangler deploy -c wrangler.local.jsonc` cannot overwrite the live worker, D1, or R2.
   "name": "tech-demos-tanbase-local",
   "main": "src/worker/index.ts",
   "compatibility_date": "2026-09-01",
@@ -17,15 +17,15 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "tech-demos-tanbase",
-      "database_id": "67b63062-595d-48dc-a13c-2585dbeb5612",
+      "database_name": "tech-demos-tanbase-local",
+      "database_id": "00000000-0000-4000-8000-000000007540",
       "migrations_dir": "migrations"
     }
   ],
   "r2_buckets": [
     {
       "binding": "FILES",
-      "bucket_name": "tech-demos-tanbase"
+      "bucket_name": "tech-demos-tanbase-local"
     }
   ],
   "durable_objects": {

@@ -37,6 +37,24 @@ test("readBounded stops after max bytes even without Content-Length", async () =
   await expect(readBounded(request, 20)).rejects.toBeInstanceOf(BodyTooLargeError);
 });
 
+test("an unprovisioned gate wipes storage created by onStart", async () => {
+  const org = await Bun.file(new URL("../src/worker/org.ts", import.meta.url)).text();
+  const gateIdx = org.indexOf("private async gate(");
+  expect(gateIdx).toBeGreaterThan(0);
+  const gate = org.slice(gateIdx, gateIdx + 900);
+  expect(gate).toContain("await this.ctx.storage.deleteAll()");
+  expect(gate).toContain("No org with that id.");
+  expect(org).toContain("this.ensureSchema()");
+});
+
+test("offline wrangler cannot overwrite the production worker name", async () => {
+  const prod = await Bun.file(new URL("../wrangler.jsonc", import.meta.url)).text();
+  const offline = await Bun.file(new URL("../wrangler.offline.jsonc", import.meta.url)).text();
+  expect(prod).toContain('"name": "tech-demos-company-brain"');
+  expect(offline).toContain('"name": "tech-demos-company-brain-dev"');
+  expect(offline).not.toContain('"name": "tech-demos-company-brain"');
+});
+
 test("localhost Origins are only accepted on a local request host", () => {
   const local = new Request("http://127.0.0.1:8787/api/orgs", {
     headers: { origin: "http://localhost:5173" },

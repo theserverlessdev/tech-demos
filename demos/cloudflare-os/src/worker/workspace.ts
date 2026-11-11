@@ -18,6 +18,7 @@ import type {
 import { runAgent, type AgentHost } from "./agent";
 import { BLUEPRINT_INFOS, getBlueprint } from "./blueprints";
 import { decidePing, decideUserRpc, idleErrorMessage, idleReason, nextIdleAlarmAt, SESSION_IDLE_MS } from "./idle";
+import { assertGadgetLimit } from "./limits";
 import { assertBudget, meter } from "./meter";
 import { APPROVAL_TIMEOUT_MS, GADGET_CALL_TIMEOUT_MS, GADGET_METHOD_TIMEOUT_MS } from "./timeouts";
 
@@ -365,7 +366,7 @@ export class Workspace extends DurableObject<Env> {
         return;
       }
       this.#setAgentStatus("Thinking");
-      await runAgent(this.#agentHost(viewer));
+      await runAgent(this.#agentHost(viewer, ip));
     } catch (err) {
       console.error("agent failed", err);
       this.#addChat({ role: "assistant", content: `The agent stopped with an error: ${errorMessage(err)}` });
@@ -380,7 +381,7 @@ export class Workspace extends DurableObject<Env> {
     this.#queueSnapshot();
   }
 
-  #agentHost(viewer: Viewer): AgentHost {
+  #agentHost(viewer: Viewer, ip: string): AgentHost {
     return {
       env: this.env,
       viewer,
@@ -388,10 +389,19 @@ export class Workspace extends DurableObject<Env> {
       readme: (id) => this.#file(this.#gadget(id).id, "README.md"),
       readFile: (id, path) => this.#file(this.#gadget(id).id, path),
       blueprints: () => BLUEPRINT_INFOS,
-      createGadget: (blueprintId, title) => this.createGadget(blueprintId, title, viewer, "the agent"),
-      createCustomGadget: (spec) => this.#createCustomGadget(spec, viewer),
-      writeFile: (id, path, content) => this.writeFile(id, path, content, viewer, "the agent"),
-      callGadget: (id, method, args) => this.#callGadget(id, method, args, "agent", "agent"),
+      createGadget: async (blueprintId, title) => {
+        await this.assertCodeLimit(ip);
+        return this.createGadget(blueprintId, title, viewer, "the agent", ip);
+      },
+      createCustomGadget: async (spec) => {
+        await this.assertCodeLimit(ip);
+        return this.#createCustomGadget(spec, viewer, ip);
+      },
+      writeFile: async (id, path, content) => {
+        await this.assertCodeLimit(ip);
+        return this.writeFile(id, path, content, viewer, "the agent", ip);
+      },
+      callGadget: (id, method, args) => this.#callGadget(id, method, args, "agent", "agent", ip),
       focus: (id) => this.#broadcast({ type: "focus", gadget: this.#gadget(id).id }),
       history: () =>
         this.ctx.storage.sql
@@ -467,10 +477,14 @@ export class Workspace extends DurableObject<Env> {
     };
   }
 
-  async #claimLoader(loaderId: string) {
-    const r = await meter(this.env).claimLoader(loaderId);
+  async #claimLoader(loaderId: string, ip: string) {
+    const r = await meter(this.env).claimLoader(loaderId, ip);
     if (!r.ok) {
-      throw new Error(`The demo reached its daily limit of ${r.cap} new Dynamic Workers. Gadgets that already run still work. Try again tomorrow.`);
+      throw new Error(
+        r.reason === "ip"
+          ? "Your network reached today's share of new Dynamic Workers. Gadgets that already run still work. Try again tomorrow."
+          : `The demo reached its daily limit of ${r.cap} new Dynamic Workers. Gadgets that already run still work. Try again tomorrow.`,
+      );
     }
   }
 
@@ -478,7 +492,7 @@ export class Workspace extends DurableObject<Env> {
     return sha256(`${HARNESS_VERSION}\n${COMPATIBILITY_DATE}\n${bindings.join(",")}\n${server}`);
   }
 
-  async #insertGadget(spec: { title: string; blueprint: string; icon: string; bindings: BindingName[]; files: GadgetFiles }) {
+  async #insertGadget(spec: { title: string; blueprint: string; icon: string; bindings: BindingName[]; files: GadgetFiles }, ip: string) {
     if (this.#gadgetRows().length >= MAX_GADGETS) {
       throw new Error(`This workspace already has ${MAX_GADGETS} gadgets. Close one first.`);
     }
@@ -486,7 +500,7 @@ export class Workspace extends DurableObject<Env> {
     const id = `gadget${seq}`;
     const now = Date.now();
     const hash = await this.#codeHash(spec.files["server.js"], spec.bindings);
-    await this.#claimLoader(spec.bindings.length > 0 ? `ws.${this.#workspaceId()}.${id}.v1` : `code.${hash.slice(0, 32)}`);
+    await this.#claimLoader(spec.bindings.length > 0 ? `ws.${this.#workspaceId()}.${id}.v1` : `code.${hash.slice(0, 32)}`, ip);
     this.#setMeta("next_seq", seq + 1);
     const sql = this.ctx.storage.sql;
     sql.exec(
@@ -510,7 +524,7 @@ export class Workspace extends DurableObject<Env> {
     return this.#gadget(id);
   }
 
-  async createGadget(blueprintId: string, title: string | undefined, viewer: Viewer, via = "") {
+  async createGadget(blueprintId: string, title: string | undefined, viewer: Viewer, via = "", ip = "") {
     const bp = getBlueprint(String(blueprintId));
     if (!bp) throw new Error(`Unknown blueprint "${blueprintId}". Use one of: ${BLUEPRINT_INFOS.map((b) => b.id).join(", ")}.`);
     const row = await this.#insertGadget({
@@ -519,7 +533,7 @@ export class Workspace extends DurableObject<Env> {
       icon: bp.icon,
       bindings: bp.bindings,
       files: bp.files,
-    });
+    }, ip);
     this.#addChat({ role: "system", content: `${viewer.name}${via ? ` (through ${via})` : ""} created ${row.title} as ${row.id}.` });
     this.#broadcast({ type: "focus", gadget: row.id });
     return this.#info(row);
@@ -528,6 +542,7 @@ export class Workspace extends DurableObject<Env> {
   async #createCustomGadget(
     spec: { title: string; icon: string; bindings: string[]; files: GadgetFiles },
     viewer: Viewer,
+    ip: string,
   ) {
     for (const path of FILE_PATHS) {
       if ((spec.files[path] ?? "").length > MAX_FILE_BYTES) throw new Error(`${path} is larger than ${MAX_FILE_BYTES} bytes.`);
@@ -541,7 +556,7 @@ export class Workspace extends DurableObject<Env> {
       icon: ICONS.includes(spec.icon) ? spec.icon : "sparkle",
       bindings: (spec.bindings ?? []).filter((b): b is BindingName => BINDINGS.includes(b as BindingName)),
       files: spec.files,
-    });
+    }, ip);
     this.#addChat({ role: "system", content: `${viewer.name} (through the agent) wrote ${row.title} as ${row.id}.` });
     this.#broadcast({ type: "focus", gadget: row.id });
     return this.#info(row);
@@ -574,7 +589,7 @@ export class Workspace extends DurableObject<Env> {
     return { jsCode: this.#file(g.id, "client.js"), version: g.version };
   }
 
-  async writeFile(id: string, path: string, content: string, viewer: Viewer, via = "") {
+  async writeFile(id: string, path: string, content: string, viewer: Viewer, via = "", ip = "") {
     const g = this.#gadget(id);
     if (!FILE_PATHS.includes(path as (typeof FILE_PATHS)[number])) throw new Error(`Unknown file "${path}".`);
     const text = String(content ?? "");
@@ -593,7 +608,7 @@ export class Workspace extends DurableObject<Env> {
     put(text);
     let row: GadgetRow;
     try {
-      row = await this.#bumpVersion(g);
+      row = await this.#bumpVersion(g, ip);
     } catch (err) {
       put(previous);
       throw err;
@@ -605,7 +620,7 @@ export class Workspace extends DurableObject<Env> {
     return this.#info(row);
   }
 
-  async setBinding(id: string, binding: BindingName, enabled: boolean, viewer: Viewer) {
+  async setBinding(id: string, binding: BindingName, enabled: boolean, viewer: Viewer, ip = "") {
     const g = this.#gadget(id);
     if (!BINDINGS.includes(binding)) throw new Error(`Unknown binding "${binding}".`);
     const set = new Set(this.#bindings(g));
@@ -615,7 +630,7 @@ export class Workspace extends DurableObject<Env> {
     this.ctx.storage.sql.exec(`UPDATE gadgets SET bindings = ? WHERE id = ?`, JSON.stringify(bindings), g.id);
     let row: GadgetRow;
     try {
-      row = await this.#bumpVersion(this.#gadget(g.id));
+      row = await this.#bumpVersion(this.#gadget(g.id), ip);
     } catch (err) {
       this.ctx.storage.sql.exec(`UPDATE gadgets SET bindings = ? WHERE id = ?`, g.bindings, g.id);
       throw err;
@@ -628,10 +643,10 @@ export class Workspace extends DurableObject<Env> {
   }
 
   /** New code or new bindings: new Dynamic Worker ID, restart the facet, keep its storage. */
-  async #bumpVersion(g: GadgetRow): Promise<GadgetRow> {
+  async #bumpVersion(g: GadgetRow, ip: string): Promise<GadgetRow> {
     const bindings = this.#bindings(g);
     const hash = await this.#codeHash(this.#file(g.id, "server.js"), bindings);
-    await this.#claimLoader(this.#loaderId({ ...g, version: g.version + 1, code_hash: hash }));
+    await this.#claimLoader(this.#loaderId({ ...g, version: g.version + 1, code_hash: hash }), ip);
     this.ctx.storage.sql.exec(
       `UPDATE gadgets SET version = version + 1, code_hash = ?, updated_at = ? WHERE id = ?`,
       hash,
@@ -681,11 +696,12 @@ export class Workspace extends DurableObject<Env> {
     this.#broadcast({ type: "rpc", event: { ...event, at: Date.now() } });
   }
 
-  async #callGadget(id: string, method: string, args: unknown, via: RpcEvent["via"], who: string) {
+  async #callGadget(id: string, method: string, args: unknown, via: RpcEvent["via"], who: string, ip: string) {
     const g = this.#gadget(id);
     if (!/^[A-Za-z_$][\w$]*$/.test(method) || method.startsWith("__") || ["constructor", "fetch", "alarm", "subscribe"].includes(method)) {
       throw new Error(`"${method}" is not a callable gadget method.`);
     }
+    await this.#assertGadgetLimit(ip);
     const list = Array.isArray(args) ? args : args === undefined ? [] : [args];
     const started = Date.now();
     try {
@@ -703,7 +719,7 @@ export class Workspace extends DurableObject<Env> {
    * stub in a Proxy that looks like an RpcTarget, which is the same workaround upstream uses. The Proxy
    * also records each call for the shell's RPC trace.
    */
-  connectToGadget(id: string, viewer: Viewer) {
+  connectToGadget(id: string, viewer: Viewer, ip: string) {
     const g = this.#gadget(id);
     const facet = this.#facet(g);
     const self = this;
@@ -715,16 +731,17 @@ export class Workspace extends DurableObject<Env> {
         if (prop.startsWith("__")) return undefined;
         return (...args: unknown[]) => {
           const started = Date.now();
-          return (Reflect.apply(method, target, args) as Promise<unknown>).then(
-            (value) => {
-              self.#rpcEvent({ gadget: g.id, method: prop, ms: Date.now() - started, ok: true, via: "ui", who: viewer.name });
+          const fail = (err: unknown) => {
+            self.#rpcEvent({ gadget: g.id, method: String(prop), ms: Date.now() - started, ok: false, via: "ui", who: viewer.name });
+            self.#broadcast({ type: "log", gadget: g.id, level: "error", message: `${errorMessage(err)} (in ${String(prop)}())` });
+            throw err;
+          };
+          return self.#assertGadgetLimit(ip).then(
+            () => (Reflect.apply(method, target, args) as Promise<unknown>).then((value) => {
+              self.#rpcEvent({ gadget: g.id, method: String(prop), ms: Date.now() - started, ok: true, via: "ui", who: viewer.name });
               return value;
-            },
-            (err) => {
-              self.#rpcEvent({ gadget: g.id, method: prop, ms: Date.now() - started, ok: false, via: "ui", who: viewer.name });
-              self.#broadcast({ type: "log", gadget: g.id, level: "error", message: `${errorMessage(err)} (in ${prop}())` });
-              throw err;
-            },
+            }, fail),
+            fail,
           );
         };
       },
@@ -804,6 +821,11 @@ export class Workspace extends DurableObject<Env> {
     if (!success) throw new Error("Too many gadget changes from your network. Wait a minute, then try again.");
   }
 
+  /** Browser and agent gadget RPCs share one cap per network and per workspace. */
+  async #assertGadgetLimit(ip: string) {
+    await assertGadgetLimit(this.env.GADGET_LIMIT, ip, this.#workspaceId());
+  }
+
   setAutoApprove(gadgetId: string, binding: BindingName, enabled: boolean) {
     const g = this.#gadget(gadgetId);
     const key = `${g.id}:${binding}`;
@@ -864,7 +886,7 @@ export class WorkspaceClient extends RpcTarget {
   async createGadget(blueprintId: string, title?: string) {
     this.#live();
     await this.#ws.assertCodeLimit(this.#ip);
-    return this.#ws.createGadget(blueprintId, title, this.#viewer);
+    return this.#ws.createGadget(blueprintId, title, this.#viewer, "", this.#ip);
   }
 
   removeGadget(id: string) {
@@ -879,7 +901,7 @@ export class WorkspaceClient extends RpcTarget {
 
   connectToGadget(id: string) {
     this.#live();
-    return this.#ws.connectToGadget(id, this.#viewer);
+    return this.#ws.connectToGadget(id, this.#viewer, this.#ip);
   }
 
   getFiles(id: string) {
@@ -890,13 +912,13 @@ export class WorkspaceClient extends RpcTarget {
   async writeFile(id: string, path: keyof GadgetFiles, content: string) {
     this.#live();
     await this.#ws.assertCodeLimit(this.#ip);
-    return this.#ws.writeFile(id, path, content, this.#viewer);
+    return this.#ws.writeFile(id, path, content, this.#viewer, "", this.#ip);
   }
 
   async setBinding(id: string, binding: BindingName, enabled: boolean) {
     this.#live();
     await this.#ws.assertCodeLimit(this.#ip);
-    return this.#ws.setBinding(id, binding, enabled, this.#viewer);
+    return this.#ws.setBinding(id, binding, enabled, this.#viewer, this.#ip);
   }
 
   inspectStorage(id: string) {

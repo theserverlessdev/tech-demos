@@ -70,7 +70,7 @@ export async function handleToken(request: Request, env: Env): Promise<Response>
     const code = body.code ?? "";
     const redirectUri = body.redirect_uri ?? "";
     const verifier = body.code_verifier ?? "";
-    const row = await claimCode(env.DB, code, now);
+    const row = await claimCode(env.DB, code, now, app.client_id, redirectUri);
     if (!row) return corsOauth(request, "invalid_grant", "The authorization request failed.");
     if (row.client_id !== app.client_id || row.redirect_uri !== redirectUri) {
       return corsOauth(request,"invalid_grant", "The authorization request failed.");

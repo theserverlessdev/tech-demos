@@ -51,6 +51,7 @@
     { "pattern": "tech-demos.theserverless.dev/demos/repo-per-agent/*", "zone_name": "theserverless.dev" },
     { "pattern": "repo-per-agent.tech-demos.theserverless.dev/*", "zone_name": "theserverless.dev" }
   ],
-  "workers_dev": true,
+  // Zone routes are the public URLs. workers.dev stays off so a deploy cannot publish a second hostname.
+  "workers_dev": false,
   "observability": { "enabled": true }
 }

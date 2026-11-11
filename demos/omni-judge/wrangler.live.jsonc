@@ -1,6 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "tech-demos-omni-judge",
+  // Distinct from production `tech-demos-omni-judge` so `wrangler deploy -c wrangler.live.jsonc` cannot overwrite the live worker.
+  "name": "tech-demos-omni-judge-live",
   "main": "src/worker/index.ts",
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],

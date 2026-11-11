@@ -9,6 +9,15 @@ export function wantsRefresh(scope: string): boolean {
   return scope.split(/\s+/).includes("offline_access");
 }
 
+function scopeHas(scope: string, name: string): boolean {
+  return scope.split(/\s+/).includes(name);
+}
+
+function emailClaims(scope: string, email: string, emailVerified: boolean): { email?: string; email_verified?: boolean } {
+  if (!scopeHas(scope, "email")) return {};
+  return { email, email_verified: emailVerified };
+}
+
 export async function mintTokens(
   env: Env,
   request: Request,
@@ -42,8 +51,7 @@ export async function mintTokens(
     exp: nowSec + ACCESS_TTL_SEC,
     token_use: "access",
     scope: input.scope,
-    email: input.email,
-    email_verified: input.emailVerified,
+    ...emailClaims(input.scope, input.email, input.emailVerified),
     client_id: input.clientId,
     jti,
     azp: input.clientId,
@@ -65,8 +73,7 @@ export async function mintTokens(
       exp: nowSec + ACCESS_TTL_SEC,
       token_use: "id",
       nonce: input.nonce,
-      email: input.email,
-      email_verified: input.emailVerified,
+      ...emailClaims(input.scope, input.email, input.emailVerified),
       azp: input.clientId,
       auth_time: input.authTime ?? nowSec,
     };

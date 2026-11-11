@@ -11,6 +11,7 @@ declare global {
     METER: DurableObjectNamespace;
     AGENT_LIMIT: RateLimit;
     CODE_LIMIT: RateLimit;
+    GADGET_LIMIT: RateLimit;
     AI_MODEL: string;
     AI_DAILY_BUDGET_USD: string;
     DYNAMIC_WORKER_DAILY_CAP: string;

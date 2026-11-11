@@ -2,7 +2,8 @@
 // Questions that need the model return 503. Deploy with wrangler.jsonc.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "tech-demos-company-brain",
+  // Distinct from production `tech-demos-company-brain` so `wrangler deploy -c wrangler.offline.jsonc` cannot overwrite the live worker.
+  "name": "tech-demos-company-brain-dev",
   "main": "src/worker/index.ts",
   "compatibility_date": "2026-09-10",
   "compatibility_flags": ["nodejs_compat"],

@@ -223,3 +223,32 @@ test("the hour wipe removes objects and keeps the audit row for 30 days", async 
   expect(app.repo.objects.length).toBe(0);
   expect(app.repo.blocks.length).toBe(1);
 });
+
+const LOCK_XML = `<?xml version="1.0"?><lockinfo xmlns="DAV:"><lockscope><exclusive/></lockscope><locktype><write/></locktype></lockinfo>`;
+
+test("DELETE and MOVE remove locks at the source path", async () => {
+  const { app, minted } = await drive();
+  expect((await dav(app, minted, "PUT", "note.txt", "one")).status).toBe(201);
+  const locked = await dav(app, minted, "LOCK", "note.txt", LOCK_XML);
+  const token = locked.headers.get("lock-token") ?? "";
+  expect((await dav(app, minted, "DELETE", "note.txt", null, { If: `(${token})` })).status).toBe(204);
+  const afterDelete = (await (await app.fetch(`${ORIGIN}/api/locks`, { headers: { cookie: minted.cookie } })).json()) as {
+    locks: unknown[];
+  };
+  expect(afterDelete.locks).toEqual([]);
+
+  expect((await dav(app, minted, "PUT", "move.txt", "two")).status).toBe(201);
+  const again = await dav(app, minted, "LOCK", "move.txt", LOCK_XML);
+  const moveToken = again.headers.get("lock-token") ?? "";
+  const source = `${ORIGIN}/dav/${minted.driveId}/move.txt`;
+  const moved = await dav(app, minted, "MOVE", "move.txt", null, {
+    Destination: `${ORIGIN}/dav/${minted.driveId}/gone.txt`,
+    If: `<${source}> (${moveToken})`,
+  });
+  expect(moved.status).toBe(201);
+  const afterMove = (await (await app.fetch(`${ORIGIN}/api/locks`, { headers: { cookie: minted.cookie } })).json()) as {
+    locks: unknown[];
+  };
+  expect(afterMove.locks).toEqual([]);
+  expect((await dav(app, minted, "PUT", "gone.txt", "three")).status).toBe(204);
+});

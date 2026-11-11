@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { BUSY_MS, GLOBAL_PAID_CAP, NETWORK, SESSION_PAID_CAP, SQUARE_ATOMIC, SUMMARY_ATOMIC, USDC_BASE_SEPOLIA, USDC_NAME, USDC_VERSION } from "../shared/protocol";
+import { BUSY_MS, GLOBAL_PAID_CAP, NETWORK, SESSION_PAID_CAP, SQUARE_ATOMIC, SUMMARY_ATOMIC, UNKNOWN_LABEL, USDC_BASE_SEPOLIA, USDC_NAME, USDC_VERSION } from "../shared/protocol";
 import { HttpError, handleApi, type Deps } from "./http";
 import type { ToolView } from "./interpret";
 import { confirmationById, finishOwned, markUnknown } from "./ledger";
@@ -653,4 +653,70 @@ test("turnstile and rate limits fail closed", async () => {
     body: JSON.stringify({ turnstileToken: "from-another-demo" }),
   }), open.deps, "/api/session");
   expect(bad.status).toBe(403);
+});
+
+test("a malformed session cookie is a 400, not a 500", async () => {
+  const { deps } = harness();
+  const response = await api(
+    new Request("https://x402-pay.tech-demos.theserverless.dev/api/state", {
+      headers: { cookie: "x402_session=%E0%A4" },
+    }),
+    deps,
+    "/api/state",
+  );
+  const body = (await response.json()) as { error: string };
+  expect(response.status).toBe(400);
+  expect(body.error).toBe("bad_cookie");
+});
+
+test("expiry cannot overwrite an in-flight accept", async () => {
+  const { deps, clock, settles } = harness();
+  const cookie = await session(deps);
+  const challenged = await call(deps, cookie, { tool: "square", args: { number: 4 } });
+  const quote = (await challenged.json()) as { confirmationId: string; binding: string };
+  const inner = deps.sql;
+  deps.sql = {
+    async run(query, params = []) {
+      if (query.includes("error_code = 'expired'")) {
+        await inner.run(`UPDATE confirmations SET status = 'approved', updated_at = ? WHERE id = ? AND status = 'requested'`, [
+          clock.now,
+          quote.confirmationId,
+        ]);
+      }
+      return inner.run(query, params);
+    },
+    get: (query, params) => inner.get(query, params),
+    all: (query, params) => inner.all(query, params),
+  };
+  clock.now += 3 * 60 * 1000;
+  const raced = await confirm(deps, cookie, { confirmationId: quote.confirmationId, binding: quote.binding, accept: true });
+  const body = (await raced.json()) as { status: string; paid: boolean; error?: string };
+  expect(raced.status).toBe(409);
+  expect(body.paid).toBe(false);
+  expect(body.error).toBe("in_progress");
+  expect(settles.n).toBe(0);
+  const row = await confirmationById(inner, quote.confirmationId);
+  expect(row?.status).toBe("approved");
+});
+
+test("settled text is returned as stored, and unknown text stays the unknown label", async () => {
+  const jsonText = '{"accepts":[{"x402Version":2}]}';
+  const { deps } = harness({
+    pay: async () => view({ text: jsonText, success: true, transaction: "0x" + "ab".repeat(32), network: NETWORK }),
+  });
+  const cookie = await session(deps);
+  const opened = await call(deps, cookie, { tool: "square", args: { number: 4 } });
+  const quote = (await opened.json()) as { confirmationId: string; binding: string };
+  const paid = await confirm(deps, cookie, { confirmationId: quote.confirmationId, binding: quote.binding, accept: true });
+  const body = (await paid.json()) as { paid: boolean; status: string; text: string };
+  expect(body.status).toBe("settled");
+  expect(body.paid).toBe(true);
+  expect(body.text).toBe(jsonText);
+
+  await deps.sql.run("UPDATE confirmations SET status = 'unknown', result_text = ?, settlement = NULL WHERE id = ?", [jsonText, quote.confirmationId]);
+  const replay = await confirm(deps, cookie, { confirmationId: quote.confirmationId, binding: quote.binding, accept: true });
+  const again = (await replay.json()) as { paid: boolean; status: string; text: string };
+  expect(again.status).toBe("unknown");
+  expect(again.paid).toBe(false);
+  expect(again.text).toBe(UNKNOWN_LABEL);
 });
