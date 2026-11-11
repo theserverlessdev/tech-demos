@@ -8,6 +8,7 @@
     "deploy": "bun run build && CI=1 wrangler d1 migrations apply DB --remote && wrangler deploy",
     "deploy:hosted": "bun run build && CI=1 wrangler d1 migrations apply DB --remote -c wrangler.hosted.jsonc && wrangler deploy -c wrangler.hosted.jsonc",
     "deploy:selfhost": "bun run deploy",
+    "test": "bun test",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
     "cf-typegen": "wrangler types",
     "smoke": "bun run scripts/smoke.ts",

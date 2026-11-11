@@ -2,6 +2,9 @@
   "name": "@tech-demos/shared",
   "private": true,
   "type": "module",
+  "scripts": {
+    "test": "bun test"
+  },
   "exports": {
     ".": "./src/index.ts"
   }

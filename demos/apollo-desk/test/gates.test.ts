@@ -1,4 +1,4 @@
-import { DESK_PATH, PAGE_CSP, clampDeviceLevel, expandIpv6, formatBudgetUsd, ipSpendKey, isScopedGuardCode, isStaticAssetPath, MAX_DESK_TURNS_PER_DAY, MAX_HELLO_FAILS, MAX_REMINDER_SCHEDULES, MAX_TOOL_CALLS_PER_ROUND, networkKey, nextHelloFails, utcDayKey, visitorCapUsd, VISITOR_BUDGET_SHARE } from "../src/worker/gates";
+import { DESK_PATH, PAGE_CSP, clampDeviceLevel, expandIpv6, formatBudgetUsd, ipSpendKey, isCurrentDayMeterKey, isMeterSpendKey, isScopedGuardCode, isStaticAssetPath, MAX_DESK_TURNS_PER_DAY, MAX_HELLO_FAILS, MAX_REMINDER_SCHEDULES, MAX_TOOL_CALLS_PER_ROUND, networkKey, nextHelloFails, utcDayKey, visitorCapUsd, VISITOR_BUDGET_SHARE } from "../src/worker/gates";
 import { isLocalHost, isLocalRequest, isTestSiteKey, resolveTurnstileSecret, TURNSTILE_TEST_SECRET, TURNSTILE_TEST_SITE_KEY } from "../src/worker/turnstile";
 
 function check(ok: unknown, label: string) {
@@ -45,6 +45,13 @@ check(networkKey("desk:abc123def456") === "desk:abc123def456", "desk spend keys 
 check(networkKey("local") === "local", "local spend key stays local");
 check(expandIpv6("not-an-ip") === null, "expandIpv6 rejects a hostname");
 check(ipSpendKey("2001:db8::aa", "2026-10-14") === "ip:2026-10-14:2001:db8:0:0", "IP spend key uses the IPv6 /64");
+check(isMeterSpendKey("spent:2026-10-13"), "global spend keys are meter keys");
+check(isMeterSpendKey("ip:2026-10-13:203.0.113.8"), "visitor spend keys are meter keys");
+check(!isMeterSpendKey("other:2026-10-13"), "unrelated keys are not meter keys");
+check(isCurrentDayMeterKey("spent:2026-10-14", "2026-10-14"), "today's spent key is kept");
+check(isCurrentDayMeterKey("ip:2026-10-14:203.0.113.8", "2026-10-14"), "today's visitor key is kept");
+check(!isCurrentDayMeterKey("spent:2026-10-13", "2026-10-14"), "yesterday's spent key is stale");
+check(!isCurrentDayMeterKey("ip:2026-10-13:203.0.113.8", "2026-10-14"), "yesterday's visitor key is stale");
 
 check(isScopedGuardCode("turnstile_required"), "turnstile errors stay on the requesting tab");
 check(isScopedGuardCode("rate_limited"), "rate-limit errors stay on the requesting tab");
@@ -84,6 +91,10 @@ check(resolveTurnstileSecret("apollo-desk.tech-demos.theserverless.dev", "203.0.
 check(isLocalRequest("tech-demos.theserverless.dev", "127.0.0.1", ""), "wrangler-dev route host with a loopback IP is local");
 check(isLocalRequest("tech-demos.theserverless.dev", "203.0.113.8", "local"), "ENVIRONMENT=local counts as local");
 check(!isLocalRequest("tech-demos.theserverless.dev", "203.0.113.8", ""), "a public IP on the route host is not local");
+
+const meterSrc = await Bun.file(new URL("../src/worker/meter.ts", import.meta.url)).text();
+check(meterSrc.includes("#purgeStale"), "Meter drops previous days' spend keys");
+check(meterSrc.includes("this.#purgeStale(utcDayKey())"), "reserve purges stale keys before holding spend");
 
 if (process.exitCode) {
   console.error("gates tests failed");

@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { formatBudgetUsd, ipSpendKey, utcDayKey, visitorCapUsd } from "./gates";
+import { formatBudgetUsd, ipSpendKey, isCurrentDayMeterKey, isMeterSpendKey, utcDayKey, visitorCapUsd } from "./gates";
 
 /** Published Workers AI prices in USD. */
 export const PRICES = {
@@ -46,9 +46,17 @@ export class Meter extends DurableObject<Env> {
     return { spent, budget, ok: spent < budget };
   }
 
+  /** Drop yesterday's spend keys so the global Meter does not grow without bound. */
+  #purgeStale(day: string) {
+    for (const [key] of this.ctx.storage.kv.list()) {
+      if (isMeterSpendKey(key) && !isCurrentDayMeterKey(key, day)) this.ctx.storage.kv.delete(key);
+    }
+  }
+
   /** Check and hold spend in one step, so concurrent callers cannot all pass the check. */
   reserve(usd: number, ip?: string): { ok: boolean; spent: number; budget: number; reason?: "budget" | "visitor" } {
     const key = this.#key();
+    this.#purgeStale(utcDayKey());
     const spent = this.ctx.storage.kv.get<number>(key) ?? 0;
     const budget = this.#budget();
     const add = Math.max(0, usd);

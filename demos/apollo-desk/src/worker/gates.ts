@@ -73,6 +73,14 @@ export function ipSpendKey(ip: string, day = utcDayKey()): string {
   return `ip:${day}:${networkKey(ip)}`;
 }
 
+export function isMeterSpendKey(key: string): boolean {
+  return key.startsWith("spent:") || key.startsWith("ip:");
+}
+
+export function isCurrentDayMeterKey(key: string, day = utcDayKey()): boolean {
+  return key === `spent:${day}` || key.startsWith(`ip:${day}:`);
+}
+
 export function visitorCapUsd(budget: number): number {
   return budget * VISITOR_BUDGET_SHARE;
 }

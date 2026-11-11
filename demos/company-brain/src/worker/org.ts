@@ -121,7 +121,11 @@ export class Org extends Agent<Env, OrgState> {
   }
 
   async onStart() {
-    // Schema source of truth. migrations/0001_org.sql mirrors these statements for reading.
+    this.ensureSchema();
+  }
+
+  /** Schema source of truth. migrations/0001_org.sql mirrors these statements for reading. */
+  private ensureSchema() {
     this.sql`CREATE TABLE IF NOT EXISTS facts (
       id TEXT PRIMARY KEY, text TEXT NOT NULL, author TEXT NOT NULL, source TEXT NOT NULL, created_at INTEGER NOT NULL)`;
     this.sql`CREATE TABLE IF NOT EXISTS decisions (
@@ -168,13 +172,22 @@ export class Org extends Agent<Env, OrgState> {
   }
 
   private auth(): AuthRow | undefined {
-    return this.sql<AuthRow>`SELECT session_hash, ingest_hash FROM auth WHERE id = 1`[0];
+    try {
+      return this.sql<AuthRow>`SELECT session_hash, ingest_hash FROM auth WHERE id = 1`[0];
+    } catch (err) {
+      if (String(err).includes("no such table")) return undefined;
+      throw err;
+    }
   }
 
   private async gate(request: Request, ingest: boolean): Promise<Response | null> {
     if (this.state.wiped) return errorResponse(410, "expired", "This sandbox org has expired.");
     const row = this.auth();
-    if (!row) return errorResponse(404, "not_found", "No org with that id.");
+    if (!row) {
+      // onStart recreates empty tables after destroy(); drop them so an unprovisioned wake is not billed.
+      await this.ctx.storage.deleteAll();
+      return errorResponse(404, "not_found", "No org with that id.");
+    }
     if (this.state.expiresAt > 0 && Date.now() >= this.state.expiresAt) {
       await this.wipeExpired();
       return errorResponse(410, "expired", "This sandbox org has expired.");
@@ -187,6 +200,7 @@ export class Org extends Agent<Env, OrgState> {
   }
 
   private async provision(orgId: string, sessionToken: string, ingestToken: string): Promise<OrgView> {
+    this.ensureSchema();
     if (this.state.wiped || this.auth()) throw new OrgError(409, "exists", "This org is already provisioned.");
     const now = Date.now();
     const expiresAt = now + orgTtlMs(this.env);

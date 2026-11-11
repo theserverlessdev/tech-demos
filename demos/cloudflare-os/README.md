@@ -94,6 +94,7 @@ bun run scripts/agent-check.ts https://tech-demos.theserverless.dev/demos/cloudf
 |---|---|---|
 | Workers AI spend for each day, for all visitors. Each call reserves its worst-case cost first. Missing `usage` settles at that reserved amount, not $0 | `AI_DAILY_BUDGET_USD = 0.15` | `wrangler.jsonc`, `Meter` |
 | New unique Dynamic Worker IDs for each day | `DYNAMIC_WORKER_DAILY_CAP = 60` | `wrangler.jsonc`, `Meter` |
+| New unique Dynamic Worker IDs for each network each day | 15% of the daily cap (9 of 60) | `Meter.claimLoader` |
 | Agent turns for each IP | 6 each minute | `AGENT_LIMIT` binding |
 | Gadget creates, code saves, and binding changes for each IP | 12 each minute | `CODE_LIMIT` binding |
 | Gadget method calls (browser proxy and agent `callGadget`) for each IP and each workspace | 360 each 10 seconds | `GADGET_LIMIT` binding |
